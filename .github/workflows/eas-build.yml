@@ -72,9 +72,11 @@ jobs:
           EAS_EXIT=$?
           echo "EAS exit code: $EAS_EXIT"
           echo "EAS output: $OUTPUT"
-          BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
+          # Extraire uniquement la partie JSON (commence par [ ou {)
+          JSON_PART=$(echo "$OUTPUT" | awk '/^\[/{found=1} found{print}')
+          BUILD_URL=$(echo "$JSON_PART" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
           if [ -z "$BUILD_URL" ]; then
-            BUILD_URL=$(echo "$OUTPUT" | grep -o '"buildUrl":"[^"]*"' | tail -1 | cut -d'"' -f4)
+            BUILD_URL=$(echo "$OUTPUT" | grep -o '"buildUrl": *"[^"]*"' | tail -1 | sed 's/.*": *"//;s/"//')
           fi
           echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
           echo "Build URL: $BUILD_URL"
