@@ -47,7 +47,10 @@
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.2",
+    "mqtt": "^5.10.1",
+    "@noble/curves": "^1.6.0",
+    "@noble/ciphers": "^1.1.0"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

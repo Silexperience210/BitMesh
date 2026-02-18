@@ -8,6 +8,7 @@ import Colors from "@/constants/colors";
 import { WalletSeedContext } from "@/providers/WalletSeedProvider";
 import { AppSettingsContext } from "@/providers/AppSettingsProvider";
 import { GatewayContext } from "@/providers/GatewayProvider";
+import { MessagesContext } from "@/providers/MessagesProvider";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -38,10 +39,12 @@ export default function RootLayout() {
       <AppSettingsContext>
         <WalletSeedContext>
           <GatewayContext>
-            <GestureHandlerRootView>
-              <StatusBar style="light" />
-              <RootLayoutNav />
-            </GestureHandlerRootView>
+            <MessagesContext>
+              <GestureHandlerRootView>
+                <StatusBar style="light" />
+                <RootLayoutNav />
+              </GestureHandlerRootView>
+            </MessagesContext>
           </GatewayContext>
         </WalletSeedContext>
       </AppSettingsContext>
