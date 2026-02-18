@@ -14,7 +14,9 @@ import {
   Alert,
 } from 'react-native';
 import { X, Copy, Check } from 'lucide-react-native';
-import QRCode from 'react-native-qrcode-svg';
+// QRCode nécessite: npm install react-native-qrcode-svg react-native-svg
+// Commenté temporairement pour permettre le build
+// import QRCode from 'react-native-qrcode-svg';
 import * as Clipboard from 'expo-clipboard';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -73,6 +75,15 @@ export default function ReceiveBitcoinModal({
             {/* QR Code */}
             <View style={styles.qrContainer}>
               <View style={styles.qrWrapper}>
+                {/* TODO: Installer react-native-qrcode-svg pour afficher le QR code */}
+                {/* npm install react-native-qrcode-svg react-native-svg */}
+                <View style={styles.qrPlaceholder}>
+                  <Text style={styles.qrPlaceholderText}>📱</Text>
+                  <Text style={styles.qrPlaceholderSubtext}>
+                    Installez react-native-qrcode-svg{'\n'}pour afficher le QR code
+                  </Text>
+                </View>
+                {/*
                 <QRCode
                   value={selectedAddress}
                   size={220}
@@ -83,6 +94,7 @@ export default function ReceiveBitcoinModal({
                   logoBackgroundColor={Colors.surface}
                   logoBorderRadius={8}
                 />
+                */}
               </View>
             </View>
 
@@ -217,6 +229,27 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: Colors.border,
+  },
+  qrPlaceholder: {
+    width: 220,
+    height: 220,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    borderStyle: 'dashed',
+  },
+  qrPlaceholderText: {
+    fontSize: 48,
+    marginBottom: 12,
+  },
+  qrPlaceholderSubtext: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 18,
   },
   addressContainer: {
     marginBottom: 16,
