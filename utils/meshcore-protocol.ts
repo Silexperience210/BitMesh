@@ -238,6 +238,77 @@ export function extractTextFromPacket(packet: MeshCorePacket): string {
 }
 
 /**
+ * Encoder un payload chiffré (EncryptedPayload) en binaire pour MeshCore
+ * Format : [version (1 byte) | nonce (12 bytes) | ciphertext (variable)]
+ */
+export function encodeEncryptedPayload(enc: {v: number; nonce: string; ct: string}): Uint8Array {
+  // Décoder base64 → bytes
+  const nonceBytes = base64ToBytes(enc.nonce);
+  const ctBytes = base64ToBytes(enc.ct);
+
+  // Vérifier que nonce = 12 bytes (requis par AES-GCM)
+  if (nonceBytes.length !== 12) {
+    throw new Error('Nonce must be 12 bytes');
+  }
+
+  // Créer buffer : version (1) + nonce (12) + ciphertext (variable)
+  const payload = new Uint8Array(1 + 12 + ctBytes.length);
+  payload[0] = enc.v;
+  payload.set(nonceBytes, 1);
+  payload.set(ctBytes, 13);
+
+  return payload;
+}
+
+/**
+ * Décoder un payload binaire MeshCore en EncryptedPayload
+ * Format : [version (1 byte) | nonce (12 bytes) | ciphertext (variable)]
+ */
+export function decodeEncryptedPayload(payload: Uint8Array): {v: number; nonce: string; ct: string} | null {
+  // Minimum : 1 + 12 = 13 bytes
+  if (payload.length < 13) {
+    return null;
+  }
+
+  const version = payload[0];
+  const nonceBytes = payload.slice(1, 13);
+  const ctBytes = payload.slice(13);
+
+  return {
+    v: version,
+    nonce: bytesToBase64(nonceBytes),
+    ct: bytesToBase64(ctBytes),
+  };
+}
+
+/**
+ * Utils : base64 → Uint8Array
+ */
+function base64ToBytes(b64: string): Uint8Array {
+  if (typeof Buffer !== 'undefined') {
+    return Uint8Array.from(Buffer.from(b64, 'base64'));
+  }
+  const str = atob(b64);
+  const bytes = new Uint8Array(str.length);
+  for (let i = 0; i < str.length; i++) {
+    bytes[i] = str.charCodeAt(i);
+  }
+  return bytes;
+}
+
+/**
+ * Utils : Uint8Array → base64
+ */
+function bytesToBase64(bytes: Uint8Array): string {
+  if (typeof Buffer !== 'undefined') {
+    return Buffer.from(bytes).toString('base64');
+  }
+  let str = '';
+  bytes.forEach(b => { str += String.fromCharCode(b); });
+  return btoa(str);
+}
+
+/**
  * Calcul CRC16 (CCITT)
  */
 function calculateCRC16(data: Uint8Array): number {
@@ -292,6 +363,46 @@ export function createPingPacket(fromNodeId: string): MeshCorePacket {
     timestamp: Math.floor(Date.now() / 1000),
     payload: new Uint8Array(0),
   };
+}
+
+/**
+ * Créer un paquet KEY_ANNOUNCE pour échanger sa clé publique
+ * Payload : pubkey compressed secp256k1 (33 bytes hex) encodé en UTF-8
+ */
+export function createKeyAnnouncePacket(fromNodeId: string, pubkeyHex: string): MeshCorePacket {
+  const encoder = new TextEncoder();
+  const payload = encoder.encode(pubkeyHex); // 66 chars hex = 33 bytes compressed pubkey
+
+  return {
+    version: 0x01,
+    type: MeshCoreMessageType.KEY_ANNOUNCE,
+    flags: MeshCoreFlags.BROADCAST,
+    ttl: 3,
+    messageId: Math.floor(Math.random() * 0xFFFFFFFF),
+    fromNodeId: nodeIdToUint64(fromNodeId),
+    toNodeId: 0n, // Broadcast
+    timestamp: Math.floor(Date.now() / 1000),
+    payload,
+  };
+}
+
+/**
+ * Extraire la pubkey d'un paquet KEY_ANNOUNCE
+ */
+export function extractPubkeyFromAnnounce(packet: MeshCorePacket): string | null {
+  if (packet.type !== MeshCoreMessageType.KEY_ANNOUNCE) {
+    return null;
+  }
+
+  const decoder = new TextDecoder();
+  const pubkeyHex = decoder.decode(packet.payload);
+
+  // Valider que c'est bien du hex de 66 caractères (33 bytes compressed)
+  if (!/^[0-9a-fA-F]{66}$/.test(pubkeyHex)) {
+    return null;
+  }
+
+  return pubkeyHex;
 }
 
 /**

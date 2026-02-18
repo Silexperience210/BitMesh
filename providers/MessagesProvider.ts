@@ -12,6 +12,9 @@ import {
   joinForumChannel,
   leaveForumChannel,
   fetchPeerPubkey,
+  announceForumChannel,
+  subscribeForumAnnouncements,
+  type ForumAnnouncement,
   TOPICS,
 } from '@/utils/mqtt-client';
 import * as Location from 'expo-location';
@@ -45,10 +48,15 @@ import { useBle } from '@/providers/BleProvider';
 import {
   type MeshCorePacket,
   MeshCoreMessageType,
+  MeshCoreFlags,
   createTextMessage,
   extractTextFromPacket,
   uint64ToNodeId,
   nodeIdToUint64,
+  encodeEncryptedPayload,
+  decodeEncryptedPayload,
+  createKeyAnnouncePacket,
+  extractPubkeyFromAnnounce,
 } from '@/utils/meshcore-protocol';
 
 // Format du message sur le réseau MQTT
@@ -73,6 +81,8 @@ export interface MessagesState {
   radarPeers: RadarPeer[];
   // Notre position GPS
   myLocation: { lat: number; lng: number } | null;
+  // ✅ NOUVEAU : Forums découverts via MQTT
+  discoveredForums: ForumAnnouncement[];
   // Actions
   connect: () => void;
   disconnect: () => void;
@@ -80,9 +90,11 @@ export interface MessagesState {
   sendCashu: (convId: string, token: string, amountSats: number) => Promise<void>;
   loadConversationMessages: (convId: string) => Promise<void>;
   startConversation: (peerNodeId: string, peerName?: string) => Promise<void>;
-  joinForum: (channelName: string) => Promise<void>;
+  joinForum: (channelName: string, description?: string) => Promise<void>;
   leaveForum: (channelName: string) => void;
   markRead: (convId: string) => Promise<void>;
+  // ✅ NOUVEAU : Annoncer un forum public
+  announceForumPublic: (channelName: string, description: string) => void;
 }
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
@@ -98,6 +110,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const mqttRef = useRef<MeshMqttClient | null>(null);
   const meshRouterRef = useRef<MeshRouter | null>(null);
   const joinedForums = useRef<Set<string>>(new Set());
+  // ✅ NOUVEAU : Forums découverts
+  const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
 
   // Dériver l'identité dès que le wallet est disponible
   useEffect(() => {
@@ -144,17 +158,47 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
       // Traiter selon le type de message
       if (packet.type === MeshCoreMessageType.TEXT) {
-        const plaintext = extractTextFromPacket(packet);
         const fromNodeId = uint64ToNodeId(packet.fromNodeId);
 
-        // Pour les DMs, on doit déchiffrer (si le payload est chiffré)
-        // Note: Le firmware MeshCore Companion peut envoyer des messages non chiffrés
-        // Pour l'instant, on traite le texte tel quel
+        let plaintext: string;
+        let senderPubkey = '';
+
+        // ✅ FIX: Vérifier si le message est chiffré
+        if (packet.flags & MeshCoreFlags.ENCRYPTED) {
+          // Décoder le payload chiffré
+          const enc = decodeEncryptedPayload(packet.payload);
+          if (!enc) {
+            console.error('[MeshCore] Payload chiffré invalide');
+            return;
+          }
+
+          // Récupérer la pubkey du sender depuis nos conversations
+          const conv = conversations.find(c => c.id === fromNodeId);
+          if (!conv?.peerPubkey) {
+            console.error('[MeshCore] Impossible de déchiffrer: pubkey du sender inconnue');
+            // TODO: Implémenter KEY_ANNOUNCE pour échanger les pubkeys via LoRa
+            return;
+          }
+
+          senderPubkey = conv.peerPubkey;
+
+          // Déchiffrer avec ECDH
+          try {
+            plaintext = decryptDM(enc, identity.privkeyBytes, senderPubkey);
+          } catch (err) {
+            console.error('[MeshCore] Erreur déchiffrement:', err);
+            return;
+          }
+        } else {
+          // Message non chiffré (rétrocompatibilité)
+          plaintext = extractTextFromPacket(packet);
+        }
+
         const msg: StoredMessage = {
           id: `mc-${packet.messageId}`,
           conversationId: fromNodeId,
           from: fromNodeId,
-          fromPubkey: '', // Pas de pubkey dans MeshCore natif (à améliorer)
+          fromPubkey: senderPubkey,
           text: plaintext,
           type: 'text',
           timestamp: packet.timestamp * 1000, // MeshCore utilise secondes, on veut ms
@@ -178,6 +222,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
               id: fromNodeId,
               name: fromNodeId,
               isForum: false,
+              peerPubkey: senderPubkey || undefined,
               lastMessage: plaintext.slice(0, 50),
               lastMessageTime: msg.timestamp,
               unreadCount: 1,
@@ -193,12 +238,52 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
               lastMessage: plaintext.slice(0, 50),
               lastMessageTime: msg.timestamp,
               unreadCount: c.unreadCount + 1,
+              peerPubkey: senderPubkey || c.peerPubkey,
               online: true,
             };
           });
         });
 
-        console.log('[MeshCore] Message TEXT livré depuis', fromNodeId);
+        console.log('[MeshCore] Message TEXT déchiffré et livré depuis', fromNodeId);
+      } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
+        // ✅ Traiter l'annonce de clé publique
+        const pubkeyHex = extractPubkeyFromAnnounce(packet);
+        if (!pubkeyHex) {
+          console.error('[MeshCore] KEY_ANNOUNCE invalide');
+          return;
+        }
+
+        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+        console.log('[MeshCore] Clé publique reçue depuis', fromNodeId, ':', pubkeyHex.slice(0, 16) + '...');
+
+        // Sauvegarder la pubkey dans la conversation
+        setConversations(prev => {
+          const exists = prev.find(c => c.id === fromNodeId);
+          if (exists) {
+            // Mettre à jour la pubkey
+            const updated = prev.map(c =>
+              c.id === fromNodeId ? { ...c, peerPubkey: pubkeyHex, online: true } : c
+            );
+            // Persister
+            const updatedConv = updated.find(c => c.id === fromNodeId);
+            if (updatedConv) saveConversation(updatedConv);
+            return updated;
+          } else {
+            // Créer nouvelle conversation
+            const newConv: StoredConversation = {
+              id: fromNodeId,
+              name: fromNodeId,
+              isForum: false,
+              peerPubkey: pubkeyHex,
+              lastMessage: '',
+              lastMessageTime: packet.timestamp * 1000,
+              unreadCount: 0,
+              online: true,
+            };
+            saveConversation(newConv);
+            return [newConv, ...prev];
+          }
+        });
       } else if (packet.type === MeshCoreMessageType.POSITION) {
         // TODO: Traiter les paquets GPS (ajouter au radar)
         console.log('[MeshCore] Paquet POSITION reçu (non implémenté)');
@@ -210,11 +295,17 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, [identity]);
 
-  // Enregistrer le handler BLE dès que possible
+  // Enregistrer le handler BLE dès que possible + annoncer notre clé publique
   useEffect(() => {
     if (ble.connected && identity) {
-      console.log('[MeshCore] Enregistrement handler paquets BLE');
+      console.log('[MeshCore] Connexion BLE établie, enregistrement handler');
       ble.onPacket(handleIncomingMeshCorePacket);
+
+      // ✅ Envoyer notre clé publique en broadcast pour que les pairs puissent nous chiffrer des messages
+      const keyAnnounce = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
+      ble.sendPacket(keyAnnounce)
+        .then(() => console.log('[MeshCore] KEY_ANNOUNCE envoyé (broadcast)'))
+        .catch(err => console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err));
     }
   }, [ble.connected, identity, handleIncomingMeshCorePacket]);
 
@@ -476,6 +567,25 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, [identity]);
 
+  // ✅ NOUVEAU : Handler pour les annonces de forums
+  const handleForumAnnouncement = useCallback((announcement: ForumAnnouncement) => {
+    console.log('[Forums] Nouveau forum découvert:', announcement.channelName, 'par', announcement.creatorNodeId);
+
+    setDiscoveredForums(prev => {
+      // Éviter les doublons
+      const exists = prev.find(f =>
+        f.channelName === announcement.channelName &&
+        f.creatorNodeId === announcement.creatorNodeId
+      );
+
+      if (exists) return prev;
+
+      // Garder seulement les 50 dernières annonces
+      const updated = [announcement, ...prev].slice(0, 50);
+      return updated;
+    });
+  }, []);
+
   // Handler pour un message forum entrant
   const handleIncomingForum = useCallback((channelName: string) => (topic: string, payloadStr: string) => {
     if (!identity) return;
@@ -554,6 +664,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           subscribeMesh(client, TOPICS.route(identity.nodeId), handleIncomingRouteMessage, 0);
           // S'abonner aux présences de tous les pairs (wildcard)
           subscribePattern(client, 'meshcore/identity/+', handlePeerPresence, 0);
+          // ✅ NOUVEAU : S'abonner aux annonces de forums
+          subscribeForumAnnouncements(client, handleForumAnnouncement);
           // Publier notre présence avec GPS si disponible
           const pos = myLocationRef.current;
           updatePresence(client, identity.nodeId, identity.pubkeyHex, pos?.lat, pos?.lng);
@@ -565,7 +677,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       }
     }, 500);
-  }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence]);
+  }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement]);
 
   // Auto-connexion dès que l'identité est disponible
   useEffect(() => {
@@ -607,18 +719,24 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     // Si BLE connecté ET c'est un DM → utiliser protocole MeshCore binaire
     if (ble.connected && isDM) {
       try {
-        // Créer paquet MeshCore TEXT binaire
-        // Note: pour l'instant on envoie le texte en clair, le chiffrement E2E sera ajouté
-        // dans une future version avec échange de clés via KEY_ANNOUNCE
-        const packet = createTextMessage(
-          id.nodeId,
-          convId, // destinataire
-          text,
-          false // pas de chiffrement MeshCore natif pour l'instant
-        );
+        // ✅ FIX: Encoder le payload chiffré au lieu du texte en clair
+        const encryptedPayload = encodeEncryptedPayload(enc);
+
+        // Créer paquet MeshCore TEXT binaire avec payload chiffré
+        const packet: MeshCorePacket = {
+          version: 0x01,
+          type: MeshCoreMessageType.TEXT,
+          flags: MeshCoreFlags.ENCRYPTED, // ✅ Marquer comme chiffré
+          ttl: 10,
+          messageId: Math.floor(Math.random() * 0xFFFFFFFF),
+          fromNodeId: nodeIdToUint64(id.nodeId),
+          toNodeId: nodeIdToUint64(convId),
+          timestamp: Math.floor(Date.now() / 1000),
+          payload: encryptedPayload, // ✅ Payload chiffré (nonce + ciphertext)
+        };
 
         await ble.sendPacket(packet);
-        console.log('[MeshCore] Paquet binaire envoyé via BLE → LoRa:', convId);
+        console.log('[MeshCore] Paquet chiffré envoyé via BLE → LoRa:', convId);
       } catch (err) {
         console.error('[MeshCore] Erreur envoi BLE, fallback MQTT:', err);
         // Fallback MQTT si BLE échoue
@@ -771,7 +889,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   }, [conversations]);
 
   // Rejoindre un forum
-  const joinForum = useCallback(async (channelName: string): Promise<void> => {
+  const joinForum = useCallback(async (channelName: string, description?: string): Promise<void> => {
     const convId = `forum:${channelName}`;
     joinedForums.current.add(channelName);
 
@@ -785,7 +903,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         id: convId,
         name: `#${channelName}`,
         isForum: true,
-        lastMessage: '',
+        lastMessage: description || '',
         lastMessageTime: Date.now(),
         unreadCount: 0,
         online: true,
@@ -795,6 +913,24 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
     console.log('[Messages] Forum rejoint:', channelName);
   }, [conversations, handleIncomingForum]);
+
+  // ✅ NOUVEAU : Annoncer un forum public
+  const announceForumPublic = useCallback((channelName: string, description: string): void => {
+    if (!mqttRef.current || !identity) {
+      console.log('[Forums] Impossible d\'annoncer — non connecté');
+      return;
+    }
+
+    announceForumChannel(
+      mqttRef.current,
+      channelName,
+      description,
+      identity.pubkeyHex,
+      true
+    );
+
+    console.log('[Forums] Forum annoncé publiquement:', channelName);
+  }, [identity]);
 
   // Quitter un forum
   const leaveForum = useCallback((channelName: string): void => {
@@ -820,6 +956,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     messagesByConv,
     radarPeers,
     myLocation,
+    discoveredForums, // ✅ NOUVEAU
     connect,
     disconnect,
     sendMessage,
@@ -829,6 +966,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     joinForum,
     leaveForum,
     markRead,
+    announceForumPublic, // ✅ NOUVEAU
   };
 });
 

@@ -76,8 +76,10 @@ export class BleGatewayClient {
         resolve();
       }, timeoutMs);
 
+      // ✅ FIX: Scanner TOUS les devices sans filtre UUID
+      // Le filtre UUID ne fonctionne pas sur Android si le device n'annonce pas le service dans l'advertising
       this.manager.startDeviceScan(
-        [UART_SERVICE_UUID],
+        null, // ✅ Pas de filtre UUID
         { allowDuplicates: false },
         (error, device) => {
           if (error) {
@@ -89,14 +91,24 @@ export class BleGatewayClient {
           }
 
           if (device && !foundDevices.has(device.id)) {
-            foundDevices.add(device.id);
-            console.log(`[BleGateway] Found device: ${device.name || 'Unknown'} (${device.id})`);
+            // Filtrer par nom pour trouver les gateways MeshCore/ESP32
+            const name = device.name || '';
+            const isMeshCoreGateway =
+              name.toLowerCase().includes('meshcore') ||
+              name.toLowerCase().includes('esp32') ||
+              name.toLowerCase().includes('mesh') ||
+              name.toLowerCase().includes('lora');
 
-            onDeviceFound({
-              id: device.id,
-              name: device.name || 'MeshCore Gateway',
-              rssi: device.rssi || -100,
-            });
+            if (isMeshCoreGateway || !device.name) {
+              foundDevices.add(device.id);
+              console.log(`[BleGateway] Found device: ${device.name || 'Unknown'} (${device.id}), RSSI: ${device.rssi}`);
+
+              onDeviceFound({
+                id: device.id,
+                name: device.name || 'MeshCore Gateway',
+                rssi: device.rssi || -100,
+              });
+            }
           }
         }
       );

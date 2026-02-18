@@ -15,6 +15,7 @@ export const TOPICS = {
   loraInbound: 'meshcore/lora/inbound',
   loraOutbound: 'meshcore/lora/outbound',
   gatewayAnnounce: 'meshcore/gateway/announce',
+  forumsAnnounce: 'meshcore/forums/announce', // ✅ NOUVEAU : Découverte de forums
 } as const;
 
 export interface MeshMqttClient {
@@ -304,4 +305,77 @@ export function fetchPeerPubkey(
       unsubscribeMesh(instance, topic);
     }
   }, timeoutMs);
+}
+
+// ✅ NOUVEAU : Interface pour annonce de forum
+export interface ForumAnnouncement {
+  channelName: string;
+  description: string;
+  creatorNodeId: string;
+  creatorPubkey: string;
+  ts: number;
+  isPublic: boolean;
+}
+
+// ✅ NOUVEAU : Annoncer un forum public
+export function announceForumChannel(
+  instance: MeshMqttClient,
+  channelName: string,
+  description: string,
+  creatorPubkey: string,
+  isPublic: boolean = true
+): void {
+  if (!instance.client || instance.state !== 'connected') {
+    console.log('[MQTT] Impossible d\'annoncer le forum — non connecté');
+    return;
+  }
+
+  const announcement: ForumAnnouncement = {
+    channelName,
+    description,
+    creatorNodeId: instance.nodeId,
+    creatorPubkey,
+    ts: Date.now(),
+    isPublic,
+  };
+
+  instance.client.publish(
+    TOPICS.forumsAnnounce,
+    JSON.stringify(announcement),
+    { qos: 0, retain: false }, // QoS 0 pour performance, pas de retain
+    (err) => {
+      if (err) {
+        console.log('[MQTT] Erreur annonce forum:', err);
+      } else {
+        console.log('[MQTT] Forum annoncé:', channelName);
+      }
+    }
+  );
+}
+
+// ✅ NOUVEAU : S'abonner aux annonces de forums
+export function subscribeForumAnnouncements(
+  instance: MeshMqttClient,
+  handler: (announcement: ForumAnnouncement) => void
+): void {
+  const wrappedHandler: MessageHandler = (_topic, payload) => {
+    try {
+      const announcement = JSON.parse(payload) as ForumAnnouncement;
+      // Ignorer nos propres annonces
+      if (announcement.creatorNodeId !== instance.nodeId) {
+        handler(announcement);
+      }
+    } catch (err) {
+      console.log('[MQTT] Erreur parse annonce forum:', err);
+    }
+  };
+
+  subscribeMesh(instance, TOPICS.forumsAnnounce, wrappedHandler, 0);
+  console.log('[MQTT] Abonné aux annonces de forums');
+}
+
+// ✅ NOUVEAU : Se désabonner des annonces de forums
+export function unsubscribeForumAnnouncements(instance: MeshMqttClient): void {
+  unsubscribeMesh(instance, TOPICS.forumsAnnounce);
+  console.log('[MQTT] Désabonné des annonces de forums');
 }
