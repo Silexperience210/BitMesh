@@ -31,6 +31,8 @@ import { useGateway } from '@/providers/GatewayProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { formatTime } from '@/utils/helpers';
 import MeshRadar from '@/components/MeshRadar';
+import GatewayScanModal from '@/components/GatewayScanModal';
+import { useBle } from '@/providers/BleProvider';
 
 type ViewMode = 'radar' | 'list';
 type FilterMode = 'all' | 'online';
@@ -491,9 +493,11 @@ export default function MeshScreen() {
   const [filter, setFilter] = useState<FilterMode>('all');
   const [selectedPeer, setSelectedPeer] = useState<RadarPeer | null>(null);
   const [showDetail, setShowDetail] = useState<boolean>(false);
+  const [showGatewayModal, setShowGatewayModal] = useState<boolean>(false);
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity } = useMessages();
+  const { connected: bleConnected, device: bleDevice } = useBle();
 
   const filteredPeers = useMemo(() => {
     switch (filter) {
@@ -667,7 +671,22 @@ export default function MeshScreen() {
         </View>
       )}
 
+      {/* Button flottant Gateway BLE */}
+      {!isInternetOnly && (
+        <TouchableOpacity
+          style={styles.gatewayFloatingBtn}
+          onPress={() => setShowGatewayModal(true)}
+          activeOpacity={0.8}
+        >
+          <Radio size={20} color={Colors.background} />
+          <Text style={styles.gatewayFloatingText}>
+            {bleConnected ? `📡 ${bleDevice?.name.slice(0, 12)}` : 'Gateway LoRa'}
+          </Text>
+        </TouchableOpacity>
+      )}
+
       <NodeDetailModal peer={selectedPeer} visible={showDetail} onClose={handleCloseDetail} />
+      <GatewayScanModal visible={showGatewayModal} onClose={() => setShowGatewayModal(false)} />
     </ScrollView>
   );
 }
@@ -1438,5 +1457,27 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
     flex: 1,
+  },
+  gatewayFloatingBtn: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.accent,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+    borderRadius: 30,
+    shadowColor: Colors.accent,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  gatewayFloatingText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: Colors.background,
   },
 });

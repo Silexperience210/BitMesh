@@ -1,0 +1,321 @@
+/**
+ * BLE Gateway Client
+ *
+ * Connexion au gateway ESP32 LoRa via BLE (Nordic UART Service)
+ * Conforme à MeshCore Protocol v1.0
+ */
+
+import { BleManager, Device, Characteristic, State } from 'react-native-ble-plx';
+
+// Nordic UART Service UUIDs
+const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const UART_TX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Mobile → ESP32
+const UART_RX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 → Mobile
+
+export interface BleGatewayDevice {
+  id: string;
+  name: string;
+  rssi: number;
+}
+
+export interface BleGatewayState {
+  connected: boolean;
+  device: BleGatewayDevice | null;
+  scanning: boolean;
+  error: string | null;
+}
+
+type MessageHandler = (message: string) => void;
+
+/**
+ * Client BLE pour gateway ESP32 LoRa
+ */
+export class BleGatewayClient {
+  private manager: BleManager;
+  private device: Device | null = null;
+  private messageHandler: MessageHandler | null = null;
+  private rxCharacteristic: Characteristic | null = null;
+
+  constructor() {
+    this.manager = new BleManager();
+  }
+
+  /**
+   * Initialise le BLE manager
+   */
+  async initialize(): Promise<void> {
+    const state = await this.manager.state();
+    console.log('[BleGateway] BLE state:', state);
+
+    if (state !== State.PoweredOn) {
+      throw new Error('Bluetooth is not enabled');
+    }
+  }
+
+  /**
+   * Scanne les devices BLE avec Nordic UART service
+   */
+  async scanForGateways(
+    onDeviceFound: (device: BleGatewayDevice) => void,
+    timeoutMs: number = 10000
+  ): Promise<void> {
+    console.log('[BleGateway] Starting scan...');
+
+    const foundDevices = new Set<string>();
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.manager.stopDeviceScan();
+        console.log(`[BleGateway] Scan finished (timeout ${timeoutMs}ms)`);
+        resolve();
+      }, timeoutMs);
+
+      this.manager.startDeviceScan(
+        [UART_SERVICE_UUID],
+        { allowDuplicates: false },
+        (error, device) => {
+          if (error) {
+            clearTimeout(timeout);
+            this.manager.stopDeviceScan();
+            console.error('[BleGateway] Scan error:', error);
+            reject(error);
+            return;
+          }
+
+          if (device && !foundDevices.has(device.id)) {
+            foundDevices.add(device.id);
+            console.log(`[BleGateway] Found device: ${device.name || 'Unknown'} (${device.id})`);
+
+            onDeviceFound({
+              id: device.id,
+              name: device.name || 'MeshCore Gateway',
+              rssi: device.rssi || -100,
+            });
+          }
+        }
+      );
+    });
+  }
+
+  /**
+   * Arrête le scan
+   */
+  stopScan() {
+    this.manager.stopDeviceScan();
+    console.log('[BleGateway] Scan stopped');
+  }
+
+  /**
+   * Connecte à un gateway
+   */
+  async connect(deviceId: string): Promise<void> {
+    console.log(`[BleGateway] Connecting to ${deviceId}...`);
+
+    try {
+      // Connecter au device
+      this.device = await this.manager.connectToDevice(deviceId, {
+        autoConnect: true,
+        requestMTU: 512,
+      });
+
+      console.log(`[BleGateway] Connected to ${this.device.name}`);
+
+      // Découvrir les services et characteristics
+      await this.device.discoverAllServicesAndCharacteristics();
+      console.log('[BleGateway] Services discovered');
+
+      // Vérifier que le service UART existe
+      const services = await this.device.services();
+      const uartService = services.find((s) => s.uuid === UART_SERVICE_UUID);
+
+      if (!uartService) {
+        throw new Error('Nordic UART service not found on device');
+      }
+
+      // Vérifier les characteristics
+      const characteristics = await uartService.characteristics();
+      const rxChar = characteristics.find((c) => c.uuid === UART_RX_CHAR_UUID);
+
+      if (!rxChar) {
+        throw new Error('RX characteristic not found');
+      }
+
+      this.rxCharacteristic = rxChar;
+
+      // Subscribe aux notifications RX (ESP32 → Mobile)
+      await this.subscribeToMessages();
+
+      console.log('[BleGateway] Successfully connected and subscribed');
+    } catch (error) {
+      console.error('[BleGateway] Connection error:', error);
+      this.device = null;
+      throw error;
+    }
+  }
+
+  /**
+   * Subscribe aux messages entrants depuis le gateway
+   */
+  private async subscribeToMessages(): Promise<void> {
+    if (!this.device || !this.rxCharacteristic) {
+      throw new Error('Device not connected');
+    }
+
+    console.log('[BleGateway] Subscribing to RX characteristic...');
+
+    this.device.monitorCharacteristicForService(
+      UART_SERVICE_UUID,
+      UART_RX_CHAR_UUID,
+      (error, characteristic) => {
+        if (error) {
+          console.error('[BleGateway] RX monitoring error:', error);
+          return;
+        }
+
+        if (!characteristic || !characteristic.value) {
+          return;
+        }
+
+        try {
+          // Décoder base64 → string
+          const message = this.base64ToString(characteristic.value);
+          console.log('[BleGateway] Received message:', message.slice(0, 100));
+
+          if (this.messageHandler) {
+            this.messageHandler(message);
+          }
+        } catch (err) {
+          console.error('[BleGateway] Failed to decode message:', err);
+        }
+      }
+    );
+
+    console.log('[BleGateway] Subscribed to notifications');
+  }
+
+  /**
+   * Envoie un message au gateway (Mobile → ESP32 → LoRa)
+   */
+  async sendMessage(message: string): Promise<void> {
+    if (!this.device) {
+      throw new Error('Not connected to gateway');
+    }
+
+    console.log('[BleGateway] Sending message:', message.slice(0, 100));
+
+    try {
+      const base64Data = this.stringToBase64(message);
+
+      // Chunking si message trop long (MTU=512, mais safe à 240)
+      const chunks = this.chunkMessage(base64Data, 240);
+
+      for (const chunk of chunks) {
+        await this.device.writeCharacteristicWithResponseForService(
+          UART_SERVICE_UUID,
+          UART_TX_CHAR_UUID,
+          chunk
+        );
+      }
+
+      console.log(`[BleGateway] Message sent (${chunks.length} chunks)`);
+    } catch (error) {
+      console.error('[BleGateway] Send error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Déconnecte du gateway
+   */
+  async disconnect(): Promise<void> {
+    if (this.device) {
+      console.log('[BleGateway] Disconnecting...');
+      await this.device.cancelConnection();
+      this.device = null;
+      this.rxCharacteristic = null;
+      console.log('[BleGateway] Disconnected');
+    }
+  }
+
+  /**
+   * Enregistre un handler pour les messages entrants
+   */
+  onMessage(handler: MessageHandler) {
+    this.messageHandler = handler;
+  }
+
+  /**
+   * Vérifie si connecté
+   */
+  isConnected(): boolean {
+    return this.device !== null;
+  }
+
+  /**
+   * Retourne le device connecté
+   */
+  getConnectedDevice(): BleGatewayDevice | null {
+    if (!this.device) return null;
+
+    return {
+      id: this.device.id,
+      name: this.device.name || 'Unknown',
+      rssi: this.device.rssi || -100,
+    };
+  }
+
+  /**
+   * Nettoie les ressources
+   */
+  async destroy(): Promise<void> {
+    await this.disconnect();
+    this.manager.destroy();
+  }
+
+  /**
+   * Utils : String → Base64
+   */
+  private stringToBase64(str: string): string {
+    // React Native a btoa global
+    return btoa(
+      encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+        String.fromCharCode(parseInt(p1, 16))
+      )
+    );
+  }
+
+  /**
+   * Utils : Base64 → String
+   */
+  private base64ToString(base64: string): string {
+    // React Native a atob global
+    return decodeURIComponent(
+      Array.from(atob(base64))
+        .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+        .join('')
+    );
+  }
+
+  /**
+   * Chunking : Split message en morceaux de N bytes
+   */
+  private chunkMessage(base64Data: string, chunkSize: number): string[] {
+    const chunks: string[] = [];
+    for (let i = 0; i < base64Data.length; i += chunkSize) {
+      chunks.push(base64Data.slice(i, i + chunkSize));
+    }
+    return chunks;
+  }
+}
+
+/**
+ * Singleton instance
+ */
+let bleGatewayInstance: BleGatewayClient | null = null;
+
+export function getBleGatewayClient(): BleGatewayClient {
+  if (!bleGatewayInstance) {
+    bleGatewayInstance = new BleGatewayClient();
+  }
+  return bleGatewayInstance;
+}

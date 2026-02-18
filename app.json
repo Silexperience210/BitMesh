@@ -15,7 +15,11 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "app.rork.meshpay-lora-messaging-btc"
+      "bundleIdentifier": "app.rork.meshpay-lora-messaging-btc",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "BitMesh utilise Bluetooth pour se connecter au gateway LoRa.",
+        "NSBluetoothPeripheralUsageDescription": "BitMesh utilise Bluetooth pour se connecter au gateway LoRa."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -26,6 +30,10 @@
       "permissions": [
         "ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
+        "BLUETOOTH",
+        "BLUETOOTH_ADMIN",
+        "BLUETOOTH_SCAN",
+        "BLUETOOTH_CONNECT",
         "INTERNET"
       ]
     },
@@ -47,6 +55,14 @@
         {
           "locationAlwaysAndWhenInUsePermission": "BitMesh utilise votre position GPS pour afficher les pairs sur le radar.",
           "locationWhenInUsePermission": "BitMesh utilise votre position GPS pour afficher les pairs sur le radar."
+        }
+      ],
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": false,
+          "modes": [],
+          "bluetoothAlwaysPermission": "BitMesh utilise Bluetooth pour se connecter au gateway LoRa ESP32."
         }
       ]
     ],

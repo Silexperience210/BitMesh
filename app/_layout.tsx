@@ -10,6 +10,7 @@ import { WalletSeedContext } from "@/providers/WalletSeedProvider";
 import { AppSettingsContext } from "@/providers/AppSettingsProvider";
 import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
+import { BleProvider } from "@/providers/BleProvider";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -60,14 +61,16 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <AppSettingsContext>
         <WalletSeedContext>
-          <GatewayContext>
-            <MessagesContext>
-              <GestureHandlerRootView>
-                <StatusBar style="light" />
-                <RootLayoutNav />
-              </GestureHandlerRootView>
-            </MessagesContext>
-          </GatewayContext>
+          <BleProvider>
+            <GatewayContext>
+              <MessagesContext>
+                <GestureHandlerRootView>
+                  <StatusBar style="light" />
+                  <RootLayoutNav />
+                </GestureHandlerRootView>
+              </MessagesContext>
+            </GatewayContext>
+          </BleProvider>
         </WalletSeedContext>
       </AppSettingsContext>
     </QueryClientProvider>
