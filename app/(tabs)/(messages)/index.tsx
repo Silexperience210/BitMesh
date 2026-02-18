@@ -11,7 +11,7 @@ import {
   Alert,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { Radio, Plus, Wifi, Globe, Hash, User, X, Lock } from 'lucide-react-native';
+import { Radio, Plus, Wifi, Globe, Hash, User, X, Lock, Search } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { formatTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
@@ -108,10 +108,14 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
   onDM: (nodeId: string, name: string) => void;
   onForum: (channelName: string) => void;
 }) {
-  const [tab, setTab] = useState<'dm' | 'forum'>('dm');
+  const { discoveredForums, announceForumPublic, joinForum: joinForumContext } = useMessages();
+  const [tab, setTab] = useState<'dm' | 'forum' | 'discover'>('dm');
   const [nodeId, setNodeId] = useState('');
   const [name, setName] = useState('');
   const [channel, setChannel] = useState('');
+  const [newForumName, setNewForumName] = useState('');
+  const [newForumDesc, setNewForumDesc] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const handleDM = () => {
     if (!nodeId.trim()) return;
@@ -124,6 +128,24 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
     if (!channel.trim()) return;
     onForum(channel.trim().toLowerCase().replace(/\s+/g, '-'));
     setChannel('');
+    onClose();
+  };
+
+  const handleCreatePublicForum = async () => {
+    if (!newForumName.trim()) {
+      Alert.alert('Erreur', 'Entrez un nom de forum');
+      return;
+    }
+    const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
+    await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
+    announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
+    Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
+    setNewForumName(''); setNewForumDesc(''); setShowCreateForm(false);
+  };
+
+  const handleJoinDiscoveredForum = async (channelName: string, description: string) => {
+    await joinForumContext(channelName, description);
+    Alert.alert('Rejoint!', `Vous avez rejoint #${channelName}`);
     onClose();
   };
 
@@ -144,7 +166,7 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
               onPress={() => setTab('dm')}
             >
               <User size={14} color={tab === 'dm' ? Colors.accent : Colors.textMuted} />
-              <Text style={[styles.tabText, tab === 'dm' && { color: Colors.accent }]}>DM chiffré</Text>
+              <Text style={[styles.tabText, tab === 'dm' && { color: Colors.accent }]}>DM</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, tab === 'forum' && styles.tabActive]}
@@ -152,6 +174,13 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
             >
               <Hash size={14} color={tab === 'forum' ? Colors.cyan : Colors.textMuted} />
               <Text style={[styles.tabText, tab === 'forum' && { color: Colors.cyan }]}>Forum</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, tab === 'discover' && styles.tabActive]}
+              onPress={() => setTab('discover')}
+            >
+              <Search size={14} color={tab === 'discover' ? Colors.green : Colors.textMuted} />
+              <Text style={[styles.tabText, tab === 'discover' && { color: Colors.green }]}>Découvrir</Text>
             </TouchableOpacity>
           </View>
 
@@ -182,7 +211,7 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
                 <Text style={styles.modalBtnText}>Démarrer DM chiffré</Text>
               </TouchableOpacity>
             </View>
-          ) : (
+          ) : tab === 'forum' ? (
             <View style={styles.modalBody}>
               <Text style={styles.inputLabel}>Nom du canal</Text>
               <TextInput
@@ -201,6 +230,84 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
                 <Hash size={14} color={Colors.black} />
                 <Text style={styles.modalBtnText}>Rejoindre le forum</Text>
               </TouchableOpacity>
+            </View>
+          ) : (
+            <View style={styles.modalBody}>
+              <TouchableOpacity
+                style={styles.createForumBtn}
+                onPress={() => setShowCreateForm(!showCreateForm)}
+                activeOpacity={0.7}
+              >
+                <Plus size={16} color={Colors.green} />
+                <Text style={[styles.tabText, { color: Colors.green }]}>
+                  {showCreateForm ? 'Annuler' : 'Créer un forum public'}
+                </Text>
+              </TouchableOpacity>
+
+              {showCreateForm && (
+                <View style={{ gap: 8, marginTop: 8 }}>
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Nom du forum (ex: bitcoin-paris)"
+                    placeholderTextColor={Colors.textMuted}
+                    value={newForumName}
+                    onChangeText={setNewForumName}
+                    autoCapitalize="none"
+                  />
+                  <TextInput
+                    style={styles.modalInput}
+                    placeholder="Description (optionnel)"
+                    placeholderTextColor={Colors.textMuted}
+                    value={newForumDesc}
+                    onChangeText={setNewForumDesc}
+                  />
+                  <TouchableOpacity
+                    style={[styles.modalBtn, { backgroundColor: Colors.green }]}
+                    onPress={handleCreatePublicForum}
+                  >
+                    <Text style={styles.modalBtnText}>Créer et Annoncer</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              <Text style={[styles.inputLabel, { marginTop: 16 }]}>
+                Forums découverts ({discoveredForums.length})
+              </Text>
+
+              {discoveredForums.length === 0 ? (
+                <View style={{ paddingVertical: 40, alignItems: 'center' }}>
+                  <Search size={32} color={Colors.textMuted} />
+                  <Text style={{ color: Colors.textMuted, fontSize: 13, marginTop: 8 }}>
+                    Aucun forum découvert
+                  </Text>
+                </View>
+              ) : (
+                <FlatList
+                  data={discoveredForums}
+                  keyExtractor={(item, idx) => `${item.channelName}-${idx}`}
+                  style={{ maxHeight: 300 }}
+                  renderItem={({ item }) => (
+                    <TouchableOpacity
+                      style={styles.discoveredForumItem}
+                      onPress={() => handleJoinDiscoveredForum(item.channelName, item.description)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.forumIconSmall}>
+                        <Hash size={16} color={Colors.green} />
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.discoveredForumName}>#{item.channelName}</Text>
+                        <Text style={styles.discoveredForumDesc} numberOfLines={1}>
+                          {item.description}
+                        </Text>
+                        <Text style={styles.discoveredForumMeta}>
+                          Par {item.creatorNodeId}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )}
+                />
+              )}
             </View>
           )}
         </View>
@@ -390,4 +497,22 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent, borderRadius: 12, paddingVertical: 14, marginTop: 8,
   },
   modalBtnText: { color: Colors.black, fontSize: 15, fontWeight: '700' },
+  // Forum discovery
+  createForumBtn: {
+    flexDirection: 'row', alignItems: 'center', gap: 6,
+    paddingVertical: 10, paddingHorizontal: 12, borderRadius: 8,
+    backgroundColor: Colors.surfaceLight, borderWidth: 1, borderColor: Colors.border,
+  },
+  discoveredForumItem: {
+    flexDirection: 'row', alignItems: 'center', gap: 10,
+    backgroundColor: Colors.surfaceLight, borderRadius: 10,
+    padding: 12, marginTop: 8, borderWidth: 0.5, borderColor: Colors.border,
+  },
+  forumIconSmall: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.surface, justifyContent: 'center', alignItems: 'center',
+  },
+  discoveredForumName: { color: Colors.text, fontSize: 14, fontWeight: '600' },
+  discoveredForumDesc: { color: Colors.textSecondary, fontSize: 12, marginTop: 2 },
+  discoveredForumMeta: { color: Colors.textMuted, fontSize: 10, marginTop: 2 },
 });

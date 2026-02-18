@@ -99,7 +99,7 @@ export class BleGatewayClient {
               name.toLowerCase().includes('mesh') ||
               name.toLowerCase().includes('lora');
 
-            if (isMeshCoreGateway || !device.name) {
+            if (isMeshCoreGateway) {
               foundDevices.add(device.id);
               console.log(`[BleGateway] Found device: ${device.name || 'Unknown'} (${device.id}), RSSI: ${device.rssi}`);
 

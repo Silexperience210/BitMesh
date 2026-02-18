@@ -46,6 +46,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   });
 
   const clientRef = useRef<BleGatewayClient | null>(null);
+  const queueRef = useRef<MeshCorePacket[]>([]); // Queue pour messages hors ligne
+  const MAX_QUEUE_SIZE = 100;
 
   useEffect(() => {
     // Initialiser le client BLE
@@ -79,6 +81,35 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       }
     };
   }, []);
+
+  /**
+   * Vide la queue de messages quand BLE se reconnecte
+   */
+  useEffect(() => {
+    if (state.connected && clientRef.current && queueRef.current.length > 0) {
+      console.log(`[BleProvider] BLE reconnecté, envoi de ${queueRef.current.length} messages en queue...`);
+
+      const queue = [...queueRef.current];
+      queueRef.current = [];
+
+      // Envoyer tous les messages en queue
+      (async () => {
+        for (const packet of queue) {
+          try {
+            await clientRef.current!.sendPacket(packet);
+            console.log('[BleProvider] Message de la queue envoyé');
+          } catch (error) {
+            console.error('[BleProvider] Erreur envoi message de la queue:', error);
+            // Remettre dans la queue en cas d'erreur
+            if (queueRef.current.length < MAX_QUEUE_SIZE) {
+              queueRef.current.push(packet);
+            }
+          }
+        }
+        console.log('[BleProvider] Queue vidée');
+      })();
+    }
+  }, [state.connected]);
 
   /**
    * Demande les permissions BLE sur Android
@@ -207,10 +238,19 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Envoie un paquet MeshCore via BLE → LoRa
+   * Si déconnecté, ajoute à la queue pour envoi ultérieur
    */
   const sendPacket = async (packet: MeshCorePacket) => {
     if (!clientRef.current || !state.connected) {
-      throw new Error('Not connected to gateway');
+      // Si déconnecté, ajouter à la queue (max 100 messages)
+      if (queueRef.current.length < MAX_QUEUE_SIZE) {
+        queueRef.current.push(packet);
+        console.log(`[BleProvider] Message ajouté à la queue (${queueRef.current.length}/${MAX_QUEUE_SIZE})`);
+      } else {
+        console.warn('[BleProvider] Queue pleine, message ignoré');
+        throw new Error('BLE queue full (100 messages pending)');
+      }
+      return;
     }
 
     await clientRef.current.sendPacket(packet);

@@ -580,6 +580,13 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
       if (exists) return prev;
 
+      // Nouveau forum découvert - afficher notification
+      // Note: On utilise setTimeout pour éviter d'afficher pendant le rendu
+      setTimeout(() => {
+        // Notification simple (peut être remplacée par un toast custom)
+        console.log(`[Forums] 🔔 Nouveau forum: #${announcement.channelName} - ${announcement.description}`);
+      }, 100);
+
       // Garder seulement les 50 dernières annonces
       const updated = [announcement, ...prev].slice(0, 50);
       return updated;
