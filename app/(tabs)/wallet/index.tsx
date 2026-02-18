@@ -59,6 +59,7 @@ import {
   type CashuMintQuote,
 } from '@/utils/cashu';
 import { formatSats } from '@/utils/helpers';
+import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -133,12 +134,14 @@ function BitcoinBalanceCard({
   fees,
   isLoading,
   currency,
+  onReceivePress,
 }: {
   balance: AddressBalance | null;
   btcPrice: number;
   fees: MempoolFeeEstimate | null;
   isLoading: boolean;
   currency: string;
+  onReceivePress: () => void;
 }) {
   const glowAnim = useRef(new Animated.Value(0)).current;
   const { walletInfo, isInitialized } = useWalletSeed();
@@ -252,7 +255,7 @@ function BitcoinBalanceCard({
               return;
             }
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            handleCopyAddress();
+            onReceivePress();
           }}
           testID="receive-btc-button"
         >
@@ -559,6 +562,7 @@ function TransactionItem({ tx, btcPrice, currency }: { tx: FormattedTransaction;
 export default function WalletScreen() {
   const [activeTab, setActiveTab] = useState<WalletTab>('bitcoin');
   const [refreshing, setRefreshing] = useState<boolean>(false);
+  const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
 
   const { walletInfo, isInitialized, receiveAddresses } = useWalletSeed();
   const { getMempoolUrl, getCashuMintUrl, settings } = useAppSettings();
@@ -663,6 +667,7 @@ export default function WalletScreen() {
   const btcPrice = priceQuery.data ?? 0;
 
   return (
+    <>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
@@ -686,6 +691,7 @@ export default function WalletScreen() {
             fees={feeQuery.data ?? null}
             isLoading={balanceQuery.isLoading || balanceQuery.isFetching}
             currency={settings.fiatCurrency}
+            onReceivePress={() => setShowReceiveModal(true)}
           />
 
           <View style={styles.quickActions}>
@@ -867,6 +873,15 @@ export default function WalletScreen() {
         </Text>
       </View>
     </ScrollView>
+
+    {/* Modal Receive Bitcoin */}
+    <ReceiveBitcoinModal
+      visible={showReceiveModal}
+      onClose={() => setShowReceiveModal(false)}
+      address={walletInfo?.firstReceiveAddress || ''}
+      addresses={receiveAddresses}
+    />
+    </>
   );
 }
 
