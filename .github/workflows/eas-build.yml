@@ -28,6 +28,37 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
+      - name: Générer le keystore Android
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore bitmesh.keystore \
+            -alias bitmesh \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass bitmesh123 \
+            -keypass bitmesh123 \
+            -dname "CN=BitMesh, OU=Mobile, O=BitMesh, L=Paris, ST=IDF, C=FR"
+          echo "Keystore généré :"
+          ls -lh bitmesh.keystore
+
+      - name: Créer credentials.json
+        run: |
+          cat > credentials.json << 'EOF'
+          {
+            "android": {
+              "keystore": {
+                "keystorePath": "bitmesh.keystore",
+                "keystorePassword": "bitmesh123",
+                "keyAlias": "bitmesh",
+                "keyPassword": "bitmesh123"
+              }
+            }
+          }
+          EOF
+          echo "credentials.json créé"
+
       - name: Build APK via EAS (attend la fin du build)
         id: build
         run: |
@@ -36,9 +67,12 @@ jobs:
             --profile preview \
             --non-interactive \
             --wait \
-            --json)
+            --json 2>&1)
           echo "EAS output: $OUTPUT"
-          BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
+          BUILD_URL=$(echo "$OUTPUT" | grep -o '"buildUrl":"[^"]*"' | tail -1 | cut -d'"' -f4)
+          if [ -z "$BUILD_URL" ]; then
+            BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
+          fi
           echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
           echo "Build URL: $BUILD_URL"
 
