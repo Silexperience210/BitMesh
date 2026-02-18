@@ -118,6 +118,8 @@ function SeedManagementCard() {
     isLoading,
     isGenerating,
     isImporting,
+    generateError,
+    importError,
     generateNewWallet,
     importWallet,
     deleteWallet,
@@ -137,6 +139,27 @@ function SeedManagementCard() {
       Animated.spring(scaleAnim, { toValue: 1, friction: 8, useNativeDriver: true }),
     ]).start();
   }, [fadeAnim, scaleAnim]);
+
+  // Afficher les erreurs de génération/import
+  useEffect(() => {
+    if (generateError) {
+      Alert.alert(
+        'Erreur Génération Wallet',
+        `Impossible de générer le wallet:\n${generateError.message}\n\nVérifiez les logs pour plus de détails.`,
+        [{ text: 'OK', onPress: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error) }]
+      );
+    }
+  }, [generateError]);
+
+  useEffect(() => {
+    if (importError) {
+      Alert.alert(
+        'Erreur Import Wallet',
+        `Impossible d'importer le wallet:\n${importError.message}`,
+        [{ text: 'OK', onPress: () => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error) }]
+      );
+    }
+  }, [importError]);
 
   const handleGenerate = useCallback((strength: 12 | 24 = 12) => {
     if (isInitialized) {

@@ -22,6 +22,8 @@ export interface WalletSeedState {
   isLoading: boolean;
   isGenerating: boolean;
   isImporting: boolean;
+  generateError: Error | null;
+  importError: Error | null;
   generateNewWallet: (strength?: 12 | 24) => void;
   importWallet: (mnemonic: string) => void;
   deleteWallet: () => void;
@@ -69,21 +71,31 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
   const generateMutation = useMutation({
     mutationFn: async (strength: 12 | 24) => {
       console.log('[WalletSeed] Generating new wallet with', strength, 'words...');
-      const newMnemonic = generateMnemonic(strength);
-      await SecureStore.setItemAsync(MNEMONIC_KEY, newMnemonic);
-      await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
-      console.log('[WalletSeed] New wallet saved to SecureStore');
-      return newMnemonic;
+      try {
+        const newMnemonic = generateMnemonic(strength);
+        console.log('[WalletSeed] Mnemonic generated, saving to SecureStore...');
+        await SecureStore.setItemAsync(MNEMONIC_KEY, newMnemonic);
+        await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
+        console.log('[WalletSeed] New wallet saved to SecureStore');
+        return newMnemonic;
+      } catch (error: any) {
+        console.error('[WalletSeed] Error in mutationFn:', error);
+        throw new Error(`Failed to generate wallet: ${error.message || error}`);
+      }
     },
     onSuccess: (newMnemonic) => {
+      console.log('[WalletSeed] Generation successful, updating state...');
       setMnemonic(newMnemonic);
       const info = deriveWalletInfo(newMnemonic);
       setWalletInfo(info);
       setReceiveAddresses(deriveReceiveAddresses(newMnemonic, 5));
       setIsInitialized(true);
+      console.log('[WalletSeed] Wallet initialized successfully');
     },
-    onError: (err) => {
-      console.log('[WalletSeed] Generation error:', err);
+    onError: (err: any) => {
+      console.error('[WalletSeed] ❌ Generation error:', err);
+      console.error('[WalletSeed] Error details:', JSON.stringify(err, null, 2));
+      // L'erreur sera affichée dans Settings via Alert
     },
   });
 
@@ -153,6 +165,8 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
     isLoading: loadQuery.isLoading,
     isGenerating: generateMutation.isPending,
     isImporting: importMutation.isPending,
+    generateError: generateMutation.error,
+    importError: importMutation.error,
     generateNewWallet,
     importWallet,
     deleteWallet,
