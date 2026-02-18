@@ -36,7 +36,7 @@ jobs:
             --profile preview \
             --non-interactive \
             --wait \
-            --json 2>/dev/null)
+            --json)
           echo "EAS output: $OUTPUT"
           BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
           echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
