@@ -7,28 +7,16 @@ import {
   TouchableOpacity,
   Animated,
   Modal,
-  Dimensions,
 } from 'react-native';
 import {
   Radio,
-  Battery,
   Wifi,
   MapPin,
-  RefreshCw,
-  Zap,
-  Link,
-  Unlink,
-  ChevronDown,
-  ChevronUp,
   Activity,
-  Signal,
   Cpu,
-  Package,
   ScanSearch,
   X,
   Check,
-  AlertTriangle,
-  Loader,
   Server,
   ArrowUpRight,
   ArrowDownLeft,
@@ -36,23 +24,16 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
-import { mockNodes, meshStats, MeshNode, mockGatewayStats, mockGatewayRelayLog } from '@/mocks/data';
+import { meshStats, mockGatewayStats, mockGatewayRelayLog } from '@/mocks/data';
+import { useMessages } from '@/providers/MessagesProvider';
+import { type RadarPeer, formatDistance } from '@/utils/radar';
 import { useGateway } from '@/providers/GatewayProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
-import {
-  formatTime,
-  getSignalColor,
-  getPairingColor,
-  getPairingLabel,
-  formatRssi,
-  formatSnr,
-} from '@/utils/helpers';
+import { formatTime } from '@/utils/helpers';
 import MeshRadar from '@/components/MeshRadar';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
-
 type ViewMode = 'radar' | 'list';
-type FilterMode = 'all' | 'paired' | 'discovered' | 'online';
+type FilterMode = 'all' | 'online';
 
 function ScanButton({ isScanning, onPress }: { isScanning: boolean; onPress: () => void }) {
   const rotateAnim = useRef(new Animated.Value(0)).current;
@@ -93,95 +74,33 @@ function ScanButton({ isScanning, onPress }: { isScanning: boolean; onPress: () 
   );
 }
 
-function PairingStateBadge({ state }: { state: string }) {
-  const color = getPairingColor(state);
-  const label = getPairingLabel(state);
 
-  const iconSize = 10;
-  let icon = null;
-  switch (state) {
-    case 'paired':
-      icon = <Check size={iconSize} color={color} />;
-      break;
-    case 'pairing':
-      icon = <Loader size={iconSize} color={color} />;
-      break;
-    case 'discovered':
-      icon = <ScanSearch size={iconSize} color={color} />;
-      break;
-    case 'failed':
-      icon = <AlertTriangle size={iconSize} color={color} />;
-      break;
-    default:
-      icon = <Unlink size={iconSize} color={color} />;
-  }
-
-  return (
-    <View style={[styles.pairingBadge, { backgroundColor: color + '20', borderColor: color + '40' }]}>
-      {icon}
-      <Text style={[styles.pairingBadgeText, { color }]}>{label}</Text>
-    </View>
-  );
-}
-
-function DeviceTypeBadge({ type }: { type: string }) {
-  const colorMap: Record<string, string> = {
-    relay: Colors.blue,
-    gateway: Colors.purple,
-    repeater: Colors.cyan,
-    client: Colors.textSecondary,
-    node: Colors.textSecondary,
-  };
-  const bgMap: Record<string, string> = {
-    relay: Colors.blueDim,
-    gateway: Colors.purpleDim,
-    repeater: Colors.cyanDim,
-    client: Colors.surfaceHighlight,
-    node: Colors.surfaceHighlight,
-  };
-  const color = colorMap[type] ?? Colors.textMuted;
-  const bg = bgMap[type] ?? Colors.surfaceHighlight;
-
-  return (
-    <View style={[styles.deviceBadge, { backgroundColor: bg }]}>
-      <Text style={[styles.deviceBadgeText, { color }]}>{type.toUpperCase()}</Text>
-    </View>
-  );
-}
-
-function StatsRow() {
-  const discoveredCount = mockNodes.filter((n) => n.pairingState === 'discovered').length;
-  const pairedCount = mockNodes.filter((n) => n.pairingState === 'paired').length;
-  const pairingCount = mockNodes.filter((n) => n.pairingState === 'pairing').length;
+function StatsRow({ peers, mqttConnected }: { peers: RadarPeer[]; mqttConnected: boolean }) {
+  const onlineCount = peers.filter(p => p.online).length;
 
   return (
     <View style={styles.statsRow}>
       <View style={styles.statChip}>
         <View style={[styles.statDot, { backgroundColor: Colors.green }]} />
-        <Text style={styles.statChipValue}>{meshStats.onlineNodes}</Text>
-        <Text style={styles.statChipLabel}>Online</Text>
+        <Text style={styles.statChipValue}>{onlineCount}</Text>
+        <Text style={styles.statChipLabel}>En ligne</Text>
       </View>
       <View style={styles.statChip}>
         <View style={[styles.statDot, { backgroundColor: Colors.accent }]} />
-        <Text style={styles.statChipValue}>{pairedCount}</Text>
-        <Text style={styles.statChipLabel}>Paired</Text>
+        <Text style={styles.statChipValue}>{peers.length}</Text>
+        <Text style={styles.statChipLabel}>Pairs</Text>
       </View>
       <View style={styles.statChip}>
-        <View style={[styles.statDot, { backgroundColor: Colors.yellow }]} />
-        <Text style={styles.statChipValue}>{discoveredCount}</Text>
-        <Text style={styles.statChipLabel}>New</Text>
+        <View style={[styles.statDot, { backgroundColor: mqttConnected ? Colors.green : Colors.red }]} />
+        <Text style={[styles.statChipValue, { color: mqttConnected ? Colors.green : Colors.red }]}>
+          {mqttConnected ? 'OK' : 'OFF'}
+        </Text>
+        <Text style={styles.statChipLabel}>MQTT</Text>
       </View>
-      {pairingCount > 0 && (
-        <View style={styles.statChip}>
-          <View style={[styles.statDot, { backgroundColor: Colors.blue }]} />
-          <Text style={styles.statChipValue}>{pairingCount}</Text>
-          <Text style={styles.statChipLabel}>Pairing</Text>
-        </View>
-      )}
       <View style={styles.statChip}>
         <View style={[styles.statDot, { backgroundColor: Colors.textMuted }]} />
-        <Text style={styles.statChipValue}>{meshStats.totalNodes}</Text>
-        <Text style={styles.statChipLabel}>Total</Text>
+        <Text style={styles.statChipValue}>{meshStats.frequency}</Text>
+        <Text style={styles.statChipLabel}>Freq</Text>
       </View>
     </View>
   );
@@ -215,10 +134,8 @@ function RadioBand() {
 
 function FilterChips({ active, onChange }: { active: FilterMode; onChange: (f: FilterMode) => void }) {
   const filters: { key: FilterMode; label: string }[] = [
-    { key: 'all', label: 'All' },
-    { key: 'online', label: 'Online' },
-    { key: 'paired', label: 'Paired' },
-    { key: 'discovered', label: 'New' },
+    { key: 'all', label: 'Tous' },
+    { key: 'online', label: 'En ligne' },
   ];
 
   return (
@@ -242,11 +159,10 @@ function FilterChips({ active, onChange }: { active: FilterMode; onChange: (f: F
   );
 }
 
-function NodeDetailModal({ node, visible, onClose }: { node: MeshNode | null; visible: boolean; onClose: () => void }) {
-  if (!node) return null;
+function NodeDetailModal({ peer, visible, onClose }: { peer: RadarPeer | null; visible: boolean; onClose: () => void }) {
+  if (!peer) return null;
 
-  const signalColor = getSignalColor(node.signalStrength);
-  const batteryColor = node.battery > 50 ? Colors.green : node.battery > 20 ? Colors.accent : Colors.red;
+  const signalColor = peer.signalStrength > 70 ? Colors.green : peer.signalStrength > 40 ? Colors.accent : Colors.red;
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
@@ -256,16 +172,12 @@ function NodeDetailModal({ node, visible, onClose }: { node: MeshNode | null; vi
 
           <View style={styles.modalHeader}>
             <View style={styles.modalHeaderLeft}>
-              <View style={[styles.modalNodeIcon, { borderColor: getPairingColor(node.pairingState) }]}>
-                {node.isRelay ? (
-                  <Zap size={22} color={getPairingColor(node.pairingState)} />
-                ) : (
-                  <Radio size={22} color={getPairingColor(node.pairingState)} />
-                )}
+              <View style={[styles.modalNodeIcon, { borderColor: peer.online ? Colors.green : Colors.textMuted }]}>
+                <Radio size={22} color={peer.online ? Colors.green : Colors.textMuted} />
               </View>
               <View>
-                <Text style={styles.modalNodeName}>{node.name}</Text>
-                <Text style={styles.modalNodeId}>{node.id.toUpperCase()}</Text>
+                <Text style={styles.modalNodeName}>{peer.name}</Text>
+                <Text style={styles.modalNodeId}>{peer.nodeId}</Text>
               </View>
             </View>
             <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={styles.modalClose}>
@@ -273,121 +185,57 @@ function NodeDetailModal({ node, visible, onClose }: { node: MeshNode | null; vi
             </TouchableOpacity>
           </View>
 
-          <View style={styles.modalBadges}>
-            <PairingStateBadge state={node.pairingState} />
-            <DeviceTypeBadge type={node.deviceType} />
-          </View>
-
           <View style={styles.modalGrid}>
             <View style={styles.modalGridItem}>
               <Wifi size={14} color={signalColor} />
-              <Text style={[styles.modalGridValue, { color: signalColor }]}>{node.signalStrength}%</Text>
+              <Text style={[styles.modalGridValue, { color: signalColor }]}>{peer.signalStrength}%</Text>
               <Text style={styles.modalGridLabel}>Signal</Text>
             </View>
             <View style={styles.modalGridItem}>
-              <Signal size={14} color={Colors.blue} />
-              <Text style={styles.modalGridValue}>{formatRssi(node.rssi)}</Text>
-              <Text style={styles.modalGridLabel}>RSSI</Text>
+              <MapPin size={14} color={Colors.cyan} />
+              <Text style={styles.modalGridValue}>{formatDistance(peer.distanceMeters)}</Text>
+              <Text style={styles.modalGridLabel}>Distance</Text>
             </View>
             <View style={styles.modalGridItem}>
-              <Activity size={14} color={Colors.cyan} />
-              <Text style={styles.modalGridValue}>{formatSnr(node.snr)}</Text>
-              <Text style={styles.modalGridLabel}>SNR</Text>
-            </View>
-            <View style={styles.modalGridItem}>
-              <Battery size={14} color={batteryColor} />
-              <Text style={[styles.modalGridValue, { color: batteryColor }]}>{node.battery}%</Text>
-              <Text style={styles.modalGridLabel}>Battery</Text>
+              <Activity size={14} color={Colors.blue} />
+              <Text style={styles.modalGridValue}>{peer.online ? 'ONLINE' : 'OFFLINE'}</Text>
+              <Text style={styles.modalGridLabel}>État</Text>
             </View>
           </View>
 
           <View style={styles.modalDetails}>
+            {peer.lat !== undefined && peer.lng !== undefined && (
+              <View style={styles.modalDetailRow}>
+                <Text style={styles.modalDetailLabel}>Coordonnées GPS</Text>
+                <Text style={styles.modalDetailValue}>
+                  {peer.lat.toFixed(5)}, {peer.lng.toFixed(5)}
+                </Text>
+              </View>
+            )}
             <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Distance</Text>
-              <Text style={styles.modalDetailValue}>{node.distance}</Text>
+              <Text style={styles.modalDetailLabel}>Node ID</Text>
+              <Text style={styles.modalDetailValue}>{peer.nodeId}</Text>
             </View>
+            {peer.pubkeyHex && (
+              <View style={styles.modalDetailRow}>
+                <Text style={styles.modalDetailLabel}>Pubkey</Text>
+                <Text style={styles.modalDetailValue} numberOfLines={1}>
+                  {peer.pubkeyHex.slice(0, 20)}…
+                </Text>
+              </View>
+            )}
             <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Hops</Text>
-              <Text style={styles.modalDetailValue}>{node.hops}</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Firmware</Text>
-              <Text style={styles.modalDetailValue}>{node.firmware}</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Frequency</Text>
-              <Text style={styles.modalDetailValue}>{node.frequency}</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Channel</Text>
-              <Text style={styles.modalDetailValue}>Ch {node.channel}</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Airtime</Text>
-              <Text style={styles.modalDetailValue}>{node.airtime}%</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Packets RX/TX</Text>
-              <Text style={styles.modalDetailValue}>{node.packetsRx} / {node.packetsTx}</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Peers</Text>
-              <Text style={styles.modalDetailValue}>{node.connectedPeers.length} connected</Text>
-            </View>
-            <View style={styles.modalDetailRow}>
-              <Text style={styles.modalDetailLabel}>Last seen</Text>
-              <Text style={styles.modalDetailValue}>{formatTime(node.lastSeen)}</Text>
+              <Text style={styles.modalDetailLabel}>Vu il y a</Text>
+              <Text style={styles.modalDetailValue}>{formatTime(peer.lastSeen)}</Text>
             </View>
           </View>
-
-          {node.pairingState === 'discovered' && (
-            <TouchableOpacity
-              style={styles.pairButton}
-              activeOpacity={0.8}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                onClose();
-              }}
-            >
-              <Link size={18} color={Colors.black} />
-              <Text style={styles.pairButtonText}>Pair Device</Text>
-            </TouchableOpacity>
-          )}
-
-          {node.pairingState === 'paired' && (
-            <TouchableOpacity
-              style={styles.unpairButton}
-              activeOpacity={0.8}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                onClose();
-              }}
-            >
-              <Unlink size={18} color={Colors.red} />
-              <Text style={styles.unpairButtonText}>Unpair Device</Text>
-            </TouchableOpacity>
-          )}
-
-          {node.pairingState === 'failed' && (
-            <TouchableOpacity
-              style={styles.retryButton}
-              activeOpacity={0.8}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                onClose();
-              }}
-            >
-              <RefreshCw size={18} color={Colors.accent} />
-              <Text style={styles.retryButtonText}>Retry Pairing</Text>
-            </TouchableOpacity>
-          )}
         </View>
       </View>
     </Modal>
   );
 }
 
-function NodeItem({ node, onPress }: { node: MeshNode; onPress: () => void }) {
+function NodeItem({ peer, onPress }: { peer: RadarPeer; onPress: () => void }) {
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = useCallback(() => {
@@ -398,8 +246,9 @@ function NodeItem({ node, onPress }: { node: MeshNode; onPress: () => void }) {
     Animated.spring(scaleAnim, { toValue: 1, friction: 3, useNativeDriver: true }).start();
   }, [scaleAnim]);
 
-  const signalColor = getSignalColor(node.signalStrength);
-  const batteryColor = node.battery > 50 ? Colors.green : node.battery > 20 ? Colors.accent : Colors.red;
+  const signalColor = peer.signalStrength > 70 ? Colors.green
+    : peer.signalStrength > 40 ? Colors.accent
+    : Colors.red;
 
   return (
     <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
@@ -411,31 +260,35 @@ function NodeItem({ node, onPress }: { node: MeshNode; onPress: () => void }) {
         onPress={onPress}
       >
         <View style={styles.nodeLeft}>
-          <View style={[styles.nodeIcon, { borderColor: node.isOnline ? getPairingColor(node.pairingState) : Colors.textMuted }]}>
-            {node.deviceType === 'relay' || node.deviceType === 'repeater' ? (
-              <Zap size={16} color={node.isOnline ? getPairingColor(node.pairingState) : Colors.textMuted} />
-            ) : node.deviceType === 'gateway' ? (
-              <Package size={16} color={node.isOnline ? getPairingColor(node.pairingState) : Colors.textMuted} />
-            ) : (
-              <Radio size={16} color={node.isOnline ? getPairingColor(node.pairingState) : Colors.textMuted} />
-            )}
-            {node.isOnline && (
-              <View style={[styles.nodeOnlineDot, { backgroundColor: getPairingColor(node.pairingState) }]} />
+          <View style={[styles.nodeIcon, { borderColor: peer.online ? Colors.green : Colors.textMuted }]}>
+            <Radio size={16} color={peer.online ? Colors.green : Colors.textMuted} />
+            {peer.online && (
+              <View style={[styles.nodeOnlineDot, { backgroundColor: Colors.green }]} />
             )}
           </View>
           <View style={styles.nodeInfo}>
             <View style={styles.nodeNameRow}>
-              <Text style={[styles.nodeName, !node.isOnline && styles.nodeNameOffline]} numberOfLines={1}>
-                {node.name}
+              <Text style={[styles.nodeName, !peer.online && styles.nodeNameOffline]} numberOfLines={1}>
+                {peer.name}
               </Text>
-              <PairingStateBadge state={node.pairingState} />
+              <View style={[styles.pairingBadge, {
+                backgroundColor: peer.online ? Colors.greenDim : Colors.surfaceHighlight,
+                borderColor: (peer.online ? Colors.green : Colors.textMuted) + '40',
+              }]}>
+                <Text style={[styles.pairingBadgeText, { color: peer.online ? Colors.green : Colors.textMuted }]}>
+                  {peer.online ? 'ONLINE' : 'OFFLINE'}
+                </Text>
+              </View>
             </View>
             <View style={styles.nodeMetaRow}>
               <MapPin size={10} color={Colors.textMuted} />
-              <Text style={styles.nodeDistance}>{node.distance}</Text>
-              <Text style={styles.nodeHops}>{node.hops}h</Text>
-              <Text style={styles.nodeSep}>·</Text>
-              <Text style={styles.nodeRssi}>{node.rssi}dBm</Text>
+              <Text style={styles.nodeDistance}>{formatDistance(peer.distanceMeters)}</Text>
+              {peer.lat !== undefined && (
+                <>
+                  <Text style={styles.nodeSep}>·</Text>
+                  <Text style={styles.nodeRssi}>GPS</Text>
+                </>
+              )}
             </View>
           </View>
         </View>
@@ -444,16 +297,10 @@ function NodeItem({ node, onPress }: { node: MeshNode; onPress: () => void }) {
           <View style={styles.nodeSignalRow}>
             <Wifi size={12} color={signalColor} />
             <Text style={[styles.nodeSignalText, { color: signalColor }]}>
-              {node.signalStrength}%
+              {peer.signalStrength}%
             </Text>
           </View>
-          <View style={styles.nodeBatteryRow}>
-            <Battery size={12} color={batteryColor} />
-            <Text style={[styles.nodeBatteryText, { color: batteryColor }]}>
-              {node.battery}%
-            </Text>
-          </View>
-          <Text style={styles.nodeLastSeen}>{formatTime(node.lastSeen)}</Text>
+          <Text style={styles.nodeLastSeen}>{formatTime(peer.lastSeen)}</Text>
         </View>
       </TouchableOpacity>
     </Animated.View>
@@ -642,23 +489,20 @@ export default function MeshScreen() {
   const [isScanning, setIsScanning] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<ViewMode>('radar');
   const [filter, setFilter] = useState<FilterMode>('all');
-  const [selectedNode, setSelectedNode] = useState<MeshNode | null>(null);
+  const [selectedPeer, setSelectedPeer] = useState<RadarPeer | null>(null);
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
+  const { radarPeers, mqttState, identity } = useMessages();
 
-  const filteredNodes = useMemo(() => {
+  const filteredPeers = useMemo(() => {
     switch (filter) {
       case 'online':
-        return mockNodes.filter((n) => n.isOnline);
-      case 'paired':
-        return mockNodes.filter((n) => n.pairingState === 'paired');
-      case 'discovered':
-        return mockNodes.filter((n) => n.pairingState === 'discovered' || n.pairingState === 'pairing');
+        return radarPeers.filter((p) => p.online);
       default:
-        return mockNodes;
+        return radarPeers;
     }
-  }, [filter]);
+  }, [filter, radarPeers]);
 
   const handleScan = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -671,15 +515,15 @@ export default function MeshScreen() {
     }
   }, [isScanning]);
 
-  const handleNodePress = useCallback((node: MeshNode) => {
+  const handleNodePress = useCallback((peer: RadarPeer) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    setSelectedNode(node);
+    setSelectedPeer(peer);
     setShowDetail(true);
   }, []);
 
   const handleCloseDetail = useCallback(() => {
     setShowDetail(false);
-    setSelectedNode(null);
+    setSelectedPeer(null);
   }, []);
 
   return (
@@ -703,7 +547,7 @@ export default function MeshScreen() {
 
       {!isInternetOnly && (
         <>
-          <StatsRow />
+          <StatsRow peers={radarPeers} mqttConnected={mqttState === 'connected'} />
           <RadioBand />
         </>
       )}
@@ -733,27 +577,23 @@ export default function MeshScreen() {
 
       {viewMode === 'radar' && (
         <View style={styles.radarCard}>
-          <MeshRadar nodes={filteredNodes} isScanning={isScanning} />
+          <MeshRadar peers={filteredPeers} isScanning={isScanning} myNodeId={identity?.nodeId} />
           <View style={styles.radarLegend}>
             <View style={styles.legendItem}>
               <View style={[styles.legendDot, { backgroundColor: Colors.green }]} />
-              <Text style={styles.legendText}>Paired</Text>
+              <Text style={styles.legendText}>Fort (&gt;70%)</Text>
             </View>
             <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.yellow }]} />
-              <Text style={styles.legendText}>New</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: Colors.blue }]} />
-              <Text style={styles.legendText}>Pairing</Text>
+              <View style={[styles.legendDot, { backgroundColor: Colors.accent }]} />
+              <Text style={styles.legendText}>Moyen</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendDot, { backgroundColor: Colors.red }]} />
-              <Text style={styles.legendText}>Failed</Text>
+              <Text style={styles.legendText}>Faible</Text>
             </View>
             <View style={styles.legendItem}>
               <View style={[styles.legendDot, { backgroundColor: Colors.textMuted }]} />
-              <Text style={styles.legendText}>Offline</Text>
+              <Text style={styles.legendText}>Hors ligne</Text>
             </View>
           </View>
         </View>
@@ -762,22 +602,28 @@ export default function MeshScreen() {
       {!isInternetOnly && <View style={styles.nodesSection}>
         <View style={styles.nodesSectionHeader}>
           <Text style={styles.nodesSectionTitle}>
-            {viewMode === 'radar' ? 'Nearby Devices' : 'All Devices'}
+            {viewMode === 'radar' ? 'Pairs proches' : 'Tous les pairs'}
           </Text>
-          <Text style={styles.nodesCount}>{filteredNodes.length}</Text>
+          <Text style={styles.nodesCount}>{filteredPeers.length}</Text>
         </View>
 
         <FilterChips active={filter} onChange={setFilter} />
 
-        {filteredNodes.map((node) => (
-          <NodeItem key={node.id} node={node} onPress={() => handleNodePress(node)} />
+        {filteredPeers.map((peer) => (
+          <NodeItem key={peer.nodeId} peer={peer} onPress={() => handleNodePress(peer)} />
         ))}
 
-        {filteredNodes.length === 0 && (
+        {filteredPeers.length === 0 && (
           <View style={styles.emptyState}>
             <ScanSearch size={32} color={Colors.textMuted} />
-            <Text style={styles.emptyText}>No devices found</Text>
-            <Text style={styles.emptySubtext}>Try scanning or changing filters</Text>
+            <Text style={styles.emptyText}>
+              {mqttState === 'connected' ? 'Aucun pair détecté' : 'Connexion MQTT...'}
+            </Text>
+            <Text style={styles.emptySubtext}>
+              {mqttState === 'connected'
+                ? 'Les pairs apparaissent quand ils se connectent'
+                : 'En attente du broker MQTT'}
+            </Text>
           </View>
         )}
       </View>}
@@ -821,7 +667,7 @@ export default function MeshScreen() {
         </View>
       )}
 
-      <NodeDetailModal node={selectedNode} visible={showDetail} onClose={handleCloseDetail} />
+      <NodeDetailModal peer={selectedPeer} visible={showDetail} onClose={handleCloseDetail} />
     </ScrollView>
   );
 }

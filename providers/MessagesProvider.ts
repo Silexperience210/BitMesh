@@ -6,12 +6,16 @@ import {
   createMeshMqttClient,
   publishMesh,
   subscribeMesh,
+  subscribePattern,
+  updatePresence,
   disconnectMesh,
   joinForumChannel,
   leaveForumChannel,
   fetchPeerPubkey,
   TOPICS,
 } from '@/utils/mqtt-client';
+import * as Location from 'expo-location';
+import { type RadarPeer, haversineDistance, gpsBearing, distanceToSignal } from '@/utils/radar';
 import {
   encryptDM,
   decryptDM,
@@ -53,6 +57,10 @@ export interface MessagesState {
   conversations: StoredConversation[];
   // Messages par convId
   messagesByConv: Record<string, StoredMessage[]>;
+  // Pairs visibles sur le radar (via MQTT identity)
+  radarPeers: RadarPeer[];
+  // Notre position GPS
+  myLocation: { lat: number; lng: number } | null;
   // Actions
   connect: () => void;
   disconnect: () => void;
@@ -71,6 +79,9 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const [mqttState, setMqttState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [messagesByConv, setMessagesByConv] = useState<Record<string, StoredMessage[]>>({});
+  const [radarPeers, setRadarPeers] = useState<RadarPeer[]>([]);
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const mqttRef = useRef<MeshMqttClient | null>(null);
   const joinedForums = useRef<Set<string>>(new Set());
 
@@ -93,6 +104,91 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       setConversations(convs);
     });
   }, []);
+
+  // Demander la permission GPS et tracker notre position
+  useEffect(() => {
+    let subscription: Location.LocationSubscription | null = null;
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        console.log('[Radar] Permission GPS refusée');
+        return;
+      }
+      // Position initiale
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const pos = { lat: loc.coords.latitude, lng: loc.coords.longitude };
+      setMyLocation(pos);
+      myLocationRef.current = pos;
+      console.log('[Radar] Position initiale:', pos.lat.toFixed(4), pos.lng.toFixed(4));
+
+      // Mise à jour continue (~5 secondes)
+      subscription = await Location.watchPositionAsync(
+        { accuracy: Location.Accuracy.Balanced, timeInterval: 5000, distanceInterval: 10 },
+        (location) => {
+          const p = { lat: location.coords.latitude, lng: location.coords.longitude };
+          setMyLocation(p);
+          myLocationRef.current = p;
+          // Mettre à jour la présence MQTT avec le nouveau GPS
+          if (mqttRef.current && identity) {
+            updatePresence(mqttRef.current, identity.nodeId, identity.pubkeyHex, p.lat, p.lng);
+          }
+        }
+      );
+    })();
+    return () => { subscription?.remove(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identity]);
+
+  // Handler de présence d'un pair distant (topic: meshcore/identity/{nodeId})
+  const handlePeerPresence = useCallback((topic: string, payloadStr: string) => {
+    if (!identity) return;
+    try {
+      const data = JSON.parse(payloadStr) as {
+        nodeId?: string;
+        pubkeyHex?: string;
+        online?: boolean;
+        ts?: number;
+        lat?: number;
+        lng?: number;
+      };
+      if (!data.nodeId || data.nodeId === identity.nodeId) return;
+
+      const myPos = myLocationRef.current;
+      let distanceMeters = 0;
+      let bearingRad = 0;
+
+      if (myPos && data.lat !== undefined && data.lng !== undefined) {
+        distanceMeters = haversineDistance(myPos.lat, myPos.lng, data.lat, data.lng);
+        bearingRad = gpsBearing(myPos.lat, myPos.lng, data.lat, data.lng);
+      } else {
+        // Pas de GPS: distance inconnue, angle aléatoire stable basé sur nodeId hash
+        const hash = data.nodeId.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+        distanceMeters = 500 + (hash % 4000);
+        bearingRad = (hash % 628) / 100; // 0..2π
+      }
+
+      const peer: RadarPeer = {
+        nodeId: data.nodeId,
+        name: data.nodeId,
+        distanceMeters,
+        bearingRad,
+        online: data.online !== false,
+        pubkeyHex: data.pubkeyHex,
+        lat: data.lat,
+        lng: data.lng,
+        lastSeen: data.ts ?? Date.now(),
+        signalStrength: distanceToSignal(distanceMeters),
+      };
+
+      setRadarPeers(prev => {
+        const filtered = prev.filter(p => p.nodeId !== data.nodeId);
+        if (!peer.online && filtered.length === prev.length) return prev; // pair déjà absent
+        return peer.online ? [peer, ...filtered] : filtered;
+      });
+    } catch (err) {
+      console.log('[Radar] Erreur parse présence:', err);
+    }
+  }, [identity]);
 
   // Handler pour un message DM entrant
   const handleIncomingDM = useCallback((topic: string, payloadStr: string) => {
@@ -171,6 +267,9 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
 
       const isMine = wire.from === identity.nodeId;
+      // Si le message vient de nous-mêmes, publishAndStore l'a déjà sauvegardé → ignorer l'écho
+      if (isMine) return;
+
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: convId,
@@ -179,28 +278,24 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         text: plaintext,
         type: wire.type,
         timestamp: wire.ts,
-        isMine,
+        isMine: false,
         status: 'delivered',
       };
 
       saveMessage(msg);
-      if (!isMine) {
-        updateConversationLastMessage(convId, plaintext.slice(0, 50), wire.ts, true);
-      }
+      updateConversationLastMessage(convId, plaintext.slice(0, 50), wire.ts, true);
 
       setMessagesByConv(prev => ({
         ...prev,
         [convId]: [...(prev[convId] ?? []), msg],
       }));
 
-      if (!isMine) {
-        setConversations(prev =>
-          prev.map(c => c.id === convId
-            ? { ...c, lastMessage: `${wire.from}: ${plaintext.slice(0, 40)}`, lastMessageTime: wire.ts, unreadCount: c.unreadCount + 1 }
-            : c
-          )
-        );
-      }
+      setConversations(prev =>
+        prev.map(c => c.id === convId
+          ? { ...c, lastMessage: `${wire.from}: ${plaintext.slice(0, 40)}`, lastMessageTime: wire.ts, unreadCount: c.unreadCount + 1 }
+          : c
+        )
+      );
     } catch (err) {
       console.log('[Messages] Erreur message forum:', channelName, err);
     }
@@ -230,6 +325,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         if (s === 'connected') {
           // S'abonner aux DMs une fois connecté
           subscribeMesh(client, TOPICS.dm(identity.nodeId), handleIncomingDM, 1);
+          // S'abonner aux présences de tous les pairs (wildcard)
+          subscribePattern(client, 'meshcore/identity/+', handlePeerPresence, 0);
+          // Publier notre présence avec GPS si disponible
+          const pos = myLocationRef.current;
+          updatePresence(client, identity.nodeId, identity.pubkeyHex, pos?.lat, pos?.lng);
           // Rejoindre les forums déjà enregistrés
           joinedForums.current.forEach(ch => {
             joinForumChannel(client, ch, handleIncomingForum(ch));
@@ -238,7 +338,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       }
     }, 500);
-  }, [identity, handleIncomingDM, handleIncomingForum]);
+  }, [identity, handleIncomingDM, handleIncomingForum, handlePeerPresence]);
 
   // Auto-connexion dès que l'identité est disponible
   useEffect(() => {
@@ -455,6 +555,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     mqttState,
     conversations,
     messagesByConv,
+    radarPeers,
+    myLocation,
     connect,
     disconnect,
     sendMessage,

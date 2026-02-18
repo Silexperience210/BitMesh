@@ -2,15 +2,16 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput,
   TouchableOpacity, KeyboardAvoidingView, Platform,
-  ActivityIndicator,
+  ActivityIndicator, Modal,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
-import { Send, Bitcoin, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi } from 'lucide-react-native';
+import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { formatMessageTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
+import { decodeCashuToken, getTokenAmount } from '@/utils/cashu';
 import type { StoredMessage } from '@/utils/messages-store';
 
 function PaymentBubble({ amount }: { amount: number }) {
@@ -70,6 +71,117 @@ function MessageBubble({ message }: { message: StoredMessage }) {
   );
 }
 
+// Modal d'envoi d'un token Cashu
+function CashuSendModal({
+  visible,
+  onClose,
+  onSend,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSend: (token: string, amount: number) => Promise<void>;
+}) {
+  const [tokenInput, setTokenInput] = useState('');
+  const [preview, setPreview] = useState<{ amount: number; mint: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isSending, setIsSending] = useState(false);
+
+  const handleParse = useCallback((text: string) => {
+    setTokenInput(text);
+    setError(null);
+    setPreview(null);
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const decoded = decodeCashuToken(trimmed);
+    if (!decoded) {
+      setError('Token Cashu invalide');
+      return;
+    }
+    const amount = getTokenAmount(decoded);
+    const mint = decoded.token?.[0]?.mint ?? 'mint inconnu';
+    setPreview({ amount, mint });
+  }, []);
+
+  const handleSend = useCallback(async () => {
+    if (!preview || isSending) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setIsSending(true);
+    try {
+      await onSend(tokenInput.trim(), preview.amount);
+      setTokenInput('');
+      setPreview(null);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur envoi');
+    } finally {
+      setIsSending(false);
+    }
+  }, [preview, isSending, tokenInput, onSend, onClose]);
+
+  return (
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <TouchableOpacity style={cashuStyles.overlay} activeOpacity={1} onPress={onClose}>
+        <TouchableOpacity activeOpacity={1} style={cashuStyles.sheet}>
+          <View style={cashuStyles.handle} />
+          <View style={cashuStyles.header}>
+            <CircleDollarSign size={20} color={Colors.cyan} />
+            <Text style={cashuStyles.title}>Envoyer Cashu</Text>
+            <TouchableOpacity onPress={onClose} style={cashuStyles.closeBtn}>
+              <X size={18} color={Colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <Text style={cashuStyles.label}>Token Cashu (cashuA…)</Text>
+          <TextInput
+            style={[cashuStyles.input, error ? cashuStyles.inputError : null]}
+            value={tokenInput}
+            onChangeText={handleParse}
+            placeholder="cashuAeyJ0b2tlbiI6..."
+            placeholderTextColor={Colors.textMuted}
+            multiline
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+
+          {error && (
+            <View style={cashuStyles.errorRow}>
+              <AlertTriangle size={12} color={Colors.red} />
+              <Text style={cashuStyles.errorText}>{error}</Text>
+            </View>
+          )}
+
+          {preview && (
+            <View style={cashuStyles.preview}>
+              <View style={cashuStyles.previewRow}>
+                <Text style={cashuStyles.previewLabel}>Montant</Text>
+                <Text style={cashuStyles.previewAmount}>{preview.amount.toLocaleString()} sats</Text>
+              </View>
+              <View style={cashuStyles.previewRow}>
+                <Text style={cashuStyles.previewLabel}>Mint</Text>
+                <Text style={cashuStyles.previewMint} numberOfLines={1}>{preview.mint}</Text>
+              </View>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={[cashuStyles.sendBtn, !preview && cashuStyles.sendBtnDisabled]}
+            onPress={handleSend}
+            disabled={!preview || isSending}
+            activeOpacity={0.8}
+          >
+            {isSending
+              ? <ActivityIndicator size="small" color={Colors.black} />
+              : <Text style={cashuStyles.sendBtnText}>
+                  Envoyer {preview ? `${preview.amount.toLocaleString()} sats` : ''}
+                </Text>
+            }
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
@@ -82,6 +194,7 @@ export default function ChatScreen() {
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showCashuModal, setShowCashuModal] = useState(false);
   const flatListRef = useRef<FlatList>(null);
 
   const isForum = convId.startsWith('forum:');
@@ -182,7 +295,14 @@ export default function ChatScreen() {
         />
 
         <View style={styles.inputContainer}>
-          <TouchableOpacity style={styles.cashuSendButton} activeOpacity={0.7}>
+          <TouchableOpacity
+            style={styles.cashuSendButton}
+            activeOpacity={0.7}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowCashuModal(true);
+            }}
+          >
             <CircleDollarSign size={20} color={Colors.cyan} />
           </TouchableOpacity>
           <TextInput
@@ -207,6 +327,14 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <CashuSendModal
+        visible={showCashuModal}
+        onClose={() => setShowCashuModal(false)}
+        onSend={async (token, amount) => {
+          await sendCashu(convId, token, amount);
+        }}
+      />
     </>
   );
 }
@@ -271,4 +399,62 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceLight, justifyContent: 'center', alignItems: 'center',
   },
   sendButtonActive: { backgroundColor: Colors.accent },
+});
+
+const cashuStyles = StyleSheet.create({
+  overlay: {
+    flex: 1, backgroundColor: 'rgba(0,0,0,0.55)', justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: Colors.surface,
+    borderTopLeftRadius: 24, borderTopRightRadius: 24,
+    paddingHorizontal: 20, paddingBottom: 40,
+  },
+  handle: {
+    width: 36, height: 4, borderRadius: 2,
+    backgroundColor: Colors.surfaceHighlight,
+    alignSelf: 'center', marginTop: 10, marginBottom: 16,
+  },
+  header: {
+    flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 20,
+  },
+  title: {
+    flex: 1, color: Colors.text, fontSize: 17, fontWeight: '700',
+  },
+  closeBtn: {
+    width: 32, height: 32, borderRadius: 16,
+    backgroundColor: Colors.surfaceLight, justifyContent: 'center', alignItems: 'center',
+  },
+  label: {
+    color: Colors.textMuted, fontSize: 12, fontWeight: '600',
+    textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8,
+  },
+  input: {
+    backgroundColor: Colors.surfaceLight, borderRadius: 12,
+    paddingHorizontal: 14, paddingVertical: 12,
+    color: Colors.text, fontSize: 13, fontFamily: 'monospace',
+    borderWidth: 1, borderColor: Colors.border, minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  inputError: { borderColor: Colors.red },
+  errorRow: {
+    flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 8,
+  },
+  errorText: { color: Colors.red, fontSize: 12 },
+  preview: {
+    backgroundColor: Colors.cyanDim, borderRadius: 12,
+    padding: 14, marginTop: 14, gap: 8,
+    borderWidth: 1, borderColor: 'rgba(34,211,238,0.3)',
+  },
+  previewRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  previewLabel: { color: Colors.textMuted, fontSize: 12 },
+  previewAmount: { color: Colors.cyan, fontSize: 22, fontWeight: '800' },
+  previewMint: { color: Colors.textSecondary, fontSize: 11, fontFamily: 'monospace', maxWidth: '65%' },
+  sendBtn: {
+    marginTop: 20, backgroundColor: Colors.cyan,
+    paddingVertical: 16, borderRadius: 14,
+    alignItems: 'center', justifyContent: 'center',
+  },
+  sendBtnDisabled: { backgroundColor: Colors.surfaceLight },
+  sendBtnText: { color: Colors.black, fontSize: 16, fontWeight: '700' },
 });

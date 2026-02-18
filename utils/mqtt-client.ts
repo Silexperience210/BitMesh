@@ -21,6 +21,8 @@ export interface MeshMqttClient {
   state: MqttConnectionState;
   nodeId: string;
   handlers: Map<string, MessageHandler[]>;
+  // Handlers pour patterns MQTT à un niveau (ex: "meshcore/identity/+")
+  patternHandlers: Map<string, MessageHandler[]>;
 }
 
 // Créer et connecter un client MQTT réel
@@ -34,6 +36,7 @@ export function createMeshMqttClient(
     state: 'disconnected',
     nodeId,
     handlers: new Map(),
+    patternHandlers: new Map(),
   };
 
   const options: IClientOptions = {
@@ -84,7 +87,14 @@ export function createMeshMqttClient(
       console.log('[MQTT] Message reçu topic:', topic, 'len:', payloadStr.length);
       const handlers = instance.handlers.get(topic) ?? [];
       const wildcardHandlers = instance.handlers.get('#') ?? [];
-      [...handlers, ...wildcardHandlers].forEach(h => {
+      // Matcher les patterns "prefix/+" (ex: meshcore/identity/+)
+      const patternMatches: MessageHandler[] = [];
+      instance.patternHandlers.forEach((hs, pattern) => {
+        if (topicMatchesPattern(topic, pattern)) {
+          patternMatches.push(...hs);
+        }
+      });
+      [...handlers, ...wildcardHandlers, ...patternMatches].forEach(h => {
         try { h(topic, payloadStr); } catch (e) { console.log('[MQTT] Erreur handler:', e); }
       });
     });
@@ -198,6 +208,66 @@ export function joinForumChannel(
 // Quitter un forum
 export function leaveForumChannel(instance: MeshMqttClient, channelId: string): void {
   unsubscribeMesh(instance, TOPICS.forum(channelId));
+}
+
+// Matcher un topic MQTT avec un pattern contenant "+"
+// ex: "meshcore/identity/+" matche "meshcore/identity/MESH-A7F2"
+export function topicMatchesPattern(topic: string, pattern: string): boolean {
+  const topicParts = topic.split('/');
+  const patternParts = pattern.split('/');
+  if (topicParts.length !== patternParts.length) return false;
+  return patternParts.every((p, i) => p === '+' || p === topicParts[i]);
+}
+
+// S'abonner à un topic wildcard "+" (un niveau)
+export function subscribePattern(
+  instance: MeshMqttClient,
+  pattern: string,
+  handler: MessageHandler,
+  qos: 0 | 1 = 0
+): void {
+  if (!instance.patternHandlers.has(pattern)) {
+    instance.patternHandlers.set(pattern, []);
+  }
+  instance.patternHandlers.get(pattern)!.push(handler);
+
+  if (instance.client && instance.state === 'connected') {
+    instance.client.subscribe(pattern, { qos }, (err) => {
+      if (err) console.log('[MQTT] Erreur subscribe pattern:', pattern, err);
+      else console.log('[MQTT] Abonné pattern:', pattern);
+    });
+  } else {
+    instance.client?.once('connect', () => {
+      instance.client?.subscribe(pattern, { qos });
+    });
+  }
+}
+
+// Mettre à jour la présence (identity retained) avec GPS optionnel
+export function updatePresence(
+  instance: MeshMqttClient,
+  nodeId: string,
+  pubkeyHex: string,
+  lat?: number,
+  lng?: number
+): void {
+  if (!instance.client || instance.state !== 'connected') return;
+  const payload: Record<string, unknown> = {
+    nodeId,
+    pubkeyHex,
+    online: true,
+    ts: Date.now(),
+  };
+  if (lat !== undefined && lng !== undefined) {
+    payload.lat = lat;
+    payload.lng = lng;
+  }
+  instance.client.publish(
+    TOPICS.identity(nodeId),
+    JSON.stringify(payload),
+    { qos: 1, retain: true }
+  );
+  console.log('[MQTT] Présence mise à jour avec GPS:', lat, lng);
 }
 
 // Fetcher la clé publique d'un pair (via topic identity retained)

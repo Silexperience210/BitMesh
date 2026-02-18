@@ -22,7 +22,12 @@
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "app.rork.meshpay_lora_messaging_btc"
+      "package": "app.rork.meshpay_lora_messaging_btc",
+      "permissions": [
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_COARSE_LOCATION",
+        "INTERNET"
+      ]
     },
     "web": {
       "favicon": "./assets/images/favicon.png"
@@ -36,7 +41,14 @@
       ],
       "expo-font",
       "expo-web-browser",
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "BitMesh utilise votre position GPS pour afficher les pairs sur le radar.",
+          "locationWhenInUsePermission": "BitMesh utilise votre position GPS pour afficher les pairs sur le radar."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true

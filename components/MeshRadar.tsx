@@ -1,16 +1,17 @@
 import React, { useEffect, useRef, useMemo } from 'react';
 import { View, Text, StyleSheet, Animated, Easing } from 'react-native';
 import Colors from '@/constants/colors';
-import { MeshNode } from '@/mocks/data';
-import { getPairingColor } from '@/utils/helpers';
+import { type RadarPeer, formatDistance } from '@/utils/radar';
 
 const RADAR_SIZE = 260;
 const CENTER = RADAR_SIZE / 2;
-const MAX_DISTANCE = 6000;
+// Distance max affichée sur le radar (dernier anneau)
+const MAX_DISPLAY_METERS = 8000;
 
 interface MeshRadarProps {
-  nodes: MeshNode[];
+  peers: RadarPeer[];
   isScanning: boolean;
+  myNodeId?: string;
 }
 
 function RadarSweep({ isScanning }: { isScanning: boolean }) {
@@ -51,27 +52,32 @@ function RadarSweep({ isScanning }: { isScanning: boolean }) {
   );
 }
 
-function NodeBlip({ node, index }: { node: MeshNode; index: number }) {
+function PeerBlip({ peer, index }: { peer: RadarPeer; index: number }) {
   const pulseAnim = useRef(new Animated.Value(0)).current;
   const appearAnim = useRef(new Animated.Value(0)).current;
 
-  const ratio = Math.min(node.distanceMeters / MAX_DISTANCE, 0.9);
-  const angle = (index * 137.5 * Math.PI) / 180;
-  const radius = ratio * (CENTER - 24);
-  const x = CENTER + Math.cos(angle) * radius - 8;
-  const y = CENTER + Math.sin(angle) * radius - 8;
+  // Position basée sur le vrai bearing GPS
+  // bearingRad: 0 = Nord = haut du radar → angle screen = -π/2
+  const ratio = Math.min(peer.distanceMeters / MAX_DISPLAY_METERS, 0.92);
+  const screenAngle = peer.bearingRad - Math.PI / 2;
+  const radius = ratio * (CENTER - 20);
+  const x = CENTER + Math.cos(screenAngle) * radius - 8;
+  const y = CENTER + Math.sin(screenAngle) * radius - 8;
 
-  const color = getPairingColor(node.pairingState);
+  // Couleur selon signal
+  const color = peer.signalStrength > 70 ? Colors.green
+    : peer.signalStrength > 40 ? Colors.accent
+    : Colors.red;
 
   useEffect(() => {
     Animated.timing(appearAnim, {
       toValue: 1,
       duration: 600,
-      delay: index * 120,
+      delay: index * 100,
       useNativeDriver: true,
     }).start();
 
-    if (node.isOnline && node.pairingState !== 'failed') {
+    if (peer.online) {
       Animated.loop(
         Animated.sequence([
           Animated.timing(pulseAnim, { toValue: 1, duration: 1200, useNativeDriver: true }),
@@ -79,9 +85,10 @@ function NodeBlip({ node, index }: { node: MeshNode; index: number }) {
         ])
       ).start();
     }
-  }, [pulseAnim, appearAnim, index, node.isOnline, node.pairingState]);
+  }, [pulseAnim, appearAnim, index, peer.online]);
 
-  const blipSize = node.isRelay ? 16 : node.pairingState === 'discovered' ? 14 : 12;
+  const blipSize = 13;
+  const label = peer.name.length > 9 ? peer.name.slice(0, 8) + '…' : peer.name;
 
   return (
     <Animated.View
@@ -95,7 +102,7 @@ function NodeBlip({ node, index }: { node: MeshNode; index: number }) {
         },
       ]}
     >
-      {node.isOnline && (
+      {peer.online && (
         <Animated.View
           style={[
             styles.blipPulse,
@@ -104,15 +111,9 @@ function NodeBlip({ node, index }: { node: MeshNode; index: number }) {
               height: blipSize + 12,
               borderRadius: (blipSize + 12) / 2,
               borderColor: color,
-              opacity: pulseAnim.interpolate({
-                inputRange: [0, 1],
-                outputRange: [0.5, 0],
-              }),
+              opacity: pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [0.5, 0] }),
               transform: [{
-                scale: pulseAnim.interpolate({
-                  inputRange: [0, 1],
-                  outputRange: [1, 2],
-                }),
+                scale: pulseAnim.interpolate({ inputRange: [0, 1], outputRange: [1, 2.2] }),
               }],
             },
           ]}
@@ -125,21 +126,23 @@ function NodeBlip({ node, index }: { node: MeshNode; index: number }) {
             width: blipSize,
             height: blipSize,
             borderRadius: blipSize / 2,
-            backgroundColor: node.isOnline ? color : Colors.textMuted,
-            borderWidth: node.pairingState === 'discovered' ? 2 : 0,
-            borderColor: node.pairingState === 'discovered' ? Colors.yellow : 'transparent',
+            backgroundColor: peer.online ? color : Colors.textMuted,
           },
         ]}
       />
-      <Text style={[styles.blipLabel, { color }]} numberOfLines={1}>
-        {node.name.length > 8 ? node.name.substring(0, 7) + '…' : node.name}
-      </Text>
+      <Text style={[styles.blipLabel, { color }]} numberOfLines={1}>{label}</Text>
+      <Text style={styles.blipDist} numberOfLines={1}>{formatDistance(peer.distanceMeters)}</Text>
     </Animated.View>
   );
 }
 
-export default function MeshRadar({ nodes, isScanning }: MeshRadarProps) {
-  const rings = useMemo(() => [0.25, 0.5, 0.75, 1], []);
+export default function MeshRadar({ peers, isScanning, myNodeId }: MeshRadarProps) {
+  const rings = useMemo(() => [
+    { ratio: 0.25, label: `${(MAX_DISPLAY_METERS * 0.25 / 1000).toFixed(1)} km` },
+    { ratio: 0.5,  label: `${(MAX_DISPLAY_METERS * 0.5 / 1000).toFixed(1)} km` },
+    { ratio: 0.75, label: `${(MAX_DISPLAY_METERS * 0.75 / 1000).toFixed(1)} km` },
+    { ratio: 1,    label: `${(MAX_DISPLAY_METERS / 1000).toFixed(0)} km` },
+  ], []);
 
   return (
     <View style={styles.radarContainer}>
@@ -150,30 +153,48 @@ export default function MeshRadar({ nodes, isScanning }: MeshRadarProps) {
             style={[
               styles.ring,
               {
-                width: RADAR_SIZE * r,
-                height: RADAR_SIZE * r,
-                borderRadius: (RADAR_SIZE * r) / 2,
+                width: RADAR_SIZE * r.ratio,
+                height: RADAR_SIZE * r.ratio,
+                borderRadius: (RADAR_SIZE * r.ratio) / 2,
               },
             ]}
           />
         ))}
 
+        {/* Étiquettes des anneaux */}
+        <Text style={[styles.ringLabel, { top: CENTER - RADAR_SIZE * 0.25 / 2 - 2, left: CENTER + 4 }]}>
+          {rings[0].label}
+        </Text>
+        <Text style={[styles.ringLabel, { top: CENTER - RADAR_SIZE * 0.5 / 2 - 2, left: CENTER + 4 }]}>
+          {rings[1].label}
+        </Text>
+
+        {/* Indicateurs cardinaux */}
+        <Text style={styles.cardinalN}>N</Text>
+        <Text style={styles.cardinalS}>S</Text>
+        <Text style={styles.cardinalE}>E</Text>
+        <Text style={styles.cardinalW}>O</Text>
+
         <View style={styles.crosshairH} />
         <View style={styles.crosshairV} />
 
+        {/* Point central = nous */}
         <View style={styles.centerDot}>
           <View style={styles.centerDotInner} />
         </View>
+        {myNodeId && (
+          <Text style={styles.centerLabel}>{myNodeId.slice(5, 13)}</Text>
+        )}
 
         <RadarSweep isScanning={isScanning} />
 
-        {nodes.map((node, index) => (
-          <NodeBlip key={node.id} node={node} index={index} />
+        {peers.map((peer, index) => (
+          <PeerBlip key={peer.nodeId} peer={peer} index={index} />
         ))}
 
-        <Text style={[styles.rangeLabel, styles.rangeLabelTop]}>2 km</Text>
-        <Text style={[styles.rangeLabel, styles.rangeLabelRight]}>4 km</Text>
-        <Text style={[styles.rangeLabel, styles.rangeLabelBottom]}>6 km</Text>
+        {peers.length === 0 && !isScanning && (
+          <Text style={styles.emptyLabel}>Aucun pair détecté</Text>
+        )}
       </View>
     </View>
   );
@@ -194,27 +215,64 @@ const styles = StyleSheet.create({
   ring: {
     position: 'absolute',
     borderWidth: 1,
-    borderColor: 'rgba(42, 53, 69, 0.6)',
+    borderColor: 'rgba(42, 53, 69, 0.7)',
+  },
+  ringLabel: {
+    position: 'absolute',
+    color: Colors.textMuted,
+    fontSize: 7,
+    fontFamily: 'monospace',
+    opacity: 0.6,
+  },
+  cardinalN: {
+    position: 'absolute',
+    top: 2,
+    color: Colors.textMuted,
+    fontSize: 8,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  cardinalS: {
+    position: 'absolute',
+    bottom: 2,
+    color: Colors.textMuted,
+    fontSize: 8,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  cardinalE: {
+    position: 'absolute',
+    right: 2,
+    color: Colors.textMuted,
+    fontSize: 8,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  cardinalW: {
+    position: 'absolute',
+    left: 2,
+    color: Colors.textMuted,
+    fontSize: 8,
+    fontWeight: '700',
+    fontFamily: 'monospace',
   },
   crosshairH: {
     position: 'absolute',
     width: RADAR_SIZE,
     height: 1,
     backgroundColor: 'rgba(42, 53, 69, 0.4)',
-    top: CENTER,
   },
   crosshairV: {
     position: 'absolute',
     width: 1,
     height: RADAR_SIZE,
     backgroundColor: 'rgba(42, 53, 69, 0.4)',
-    left: CENTER,
   },
   centerDot: {
     width: 20,
     height: 20,
     borderRadius: 10,
-    backgroundColor: 'rgba(247, 147, 26, 0.2)',
+    backgroundColor: 'rgba(247, 147, 26, 0.25)',
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
@@ -224,6 +282,14 @@ const styles = StyleSheet.create({
     height: 8,
     borderRadius: 4,
     backgroundColor: Colors.accent,
+  },
+  centerLabel: {
+    position: 'absolute',
+    top: CENTER + 12,
+    color: Colors.accent,
+    fontSize: 7,
+    fontFamily: 'monospace',
+    fontWeight: '700',
   },
   sweep: {
     position: 'absolute',
@@ -239,15 +305,15 @@ const styles = StyleSheet.create({
     left: CENTER,
     width: CENTER - 4,
     height: 2,
-    backgroundColor: 'rgba(0, 214, 143, 0.5)',
+    backgroundColor: 'rgba(0, 214, 143, 0.6)',
   },
   sweepGlow: {
     position: 'absolute',
-    top: CENTER - 20,
+    top: CENTER - 22,
     left: CENTER,
     width: CENTER - 4,
-    height: 40,
-    backgroundColor: 'rgba(0, 214, 143, 0.06)',
+    height: 44,
+    backgroundColor: 'rgba(0, 214, 143, 0.07)',
     borderTopRightRadius: CENTER,
     borderBottomRightRadius: CENTER,
   },
@@ -265,33 +331,28 @@ const styles = StyleSheet.create({
   blip: {
     shadowColor: '#00D68F',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.6,
-    shadowRadius: 4,
-    elevation: 4,
+    shadowOpacity: 0.8,
+    shadowRadius: 5,
+    elevation: 5,
   },
   blipLabel: {
-    fontSize: 8,
-    fontWeight: '600' as const,
+    fontSize: 7,
+    fontWeight: '700',
     marginTop: 2,
-    maxWidth: 60,
-    textAlign: 'center' as const,
-  },
-  rangeLabel: {
-    position: 'absolute',
-    color: Colors.textMuted,
-    fontSize: 8,
+    maxWidth: 56,
+    textAlign: 'center',
     fontFamily: 'monospace',
   },
-  rangeLabelTop: {
-    top: RADAR_SIZE * 0.25 / 2 - 10,
-    right: CENTER + 4,
+  blipDist: {
+    fontSize: 6,
+    color: Colors.textMuted,
+    textAlign: 'center',
+    fontFamily: 'monospace',
   },
-  rangeLabelRight: {
-    top: CENTER - 12,
-    right: RADAR_SIZE * 0.25 / 2 - 16,
-  },
-  rangeLabelBottom: {
-    bottom: 2,
-    left: CENTER + 4,
+  emptyLabel: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontFamily: 'monospace',
+    textAlign: 'center',
   },
 });
