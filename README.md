@@ -64,6 +64,48 @@ BitMesh est une **application de messagerie décentralisée** conçue pour fonct
 | **Cashu Protocol** | eCash tokens (privacy-preserving payments) |
 | **Noble Crypto** | ECDH secp256k1, AES-GCM-256, BIP32/39 |
 | **Expo Location** | GPS tracking pour radar de pairs |
+| **BLE (react-native-ble-plx)** | Connexion gateway ESP32 LoRa |
+| **MeshRouter** | Multi-hop routing (flood + TTL) |
+
+---
+
+## ⚡ État Actuel (Février 2026)
+
+### ✅ FONCTIONNEL
+
+| Fonctionnalité | Status | Notes |
+|----------------|--------|-------|
+| **Messagerie MQTT (Internet)** | ✅ 100% | Chiffrement E2E, DMs + Forums |
+| **GPS Radar temps réel** | ✅ 100% | Haversine, bearing, signal strength |
+| **Multi-hop Mesh Routing** | ✅ 100% | Flood routing, TTL=10, deduplication |
+| **BLE Gateway scan/connect** | ✅ 100% | Nordic UART, ESP32 compatible |
+| **Cashu token parsing** | ✅ 100% | Preview amount + mint URL |
+| **Onboarding animé** | ✅ 100% | 4 slides + tutoriel |
+| **AsyncStorage persistence** | ✅ 100% | 200 messages/conversation |
+
+### 🚧 EN COURS / PARTIELLEMENT FONCTIONNEL
+
+| Fonctionnalité | Status | Manque |
+|----------------|--------|--------|
+| **BLE ↔ LoRa send/receive** | 🟡 60% | Testé en labo, nécessite firmware ESP32 |
+| **Bitcoin wallet** | 🟡 40% | UI complète, backend partiel (pas de signing réel) |
+| **Cashu mint integration** | 🟡 30% | Parsing OK, redeem/withdraw API à implémenter |
+
+### ❌ NON IMPLÉMENTÉ
+
+| Fonctionnalité | Priorité | Roadmap |
+|----------------|----------|---------|
+| **Lightning Network** | Haute | Q2 2026 — LDK ou API externe |
+| **Message ACK** | Moyenne | Q2 2026 — Confirmation livraison |
+| **Offline queue** | Moyenne | Q3 2026 — Retry automatique |
+| **Media sharing** | Basse | Q3 2026 — Images, voice notes |
+
+### 🎯 Prochaine étape
+
+**Test multi-hop sur 3 téléphones** :
+- Alice → Charlie (via Bob relay)
+- Vérifier `hopCount=2`, `route=["MESH-A", "MESH-B"]`
+- Latency < 500ms (MQTT) / ~2-3s (LoRa)
 
 ---
 

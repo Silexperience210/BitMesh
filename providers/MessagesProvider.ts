@@ -36,6 +36,7 @@ import {
   generateMsgId,
 } from '@/utils/messages-store';
 import { deriveMeshIdentity, type MeshIdentity } from '@/utils/identity';
+import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
 
@@ -83,6 +84,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const mqttRef = useRef<MeshMqttClient | null>(null);
+  const meshRouterRef = useRef<MeshRouter | null>(null);
   const joinedForums = useRef<Set<string>>(new Set());
 
   // Dériver l'identité dès que le wallet est disponible
@@ -92,10 +94,21 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const id = deriveMeshIdentity(mnemonic);
         setIdentity(id);
         console.log('[Messages] Identité dérivée:', id.nodeId);
+
+        // Initialiser le MeshRouter
+        meshRouterRef.current = new MeshRouter(id.nodeId);
+        console.log('[MeshRouter] Initialisé pour:', id.nodeId);
       } catch (err) {
         console.log('[Messages] Erreur dérivation identité:', err);
       }
     }
+
+    // Cleanup du router au démontage
+    return () => {
+      if (meshRouterRef.current) {
+        meshRouterRef.current.destroy();
+      }
+    };
   }, [mnemonic, identity]);
 
   // Charger les conversations depuis AsyncStorage
@@ -251,6 +264,111 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, [identity]);
 
+  // Handler pour les messages multi-hop routés (meshcore/route/{nodeId})
+  const handleIncomingRouteMessage = useCallback((topic: string, payloadStr: string) => {
+    if (!identity || !meshRouterRef.current) return;
+
+    try {
+      const meshMsg = JSON.parse(payloadStr) as MeshMessage;
+
+      // Valider le format du message
+      if (!isValidMeshMessage(meshMsg)) {
+        console.log('[MeshRouter] Message invalide ignoré');
+        return;
+      }
+
+      // Traiter via MeshRouter (deliver/relay/drop)
+      const action = meshRouterRef.current.processIncomingMessage(meshMsg);
+
+      if (action === 'drop') {
+        // Message dupliqué ou TTL expiré → ignorer
+        return;
+      }
+
+      if (action === 'deliver') {
+        // Message pour nous → déchiffrer et afficher
+        const plaintext = decryptDM(meshMsg.enc, identity.privkeyBytes, meshMsg.fromPubkey || '');
+
+        const msg: StoredMessage = {
+          id: meshMsg.msgId,
+          conversationId: meshMsg.from,
+          from: meshMsg.from,
+          fromPubkey: meshMsg.fromPubkey,
+          text: plaintext,
+          type: meshMsg.type,
+          timestamp: meshMsg.ts,
+          isMine: false,
+          status: 'delivered',
+          cashuAmount: meshMsg.type === 'cashu' ? parseCashuAmount(plaintext) : undefined,
+          cashuToken: meshMsg.type === 'cashu' ? plaintext : undefined,
+        };
+
+        saveMessage(msg);
+        updateConversationLastMessage(meshMsg.from, plaintext.slice(0, 50), meshMsg.ts, true);
+
+        setMessagesByConv(prev => ({
+          ...prev,
+          [meshMsg.from]: [...(prev[meshMsg.from] ?? []), msg],
+        }));
+
+        // Créer conversation si nécessaire
+        setConversations(prev => {
+          const exists = prev.find(c => c.id === meshMsg.from);
+          if (!exists) {
+            const newConv: StoredConversation = {
+              id: meshMsg.from,
+              name: meshMsg.from,
+              isForum: false,
+              peerPubkey: meshMsg.fromPubkey,
+              lastMessage: plaintext.slice(0, 50),
+              lastMessageTime: meshMsg.ts,
+              unreadCount: 1,
+              online: true,
+            };
+            saveConversation(newConv);
+            return [newConv, ...prev];
+          }
+          return prev.map(c => {
+            if (c.id !== meshMsg.from) return c;
+            return {
+              ...c,
+              lastMessage: plaintext.slice(0, 50),
+              lastMessageTime: meshMsg.ts,
+              unreadCount: c.unreadCount + 1,
+              peerPubkey: meshMsg.fromPubkey,
+              online: true,
+            };
+          });
+        });
+
+        console.log(`[MeshRouter] Message livré (${meshMsg.hopCount} hops)`);
+      }
+
+      if (action === 'relay') {
+        // Message pour quelqu'un d'autre → relay
+        if (!mqttRef.current?.client) return;
+
+        const relayMsg = meshRouterRef.current.prepareRelay(meshMsg);
+        const relayTopic = TOPICS.route(meshMsg.to);
+
+        mqttRef.current.client.publish(
+          relayTopic,
+          JSON.stringify(relayMsg),
+          { qos: 0 },
+          (err) => {
+            if (err) {
+              console.log('[MeshRouter] Erreur relay:', err);
+            } else {
+              console.log(`[MeshRouter] Message relayé → ${meshMsg.to} (TTL=${relayMsg.ttl}, hops=${relayMsg.hopCount})`);
+            }
+          }
+        );
+      }
+    } catch (err) {
+      console.log('[MeshRouter] Erreur traitement message:', err);
+    }
+  }, [identity]);
+
   // Handler pour un message forum entrant
   const handleIncomingForum = useCallback((channelName: string) => (topic: string, payloadStr: string) => {
     if (!identity) return;
@@ -325,6 +443,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         if (s === 'connected') {
           // S'abonner aux DMs une fois connecté
           subscribeMesh(client, TOPICS.dm(identity.nodeId), handleIncomingDM, 1);
+          // S'abonner aux messages routés multi-hop
+          subscribeMesh(client, TOPICS.route(identity.nodeId), handleIncomingRouteMessage, 0);
           // S'abonner aux présences de tous les pairs (wildcard)
           subscribePattern(client, 'meshcore/identity/+', handlePeerPresence, 0);
           // Publier notre présence avec GPS si disponible
@@ -338,7 +458,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       }
     }, 500);
-  }, [identity, handleIncomingDM, handleIncomingForum, handlePeerPresence]);
+  }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence]);
 
   // Auto-connexion dès que l'identité est disponible
   useEffect(() => {
@@ -375,18 +495,38 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   ) => {
     if (!mqttRef.current) return;
 
-    const wire: WireMessage = {
-      v: 1,
-      id: msgId,
-      from: id.nodeId,
-      fromPubkey: id.pubkeyHex,
-      to: convId,
-      enc,
-      ts,
-      type,
-    };
+    // Si c'est un DM (et non un forum), utiliser multi-hop routing
+    const isDM = topic.startsWith('meshcore/dm/');
 
-    publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+    if (isDM && meshRouterRef.current) {
+      // Créer un MeshMessage avec MeshRouter
+      const meshMsg = meshRouterRef.current.createMessage(
+        convId, // to
+        enc,
+        id.pubkeyHex,
+        type
+      );
+
+      // Publier sur meshcore/route/{to} pour multi-hop
+      const routeTopic = TOPICS.route(convId);
+      publishMesh(mqttRef.current, routeTopic, JSON.stringify(meshMsg), 0);
+
+      console.log(`[MeshRouter] Message envoyé → ${convId} (TTL=${meshMsg.ttl})`);
+    } else {
+      // Forum ou fallback : utiliser l'ancien format WireMessage
+      const wire: WireMessage = {
+        v: 1,
+        id: msgId,
+        from: id.nodeId,
+        fromPubkey: id.pubkeyHex,
+        to: convId,
+        enc,
+        ts,
+        type,
+      };
+
+      publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+    }
 
     // Sauvegarder localement
     const msg: StoredMessage = {

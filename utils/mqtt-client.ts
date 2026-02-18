@@ -11,6 +11,7 @@ export const TOPICS = {
   identity: (nodeId: string) => `meshcore/identity/${nodeId}`,
   dm: (nodeId: string) => `meshcore/dm/${nodeId}`,
   forum: (channelId: string) => `meshcore/forum/${channelId}`,
+  route: (nodeId: string) => `meshcore/route/${nodeId}`,
   loraInbound: 'meshcore/lora/inbound',
   loraOutbound: 'meshcore/lora/outbound',
   gatewayAnnounce: 'meshcore/gateway/announce',
