@@ -39,6 +39,17 @@ import { deriveMeshIdentity, type MeshIdentity } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
+// Import BLE provider pour communication LoRa via gateway ESP32
+import { useBle } from '@/providers/BleProvider';
+// Import protocole MeshCore binaire
+import {
+  type MeshCorePacket,
+  MeshCoreMessageType,
+  createTextMessage,
+  extractTextFromPacket,
+  uint64ToNodeId,
+  nodeIdToUint64,
+} from '@/utils/meshcore-protocol';
 
 // Format du message sur le réseau MQTT
 interface WireMessage {
@@ -76,6 +87,7 @@ export interface MessagesState {
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
   const { mnemonic } = useWalletSeed();
+  const ble = useBle(); // Accès au BLE gateway pour LoRa
   const [identity, setIdentity] = useState<MeshIdentity | null>(null);
   const [mqttState, setMqttState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
@@ -110,6 +122,101 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
     };
   }, [mnemonic, identity]);
+
+  // Handler pour paquets MeshCore entrants via BLE → LoRa
+  const handleIncomingMeshCorePacket = useCallback((packet: MeshCorePacket) => {
+    if (!identity) return;
+
+    try {
+      console.log('[MeshCore] Paquet reçu via BLE:', {
+        type: packet.type,
+        from: uint64ToNodeId(packet.fromNodeId),
+        to: uint64ToNodeId(packet.toNodeId),
+        ttl: packet.ttl,
+      });
+
+      // Vérifier que le paquet est pour nous (ou broadcast)
+      const myNodeIdUint64 = nodeIdToUint64(identity.nodeId);
+      if (packet.toNodeId !== myNodeIdUint64 && packet.toNodeId !== 0n) {
+        console.log('[MeshCore] Paquet ignoré (pas pour nous)');
+        return;
+      }
+
+      // Traiter selon le type de message
+      if (packet.type === MeshCoreMessageType.TEXT) {
+        const plaintext = extractTextFromPacket(packet);
+        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+
+        // Pour les DMs, on doit déchiffrer (si le payload est chiffré)
+        // Note: Le firmware MeshCore Companion peut envoyer des messages non chiffrés
+        // Pour l'instant, on traite le texte tel quel
+        const msg: StoredMessage = {
+          id: `mc-${packet.messageId}`,
+          conversationId: fromNodeId,
+          from: fromNodeId,
+          fromPubkey: '', // Pas de pubkey dans MeshCore natif (à améliorer)
+          text: plaintext,
+          type: 'text',
+          timestamp: packet.timestamp * 1000, // MeshCore utilise secondes, on veut ms
+          isMine: false,
+          status: 'delivered',
+        };
+
+        saveMessage(msg);
+        updateConversationLastMessage(fromNodeId, plaintext.slice(0, 50), msg.timestamp, true);
+
+        setMessagesByConv(prev => ({
+          ...prev,
+          [fromNodeId]: [...(prev[fromNodeId] ?? []), msg],
+        }));
+
+        // Créer conversation si nécessaire
+        setConversations(prev => {
+          const exists = prev.find(c => c.id === fromNodeId);
+          if (!exists) {
+            const newConv: StoredConversation = {
+              id: fromNodeId,
+              name: fromNodeId,
+              isForum: false,
+              lastMessage: plaintext.slice(0, 50),
+              lastMessageTime: msg.timestamp,
+              unreadCount: 1,
+              online: true,
+            };
+            saveConversation(newConv);
+            return [newConv, ...prev];
+          }
+          return prev.map(c => {
+            if (c.id !== fromNodeId) return c;
+            return {
+              ...c,
+              lastMessage: plaintext.slice(0, 50),
+              lastMessageTime: msg.timestamp,
+              unreadCount: c.unreadCount + 1,
+              online: true,
+            };
+          });
+        });
+
+        console.log('[MeshCore] Message TEXT livré depuis', fromNodeId);
+      } else if (packet.type === MeshCoreMessageType.POSITION) {
+        // TODO: Traiter les paquets GPS (ajouter au radar)
+        console.log('[MeshCore] Paquet POSITION reçu (non implémenté)');
+      } else {
+        console.log('[MeshCore] Type de paquet non géré:', packet.type);
+      }
+    } catch (err) {
+      console.error('[MeshCore] Erreur traitement paquet:', err);
+    }
+  }, [identity]);
+
+  // Enregistrer le handler BLE dès que possible
+  useEffect(() => {
+    if (ble.connected && identity) {
+      console.log('[MeshCore] Enregistrement handler paquets BLE');
+      ble.onPacket(handleIncomingMeshCorePacket);
+    }
+  }, [ble.connected, identity, handleIncomingMeshCorePacket]);
 
   // Charger les conversations depuis AsyncStorage
   useEffect(() => {
@@ -483,7 +590,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   }, []);
 
   // Publier un message sur le réseau + le sauvegarder localement (déclaré avant sendMessage)
-  const publishAndStore = useCallback((
+  const publishAndStore = useCallback(async (
     msgId: string,
     convId: string,
     text: string,
@@ -493,39 +600,55 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     type: MessageType,
     id: MeshIdentity
   ) => {
-    if (!mqttRef.current) return;
-
-    // Si c'est un DM (et non un forum), utiliser multi-hop routing
     const isDM = topic.startsWith('meshcore/dm/');
+    const isForum = convId.startsWith('forum:');
 
-    if (isDM && meshRouterRef.current) {
-      // Créer un MeshMessage avec MeshRouter
-      const meshMsg = meshRouterRef.current.createMessage(
-        convId, // to
-        enc,
-        id.pubkeyHex,
-        type
-      );
+    // **Transport hybride : BLE (LoRa) prioritaire, fallback MQTT**
+    // Si BLE connecté ET c'est un DM → utiliser protocole MeshCore binaire
+    if (ble.connected && isDM) {
+      try {
+        // Créer paquet MeshCore TEXT binaire
+        // Note: pour l'instant on envoie le texte en clair, le chiffrement E2E sera ajouté
+        // dans une future version avec échange de clés via KEY_ANNOUNCE
+        const packet = createTextMessage(
+          id.nodeId,
+          convId, // destinataire
+          text,
+          false // pas de chiffrement MeshCore natif pour l'instant
+        );
 
-      // Publier sur meshcore/route/{to} pour multi-hop
-      const routeTopic = TOPICS.route(convId);
-      publishMesh(mqttRef.current, routeTopic, JSON.stringify(meshMsg), 0);
-
-      console.log(`[MeshRouter] Message envoyé → ${convId} (TTL=${meshMsg.ttl})`);
-    } else {
-      // Forum ou fallback : utiliser l'ancien format WireMessage
-      const wire: WireMessage = {
-        v: 1,
-        id: msgId,
-        from: id.nodeId,
-        fromPubkey: id.pubkeyHex,
-        to: convId,
-        enc,
-        ts,
-        type,
-      };
-
-      publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+        await ble.sendPacket(packet);
+        console.log('[MeshCore] Paquet binaire envoyé via BLE → LoRa:', convId);
+      } catch (err) {
+        console.error('[MeshCore] Erreur envoi BLE, fallback MQTT:', err);
+        // Fallback MQTT si BLE échoue
+        if (mqttRef.current && meshRouterRef.current) {
+          const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type);
+          publishMesh(mqttRef.current, TOPICS.route(convId), JSON.stringify(meshMsg), 0);
+        }
+      }
+    } else if (mqttRef.current) {
+      // Transport MQTT classique (forums, ou pas de BLE)
+      if (isDM && meshRouterRef.current) {
+        // DM via MQTT multi-hop routing
+        const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type);
+        publishMesh(mqttRef.current, TOPICS.route(convId), JSON.stringify(meshMsg), 0);
+        console.log(`[MeshRouter] Message MQTT envoyé → ${convId} (TTL=${meshMsg.ttl})`);
+      } else {
+        // Forum : utiliser WireMessage classique
+        const wire: WireMessage = {
+          v: 1,
+          id: msgId,
+          from: id.nodeId,
+          fromPubkey: id.pubkeyHex,
+          to: convId,
+          enc,
+          ts,
+          type,
+        };
+        publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+        console.log('[MQTT] Message forum envoyé:', convId);
+      }
     }
 
     // Sauvegarder localement
@@ -556,7 +679,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         ? { ...c, lastMessage: text.slice(0, 50), lastMessageTime: ts }
         : c
     ));
-  }, []);
+  }, [ble]);
 
   // Envoyer un message (DM ou forum)
   const sendMessage = useCallback(async (

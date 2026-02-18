@@ -11,6 +11,7 @@ import Colors from '@/constants/colors';
 import { formatMessageTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
+import { useBle } from '@/providers/BleProvider';
 import { decodeCashuToken, getTokenAmount } from '@/utils/cashu';
 import type { StoredMessage } from '@/utils/messages-store';
 
@@ -187,6 +188,7 @@ export default function ChatScreen() {
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
   const { conversations, messagesByConv, sendMessage, sendCashu, loadConversationMessages, markRead, mqttState } = useMessages();
+  const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
   const messages = messagesByConv[convId] ?? [];
@@ -239,18 +241,25 @@ export default function ChatScreen() {
     <>
       <Stack.Screen
         options={{
-          headerTitle: () => (
-            <View style={styles.headerTitle}>
-              <View style={styles.headerNameRow}>
-                {isForum ? <Hash size={14} color={Colors.cyan} /> : <Lock size={12} color={Colors.accent} />}
-                <Text style={styles.headerName}>{convName}</Text>
+          headerTitle: () => {
+            const transportLabel = ble.connected ? 'LoRa' : mqttState === 'connected' ? 'MQTT' : 'Offline';
+            const transportColor = ble.connected ? Colors.cyan : mqttState === 'connected' ? Colors.green : Colors.textMuted;
+            const TransportIcon = ble.connected ? Radio : Globe;
+
+            return (
+              <View style={styles.headerTitle}>
+                <View style={styles.headerNameRow}>
+                  {isForum ? <Hash size={14} color={Colors.cyan} /> : <Lock size={12} color={Colors.accent} />}
+                  <Text style={styles.headerName}>{convName}</Text>
+                </View>
+                <View style={styles.headerMeta}>
+                  <TransportIcon size={10} color={transportColor} />
+                  <Text style={[styles.headerTransport, { color: transportColor }]}>{transportLabel}</Text>
+                  <Text style={styles.headerNodeId}> • {convId.slice(0, 15)}</Text>
+                </View>
               </View>
-              <View style={styles.headerMeta}>
-                <View style={[styles.headerDot, { backgroundColor: mqttState === 'connected' ? Colors.green : Colors.textMuted }]} />
-                <Text style={styles.headerNodeId}>{convId.slice(0, 20)}</Text>
-              </View>
-            </View>
-          ),
+            );
+          },
         }}
       />
       <KeyboardAvoidingView
@@ -346,6 +355,7 @@ const styles = StyleSheet.create({
   headerName: { color: Colors.text, fontSize: 16, fontWeight: '700' },
   headerMeta: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 2 },
   headerDot: { width: 6, height: 6, borderRadius: 3 },
+  headerTransport: { fontSize: 10, fontWeight: '700', fontFamily: 'monospace' },
   headerNodeId: { color: Colors.textMuted, fontSize: 10, fontFamily: 'monospace' },
   meshInfo: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6,

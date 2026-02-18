@@ -9,6 +9,11 @@
 [![Build](https://img.shields.io/github/actions/workflow/status/Silexperience210/BitMesh/eas-build.yml?branch=main)](https://github.com/Silexperience210/BitMesh/actions)
 [![Release](https://img.shields.io/github/v/release/Silexperience210/BitMesh)](https://github.com/Silexperience210/BitMesh/releases)
 
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-Lightning-orange?logo=bitcoin)](https://github.com/Silexperience210/BitMesh)
+[![Cashu](https://img.shields.io/badge/Cashu-eCash-yellow?logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjQiIGhlaWdodD0iMjQiIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTEyIDJMMiAxMkwxMiAyMkwyMiAxMkwxMiAyWiIgZmlsbD0iI0ZGQjgwMCIvPgo8L3N2Zz4=)](https://cashu.space)
+[![LoRa](https://img.shields.io/badge/LoRa-868%2F915MHz-brightgreen?logo=semtech)](https://lora-alliance.org/)
+[![MeshCore](https://img.shields.io/badge/MeshCore-Protocol%20v1.0-blueviolet)](https://github.com/meshcore-dev/MeshCore)
+
 **BitMesh** est une application mobile de messagerie décentralisée peer-to-peer utilisant le protocole **MeshCore** pour communiquer via **LoRa** (longue portée, jusqu'à 20 km) ou **MQTT** (Internet), avec chiffrement end-to-end, wallet Bitcoin intégré, et support natif des paiements Cashu eCash.
 
 [📦 Télécharger APK](https://github.com/Silexperience210/BitMesh/releases/latest) • [📖 Documentation](#documentation) • [🚀 Roadmap](#roadmap)
@@ -82,12 +87,14 @@ BitMesh est une **application de messagerie décentralisée** conçue pour fonct
 | **Cashu token parsing** | ✅ 100% | Preview amount + mint URL |
 | **Onboarding animé** | ✅ 100% | 4 slides + tutoriel |
 | **AsyncStorage persistence** | ✅ 100% | 200 messages/conversation |
+| **Protocole MeshCore binaire** | ✅ 100% | Format officiel v1.0, CRC16, NodeId uint64 |
+| **BLE Gateway (Nordic UART)** | ✅ 100% | Scan, connect, send/receive packets binaires |
 
 ### 🚧 EN COURS / PARTIELLEMENT FONCTIONNEL
 
 | Fonctionnalité | Status | Manque |
 |----------------|--------|--------|
-| **BLE ↔ LoRa send/receive** | 🟡 60% | Testé en labo, nécessite firmware ESP32 |
+| **Intégration MeshCore → Messages** | 🟡 70% | Protocol implémenté, câblage MessagesProvider en cours |
 | **Bitcoin wallet** | 🟡 40% | UI complète, backend partiel (pas de signing réel) |
 | **Cashu mint integration** | 🟡 30% | Parsing OK, redeem/withdraw API à implémenter |
 
@@ -102,10 +109,11 @@ BitMesh est une **application de messagerie décentralisée** conçue pour fonct
 
 ### 🎯 Prochaine étape
 
-**Test multi-hop sur 3 téléphones** :
-- Alice → Charlie (via Bob relay)
-- Vérifier `hopCount=2`, `route=["MESH-A", "MESH-B"]`
-- Latency < 500ms (MQTT) / ~2-3s (LoRa)
+**Intégration complète MeshCore dans MessagesProvider** :
+- Remplacer messages JSON MQTT par paquets MeshCorePacket binaires
+- Utiliser `useBle().sendPacket()` pour envoi via BLE → LoRa
+- Handler `onPacket()` pour réception LoRa → BLE → App
+- Test end-to-end : App A → BLE → Gateway → LoRa → Gateway → BLE → App B
 
 ---
 
