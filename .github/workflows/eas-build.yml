@@ -62,19 +62,26 @@ jobs:
       - name: Build APK via EAS (attend la fin du build)
         id: build
         run: |
+          set +e
           OUTPUT=$(eas build \
             --platform android \
             --profile preview \
             --non-interactive \
             --wait \
             --json 2>&1)
+          EAS_EXIT=$?
+          echo "EAS exit code: $EAS_EXIT"
           echo "EAS output: $OUTPUT"
-          BUILD_URL=$(echo "$OUTPUT" | grep -o '"buildUrl":"[^"]*"' | tail -1 | cut -d'"' -f4)
+          BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
           if [ -z "$BUILD_URL" ]; then
-            BUILD_URL=$(echo "$OUTPUT" | jq -r 'if type=="array" then .[0].artifacts.buildUrl else .artifacts.buildUrl end // empty' 2>/dev/null)
+            BUILD_URL=$(echo "$OUTPUT" | grep -o '"buildUrl":"[^"]*"' | tail -1 | cut -d'"' -f4)
           fi
           echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
           echo "Build URL: $BUILD_URL"
+          if [ -z "$BUILD_URL" ] && [ $EAS_EXIT -ne 0 ]; then
+            echo "Build échoué sans URL — exit $EAS_EXIT"
+            exit $EAS_EXIT
+          fi
 
       - name: Download APK
         if: steps.build.outputs.build_url != ''
