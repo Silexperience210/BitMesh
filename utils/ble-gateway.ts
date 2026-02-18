@@ -6,11 +6,17 @@
  */
 
 import { BleManager, Device, Characteristic, State } from 'react-native-ble-plx';
+import {
+  MESHCORE_BLE,
+  type MeshCorePacket,
+  encodeMeshCorePacket,
+  decodeMeshCorePacket,
+} from './meshcore-protocol';
 
-// Nordic UART Service UUIDs
-const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-const UART_TX_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e'; // Mobile → ESP32
-const UART_RX_CHAR_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e'; // ESP32 → Mobile
+// Nordic UART Service UUIDs (MeshCore standard)
+const UART_SERVICE_UUID = MESHCORE_BLE.SERVICE_UUID;
+const UART_TX_CHAR_UUID = MESHCORE_BLE.TX_CHAR_UUID;
+const UART_RX_CHAR_UUID = MESHCORE_BLE.RX_CHAR_UUID;
 
 export interface BleGatewayDevice {
   id: string;
@@ -25,7 +31,7 @@ export interface BleGatewayState {
   error: string | null;
 }
 
-type MessageHandler = (message: string) => void;
+type MessageHandler = (packet: MeshCorePacket) => void;
 
 /**
  * Client BLE pour gateway ESP32 LoRa
@@ -177,15 +183,17 @@ export class BleGatewayClient {
         }
 
         try {
-          // Décoder base64 → string
-          const message = this.base64ToString(characteristic.value);
-          console.log('[BleGateway] Received message:', message.slice(0, 100));
+          // Décoder base64 → Uint8Array binaire
+          const binaryData = this.base64ToUint8Array(characteristic.value);
+          console.log('[BleGateway] Received packet:', binaryData.length, 'bytes');
 
-          if (this.messageHandler) {
-            this.messageHandler(message);
+          // Décoder paquet MeshCore binaire
+          const packet = decodeMeshCorePacket(binaryData);
+          if (packet && this.messageHandler) {
+            this.messageHandler(packet);
           }
         } catch (err) {
-          console.error('[BleGateway] Failed to decode message:', err);
+          console.error('[BleGateway] Failed to decode packet:', err);
         }
       }
     );
@@ -194,19 +202,28 @@ export class BleGatewayClient {
   }
 
   /**
-   * Envoie un message au gateway (Mobile → ESP32 → LoRa)
+   * Envoie un paquet MeshCore au gateway (Mobile → ESP32 → LoRa)
    */
-  async sendMessage(message: string): Promise<void> {
+  async sendPacket(packet: MeshCorePacket): Promise<void> {
     if (!this.device) {
       throw new Error('Not connected to gateway');
     }
 
-    console.log('[BleGateway] Sending message:', message.slice(0, 100));
+    console.log('[BleGateway] Sending packet:', {
+      type: packet.type,
+      from: packet.fromNodeId.toString(16),
+      to: packet.toNodeId.toString(16),
+      ttl: packet.ttl,
+    });
 
     try {
-      const base64Data = this.stringToBase64(message);
+      // Encoder en binaire
+      const binaryData = encodeMeshCorePacket(packet);
 
-      // Chunking si message trop long (MTU=512, mais safe à 240)
+      // Convertir en base64 pour BLE
+      const base64Data = this.uint8ArrayToBase64(binaryData);
+
+      // Chunking si trop long (MTU=512, safe à 240)
       const chunks = this.chunkMessage(base64Data, 240);
 
       for (const chunk of chunks) {
@@ -217,7 +234,7 @@ export class BleGatewayClient {
         );
       }
 
-      console.log(`[BleGateway] Message sent (${chunks.length} chunks)`);
+      console.log(`[BleGateway] Packet sent (${chunks.length} chunks, ${binaryData.length} bytes)`);
     } catch (error) {
       console.error('[BleGateway] Send error:', error);
       throw error;
@@ -294,6 +311,28 @@ export class BleGatewayClient {
         .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
         .join('')
     );
+  }
+
+  /**
+   * Utils : Uint8Array → Base64
+   */
+  private uint8ArrayToBase64(data: Uint8Array): string {
+    const binaryString = Array.from(data)
+      .map((byte) => String.fromCharCode(byte))
+      .join('');
+    return btoa(binaryString);
+  }
+
+  /**
+   * Utils : Base64 → Uint8Array
+   */
+  private base64ToUint8Array(base64: string): Uint8Array {
+    const binaryString = atob(base64);
+    const bytes = new Uint8Array(binaryString.length);
+    for (let i = 0; i < binaryString.length; i++) {
+      bytes[i] = binaryString.charCodeAt(i);
+    }
+    return bytes;
   }
 
   /**

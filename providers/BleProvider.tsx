@@ -8,6 +8,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice } from '@/utils/ble-gateway';
+import { type MeshCorePacket } from '@/utils/meshcore-protocol';
 
 interface BleState {
   connected: boolean;
@@ -21,8 +22,8 @@ interface BleContextValue extends BleState {
   scanForGateways: () => Promise<void>;
   connectToGateway: (deviceId: string) => Promise<void>;
   disconnectGateway: () => Promise<void>;
-  sendMessage: (message: string) => Promise<void>;
-  onMessage: (handler: (message: string) => void) => void;
+  sendPacket: (packet: MeshCorePacket) => Promise<void>;
+  onPacket: (handler: (packet: MeshCorePacket) => void) => void;
 }
 
 const BleContext = createContext<BleContextValue | null>(null);
@@ -205,20 +206,20 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Envoie un message via BLE → LoRa
+   * Envoie un paquet MeshCore via BLE → LoRa
    */
-  const sendMessage = async (message: string) => {
+  const sendPacket = async (packet: MeshCorePacket) => {
     if (!clientRef.current || !state.connected) {
       throw new Error('Not connected to gateway');
     }
 
-    await clientRef.current.sendMessage(message);
+    await clientRef.current.sendPacket(packet);
   };
 
   /**
-   * Enregistre un handler pour les messages entrants
+   * Enregistre un handler pour les paquets entrants
    */
-  const onMessage = (handler: (message: string) => void) => {
+  const onPacket = (handler: (packet: MeshCorePacket) => void) => {
     if (clientRef.current) {
       clientRef.current.onMessage(handler);
     }
@@ -229,8 +230,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     scanForGateways,
     connectToGateway,
     disconnectGateway,
-    sendMessage,
-    onMessage,
+    sendPacket,
+    onPacket,
   };
 
   return <BleContext.Provider value={contextValue}>{children}</BleContext.Provider>;
