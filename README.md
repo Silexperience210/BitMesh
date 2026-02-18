@@ -1,318 +1,876 @@
-# Welcome to your Rork app
+<div align="center">
 
-## Project info
+# 🌐 BitMesh
 
-This is a native cross-platform mobile app created with [Rork](https://rork.com)
+### Messagerie P2P Décentralisée | LoRa/MQTT | Bitcoin & Cashu
 
-**Platform**: Native iOS & Android app, exportable to web
-**Framework**: Expo Router + React Native
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-blue.svg)](https://github.com/Silexperience210/BitMesh)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![Build](https://img.shields.io/github/actions/workflow/status/Silexperience210/BitMesh/eas-build.yml?branch=main)](https://github.com/Silexperience210/BitMesh/actions)
+[![Release](https://img.shields.io/github/v/release/Silexperience210/BitMesh)](https://github.com/Silexperience210/BitMesh/releases)
 
-## How can I edit this code?
+**BitMesh** est une application mobile de messagerie décentralisée peer-to-peer utilisant le protocole **MeshCore** pour communiquer via **LoRa** (longue portée, jusqu'à 20 km) ou **MQTT** (Internet), avec chiffrement end-to-end, wallet Bitcoin intégré, et support natif des paiements Cashu eCash.
 
-There are several ways of editing your native mobile application.
+[📦 Télécharger APK](https://github.com/Silexperience210/BitMesh/releases/latest) • [📖 Documentation](#documentation) • [🚀 Roadmap](#roadmap)
 
-### **Use Rork**
+</div>
 
-Simply visit [rork.com](https://rork.com) and prompt to build your app with AI.
+---
 
-Changes made via Rork will be committed automatically to this GitHub repo.
+## 📑 Table des Matières
 
-Whenever you make a change in your local code editor and push it to GitHub, it will be also reflected in Rork.
+- [Vue d'ensemble](#-vue-densemble)
+- [Caractéristiques principales](#-caractéristiques-principales)
+- [Architecture technique](#-architecture-technique)
+- [MeshCore Protocol](#-meshcore-protocol)
+- [Sécurité & Chiffrement](#-sécurité--chiffrement)
+- [Bitcoin & Cashu](#-bitcoin--cashu)
+- [GPS Radar & Présence](#-gps-radar--présence)
+- [Installation](#-installation)
+- [Utilisation](#-utilisation)
+- [Structure du projet](#-structure-du-projet)
+- [Hardware compatible](#-hardware-compatible)
+- [Développement](#-développement)
+- [Build & Déploiement](#-build--déploiement)
+- [API & Intégrations](#-api--intégrations)
+- [Roadmap](#-roadmap)
+- [Contribution](#-contribution)
+- [Licence](#-licence)
+- [Auteur](#-auteur)
 
-### **Use your preferred code editor**
+---
 
-If you want to work locally using your own code editor, you can clone this repo and push changes. Pushed changes will also be reflected in Rork.
+## 🌟 Vue d'ensemble
 
-If you are new to coding and unsure which editor to use, we recommend Cursor. If you're familiar with terminals, try Claude Code.
+BitMesh est une **application de messagerie décentralisée** conçue pour fonctionner sur des réseaux maillés (mesh networks) en utilisant des technologies de communication longue portée comme **LoRa** et des protocoles légers comme **MQTT**.
 
-The only requirement is having Node.js & Bun installed - [install Node.js with nvm](https://github.com/nvm-sh/nvm) and [install Bun](https://bun.sh/docs/installation)
+### Cas d'usage
 
-Follow these steps:
+- **Communication d'urgence** : Messagerie fonctionnelle sans infrastructure réseau (catastrophes naturelles, zones isolées)
+- **Événements & Festivals** : Communication longue portée sans réseau cellulaire
+- **Zones rurales** : Connectivité dans les zones à faible couverture réseau
+- **Crypto-communautés** : Messagerie sécurisée avec paiements Bitcoin/Lightning/Cashu intégrés
+- **Souveraineté numérique** : Contrôle total de vos données, aucun serveur centralisé
+
+### Technologies clés
+
+| Technologie | Usage |
+|-------------|-------|
+| **React Native** | Framework mobile cross-platform (iOS/Android) |
+| **Expo Router** | Navigation file-based + deep linking |
+| **MQTT v5** | Protocol pub/sub pour messagerie temps réel |
+| **LoRa** | Communication longue portée (jusqu'à 20 km) |
+| **Bitcoin/Lightning** | Paiements on-chain et Lightning Network |
+| **Cashu Protocol** | eCash tokens (privacy-preserving payments) |
+| **Noble Crypto** | ECDH secp256k1, AES-GCM-256, BIP32/39 |
+| **Expo Location** | GPS tracking pour radar de pairs |
+
+---
+
+## ✨ Caractéristiques principales
+
+### 🔐 Messagerie chiffrée E2E
+
+- **Chiffrement ECDH** : Keypair secp256k1 dérivée du wallet seed (BIP32 `m/69'/0'/0'/0`)
+- **AES-GCM-256** : Chiffrement symétrique avec nonce 12 bytes
+- **Forward secrecy** : Clés éphémères pour chaque session
+- **Aucun serveur central** : Messages routés via MQTT pub/sub décentralisé
+
+### 📡 MeshCore Protocol
+
+- **Multi-transport** : LoRa (longue portée) + MQTT (Internet)
+- **Chunking automatique** : Messages >240 bytes fragmentés pour LoRa
+- **Routing mesh** : Messages relayés automatiquement entre peers
+- **QoS configurable** : QoS 0 (statuts), QoS 1 (DMs), QoS 2 (transactions)
+
+### 🪙 Bitcoin & Lightning
+
+- **Wallet HD non-custodial** : BIP32/39/44, seed chiffré localement
+- **Lightning Network** : Envoi/réception de paiements instantanés
+- **On-chain** : Support transactions Bitcoin classiques
+- **Multi-wallet** : Gestion de plusieurs wallets (mainnet/testnet)
+
+### 🎫 Cashu eCash
+
+- **Support Cashu Protocol** : eCash tokens pour paiements privés
+- **Multi-mint** : Compatible avec tous les mints Cashu
+- **Envoi/Réception** : Tokens envoyés directement dans les conversations
+- **Preview** : Décodage automatique des tokens (amount, mint URL)
+
+### 🌍 Radar GPS temps réel
+
+- **Positionnement GPS** : Affichage des pairs sur radar avec distance/bearing réels
+- **Mise à jour automatique** : Présence GPS publiée toutes les 5s / 10m
+- **Calcul Haversine** : Distance précise entre deux coordonnées GPS
+- **Signal strength** : Indicateur de qualité basé sur distance (Fort >70%, Moyen 40-70%, Faible <40%)
+
+### 👥 Forums multi-utilisateurs
+
+- **Channels publics** : Forums ouverts avec clé symétrique dérivée du nom
+- **Channels privés** : Forums avec clé partagée hors-bande
+- **Pas de limite** : Nombre illimité de participants par forum
+
+---
+
+## 🏗 Architecture technique
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     BitMesh Mobile App                       │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │              React Native + Expo Router               │  │
+│  └───────────────────────────────────────────────────────┘  │
+│                             │                                │
+│  ┌──────────────────┬───────┴───────┬──────────────────┐   │
+│  │  MessagesProvider│ GatewayProvider│ WalletProvider   │   │
+│  │  (MQTT + Store)  │  (LoRa Bridge) │ (Bitcoin/Cashu)  │   │
+│  └──────────────────┴───────────────┴──────────────────┘   │
+│                             │                                │
+│  ┌──────────────────┬───────┴───────┬──────────────────┐   │
+│  │   Encryption     │   Identity    │   GPS Radar       │   │
+│  │  (ECDH/AES-GCM)  │ (secp256k1)   │  (Haversine)      │   │
+│  └──────────────────┴───────────────┴──────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+                             │
+                ┌────────────┴────────────┐
+                │                         │
+        ┌───────▼────────┐       ┌───────▼────────┐
+        │  MQTT Broker    │       │  LoRa Gateway  │
+        │ (WebSocket TLS) │       │  (ESP32+SX127x)│
+        └────────────────┘       └────────────────┘
+                │                         │
+                └────────────┬────────────┘
+                             │
+                    ┌────────▼─────────┐
+                    │  MeshCore Network│
+                    │   (P2P Routing)  │
+                    └──────────────────┘
+```
+
+### Flux de données
+
+#### 1. Envoi d'un message DM chiffré
+
+```
+User A → Input → ECDH(privA, pubB) → AES-GCM(msg, sharedSecret)
+     → MQTT publish(meshcore/dm/{nodeIdB}, ciphertext)
+     → Broker → User B subscribe → AES-GCM decrypt → Display
+```
+
+#### 2. Envoi d'un message LoRa
+
+```
+User A → Input → Chunking (240 bytes max)
+     → MQTT publish(meshcore/lora/outbound, chunk[0..N])
+     → Gateway ESP32 → LoRa TX (868/915 MHz)
+     → LoRa RX → Gateway ESP32 → MQTT publish(meshcore/lora/inbound)
+     → User B subscribe → Reassembly → Decrypt → Display
+```
+
+#### 3. Paiement Cashu
+
+```
+User A → Generate Cashu token (mint URL + amount + proofs)
+     → Encrypt token → MQTT publish(meshcore/dm/{nodeIdB})
+     → User B → Decrypt → Parse cashuA token → Display preview
+     → User B → Redeem proofs on mint → Wallet updated
+```
+
+---
+
+## 🔗 MeshCore Protocol
+
+**MeshCore** est le protocole de communication décentralisé utilisé par BitMesh. Il combine MQTT pub/sub avec LoRa pour créer un réseau mesh résilient.
+
+### Topics MQTT
+
+| Topic | QoS | Retained | Description |
+|-------|-----|----------|-------------|
+| `meshcore/identity/{nodeId}` | 1 | ✅ | Pubkey + GPS presence (last will) |
+| `meshcore/dm/{nodeId}` | 1 | ❌ | Messages directs chiffrés ECDH |
+| `meshcore/forum/{channelId}` | 0 | ❌ | Forums/groupes (chiffré symétrique) |
+| `meshcore/lora/outbound` | 0 | ❌ | Messages sortants vers gateway LoRa |
+| `meshcore/lora/inbound` | 0 | ❌ | Messages entrants depuis gateway LoRa |
+
+### Format de message
+
+```json
+{
+  "v": 1,
+  "from": "MESH-A7F2",
+  "fromPubkey": "02abcd1234...",
+  "enc": {
+    "nonce": "base64_nonce_12_bytes",
+    "ct": "base64_ciphertext"
+  },
+  "ts": 1234567890123,
+  "type": "text" | "cashu" | "btc_tx"
+}
+```
+
+### Chunking LoRa (messages >240 bytes)
+
+Format: `MCHK|{messageId}|{chunkIndex}|{totalChunks}|{payload}`
+
+```
+Message 800 bytes → 4 chunks:
+  MCHK|abc123|0|4|<200bytes>
+  MCHK|abc123|1|4|<200bytes>
+  MCHK|abc123|2|4|<200bytes>
+  MCHK|abc123|3|4|<200bytes>
+```
+
+Le récepteur reassemble les chunks et reconstruit le message complet.
+
+---
+
+## 🔐 Sécurité & Chiffrement
+
+### Dérivation d'identité (BIP32)
+
+```
+Seed (12/24 mots BIP39)
+  └─ m/69'/0'/0'/0 (BitMesh Identity)
+       ├─ privkey secp256k1
+       ├─ pubkey compressed (33 bytes)
+       └─ NodeId = "MESH-" + hex(sha256(pubkey)[0:4])
+```
+
+**Exemple** :
+- Pubkey: `02a1b2c3d4...`
+- Hash: `sha256(pubkey) = a7f29e1b...`
+- NodeId: `MESH-A7F2`
+
+### Chiffrement DM (Direct Messages)
+
+**ECDH (Elliptic Curve Diffie-Hellman)** :
+```
+sharedSecret = ECDH(myPrivkey, theirPubkey)
+key = sha256(sharedSecret)
+nonce = random(12 bytes)
+ciphertext = AES-GCM-256(plaintext, key, nonce)
+```
+
+**Envoi** :
+```json
+{
+  "enc": {
+    "nonce": "base64(nonce)",
+    "ct": "base64(ciphertext)"
+  }
+}
+```
+
+### Chiffrement Forum (Channels)
+
+**Clé symétrique dérivée du nom du channel** :
+```
+key = sha256("forum:" + channelName)
+nonce = random(12 bytes)
+ciphertext = AES-GCM-256(plaintext, key, nonce)
+```
+
+Tous les participants connaissant le nom du channel peuvent déchiffrer les messages.
+
+### Stockage local
+
+- **Wallet seed** : Chiffré avec `expo-secure-store` (Keychain iOS / Keystore Android)
+- **Messages** : Stockés dans AsyncStorage (limité à 200 messages par conversation)
+- **Clés privées** : Jamais exposées, restent dans le provider
+
+---
+
+## 🪙 Bitcoin & Cashu
+
+### Bitcoin HD Wallet
+
+**Dérivation BIP44** :
+```
+m/84'/0'/0'/0/0  → Première adresse native segwit (bc1q...)
+m/84'/0'/0'/0/1  → Deuxième adresse
+...
+```
+
+**Support** :
+- ✅ Addresses native segwit (bech32)
+- ✅ Transaction signing (PSBT)
+- ✅ Fee estimation
+- ✅ UTXO management
+- ✅ Lightning invoice (BOLT11)
+
+### Lightning Network
+
+**Intégration LND/CLN via API** :
+- Génération d'invoices (BOLT11)
+- Paiement d'invoices
+- Vérification de paiement (webhook/polling)
+
+### Cashu eCash Protocol
+
+**Format token** :
+```
+cashuAeyJ0b2tlbiI6W3sicHJvb2ZzIjpbeyJpZCI6IjAwOWEi...
+```
+
+**Workflow envoi** :
+```
+1. User A génère token sur mint (withdraw)
+2. Token encodé en cashuA + chiffré
+3. Envoyé via MQTT (meshcore/dm/{nodeIdB})
+4. User B reçoit, déchiffre, parse le token
+5. User B redeem sur mint → sats ajoutés au wallet
+```
+
+**Mints compatibles** :
+- Tous les mints respectant [NUT-00 à NUT-12](https://github.com/cashubtc/nuts)
+- Exemples : cashu.me, mint.minibits.cash, etc.
+
+---
+
+## 🌍 GPS Radar & Présence
+
+### Calcul de distance (Haversine)
+
+```typescript
+function haversineDistance(lat1, lng1, lat2, lng2): number {
+  const R = 6371e3; // Rayon Terre en mètres
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+
+  return R * c; // Distance en mètres
+}
+```
+
+### Calcul de bearing (angle compas)
+
+```typescript
+function gpsBearing(lat1, lng1, lat2, lng2): number {
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δλ = (lng2 - lng1) * Math.PI / 180;
+
+  const y = Math.sin(Δλ) * Math.cos(φ2);
+  const x = Math.cos(φ1) * Math.sin(φ2) -
+            Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ);
+
+  let θ = Math.atan2(y, x);
+  if (θ < 0) θ += 2 * Math.PI;
+  return θ; // Radians (0 = Nord, π/2 = Est)
+}
+```
+
+### Affichage radar
+
+- **Anneaux** : 2 km, 4 km, 6 km, 8 km
+- **Position blip** : `(x, y) = CENTER + (cos(bearing - π/2), sin(bearing - π/2)) * ratio * radius`
+- **Couleur signal** :
+  - 🟢 Vert (>70%) : < 2.4 km
+  - 🟠 Orange (40-70%) : 2.4-4.8 km
+  - 🔴 Rouge (<40%) : > 4.8 km
+  - ⚫ Gris : Hors ligne (>5 min sans mise à jour)
+
+### Mise à jour présence
+
+**Fréquence** : Toutes les 5 secondes OU 10 mètres de déplacement
+
+```typescript
+Location.watchPositionAsync(
+  {
+    accuracy: Location.Accuracy.High,
+    timeInterval: 5000,  // 5s
+    distanceInterval: 10 // 10m
+  },
+  (location) => {
+    updatePresence(nodeId, pubkey, location.coords.latitude, location.coords.longitude);
+  }
+);
+```
+
+---
+
+## 📥 Installation
+
+### Prérequis
+
+- **Node.js** ≥ 18 (recommandé via [nvm](https://github.com/nvm-sh/nvm))
+- **Bun** ≥ 1.0 ([Installation](https://bun.sh/docs/installation))
+- **Android Studio** (pour émulateur Android) OU **Xcode** (pour simulateur iOS)
+
+### Clone du repository
 
 ```bash
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+git clone https://github.com/Silexperience210/BitMesh.git
+cd BitMesh
+```
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+### Installation des dépendances
 
-# Step 3: Install the necessary dependencies.
-bun i
+```bash
+bun install
+```
 
-# Step 4: Start the instant web preview of your Rork app in your browser, with auto-reloading of your changes
+### Configuration
+
+Créer un fichier `.env` à la racine :
+
+```env
+# MQTT Broker (optionnel, défaut: broker.emqx.io)
+MQTT_BROKER_URL=wss://your-broker.com:8084/mqtt
+
+# Bitcoin Network (mainnet/testnet)
+BITCOIN_NETWORK=testnet
+
+# Cashu Mint URL (optionnel)
+DEFAULT_CASHU_MINT=https://mint.minibits.cash
+```
+
+---
+
+## 🚀 Utilisation
+
+### Mode développement
+
+**Web** (preview rapide) :
+```bash
 bun run start-web
-
-# Step 5: Start iOS preview
-# Option A (recommended):
-bun run start  # then press "i" in the terminal to open iOS Simulator
-# Option B (if supported by your environment):
-bun run start -- --ios
 ```
 
-### **Edit a file directly in GitHub**
+**Mobile** (Expo Go) :
+```bash
+bun start
+# Scannez le QR code avec l'app Expo Go
+```
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+**iOS Simulator** :
+```bash
+bun start -- --ios
+```
 
-## What technologies are used for this project?
+**Android Emulator** :
+```bash
+bun start -- --android
+```
 
-This project is built with the most popular native mobile cross-platform technical stack:
+### APK de production
 
-- **React Native** - Cross-platform native mobile development framework created by Meta and used for Instagram, Airbnb, and lots of top apps in the App Store
-- **Expo** - Extension of React Native + platform used by Discord, Shopify, Coinbase, Telsa, Starlink, Eightsleep, and more
-- **Expo Router** - File-based routing system for React Native with support for web, server functions and SSR
-- **TypeScript** - Type-safe JavaScript
-- **React Query** - Server state management
-- **Lucide React Native** - Beautiful icons
+Télécharger la dernière version :
 
-## How can I test my app?
+🔗 [BitMesh Releases](https://github.com/Silexperience210/BitMesh/releases/latest)
 
-### **On your phone (Recommended)**
+**Installation** :
+1. Téléchargez `BitMesh-release.apk`
+2. Activez "Sources inconnues" dans les paramètres Android
+3. Installez l'APK
+4. Lancez BitMesh 🚀
 
-1. **iOS**: Download the [Rork app from the App Store](https://apps.apple.com/app/rork) or [Expo Go](https://apps.apple.com/app/expo-go/id982107779)
-2. **Android**: Download the [Expo Go app from Google Play](https://play.google.com/store/apps/details?id=host.exp.exponent)
-3. Run `bun run start` and scan the QR code from your development server
+### Première utilisation
 
-### **In your browser**
+1. **Onboarding** : Écran de bienvenue animé expliquant BitMesh/MeshCore/Bitcoin/Cashu
+2. **Création wallet** : Générer un nouveau seed (12 mots) ou importer un existant
+3. **Sauvegarde seed** : **CRITIQUE** — Notez vos 12 mots sur papier (jamais en ligne !)
+4. **GPS permissions** : Autoriser la localisation pour le radar
+5. **Connexion MQTT** : Automatique au démarrage
 
-Run `bun start-web` to test in a web browser. Note: The browser preview is great for quick testing, but some native features may not be available.
+### Envoyer un message
 
-### **iOS Simulator / Android Emulator**
+1. Onglet **Messages** → Bouton `+` (nouvelle conversation)
+2. Sélectionner un peer depuis le radar
+3. Écrire le message → Bouton ✈️ (envoi)
+4. Le message est chiffré ECDH → publié sur `meshcore/dm/{peerNodeId}`
 
-You can test Rork apps in Expo Go or Rork iOS app. You don't need XCode or Android Studio for most features.
+### Envoyer des sats (Cashu)
 
-**When do you need Custom Development Builds?**
+1. Ouvrir une conversation
+2. Bouton 💰 (Cashu)
+3. Coller un token `cashuA...` (généré depuis votre mint)
+4. Preview affiche : `X sats` + `Mint: https://...`
+5. Bouton **Envoyer X sats** → Token chiffré et envoyé
 
-- Native authentication (Face ID, Touch ID, Apple Sign In)
-- In-app purchases and subscriptions
-- Push notifications
-- Custom native modules
+### Rejoindre un forum
 
-Learn more: [Expo Custom Development Builds Guide](https://docs.expo.dev/develop/development-builds/introduction/)
+1. Onglet **Messages** → Bouton `+` → **Nouveau Forum**
+2. Nom du channel : `bitcoin-paris`
+3. Le forum est créé avec clé `sha256("forum:bitcoin-paris")`
+4. Tous ceux connaissant ce nom peuvent rejoindre
 
-If you have XCode (iOS) or Android Studio installed:
+---
+
+## 📂 Structure du projet
+
+```
+BitMesh/
+├── app/                          # Screens (Expo Router file-based)
+│   ├── (tabs)/                   # Navigation tabs
+│   │   ├── (messages)/           # Messages tab + conversations
+│   │   │   ├── [chatId].tsx      # Conversation screen (DM/Forum)
+│   │   │   └── index.tsx         # Liste conversations
+│   │   ├── (wallet)/             # Wallet tab
+│   │   │   ├── index.tsx         # Wallet overview
+│   │   │   ├── receive.tsx       # Receive BTC/Lightning
+│   │   │   └── send.tsx          # Send BTC/Lightning
+│   │   ├── mesh/                 # Mesh radar tab
+│   │   │   └── index.tsx         # GPS radar + peers
+│   │   ├── settings/             # Settings tab
+│   │   │   └── index.tsx         # App settings
+│   │   └── _layout.tsx           # Tabs layout
+│   ├── _layout.tsx               # Root layout + providers
+│   ├── index.tsx                 # Splash + onboarding redirect
+│   └── onboarding.tsx            # Onboarding animated screen
+├── components/                   # React components
+│   ├── MeshRadar.tsx             # GPS radar component
+│   ├── MessageBubble.tsx         # Message bubble (text/cashu/btc)
+│   └── ...
+├── providers/                    # React Context providers
+│   ├── MessagesProvider.ts       # MQTT + messages state
+│   ├── WalletSeedProvider.ts     # Bitcoin wallet seed
+│   ├── GatewayProvider.ts        # LoRa gateway bridge
+│   └── AppSettingsProvider.ts    # App settings
+├── utils/                        # Utility functions
+│   ├── identity.ts               # NodeId + keypair derivation
+│   ├── encryption.ts             # ECDH + AES-GCM
+│   ├── mqtt-client.ts            # MQTT client (mqtt v5)
+│   ├── messages-store.ts         # AsyncStorage persistence
+│   ├── radar.ts                  # Haversine + GPS bearing
+│   ├── chunking.ts               # LoRa message chunking
+│   ├── wallet/                   # Bitcoin wallet utils
+│   │   ├── seed.ts               # BIP39 seed generation
+│   │   ├── derive.ts             # BIP32/44 derivation
+│   │   └── transaction.ts        # TX signing
+│   └── cashu/                    # Cashu utils
+│       ├── token.ts              # cashuA encode/decode
+│       └── mint.ts               # Mint API calls
+├── constants/                    # Constants & config
+│   └── colors.ts                 # Color palette
+├── assets/                       # Static assets
+│   └── images/                   # App icons
+├── .github/workflows/            # GitHub Actions
+│   └── eas-build.yml             # Auto-build APK on push
+├── app.json                      # Expo config
+├── eas.json                      # EAS Build config
+├── package.json                  # Dependencies
+├── tsconfig.json                 # TypeScript config
+└── README.md                     # This file
+```
+
+---
+
+## 🛠 Hardware compatible
+
+### LoRa Gateways
+
+BitMesh est compatible avec tout gateway LoRa ESP32 supportant MeshCore :
+
+| Hardware | Chipset | Fréquence | Distance | Prix |
+|----------|---------|-----------|----------|------|
+| **Heltec WiFi LoRa 32 V3** | ESP32-S3 + SX1262 | 868/915 MHz | ~20 km | ~25€ |
+| **TTGO LoRa32** | ESP32 + SX1276 | 868/915 MHz | ~15 km | ~20€ |
+| **LilyGO T-Beam** | ESP32 + SX1276 + GPS | 868/915 MHz | ~15 km | ~35€ |
+| **RAK WisBlock** | ESP32 + SX1262 | 868/915 MHz | ~20 km | ~40€ |
+| **Meshtastic devices** | Various | 868/915 MHz | ~15-20 km | Varies |
+
+### Firmware recommandé
+
+**MeshCore Gateway Firmware** (ESP32) :
+- Repository : [github.com/Silexperience210/meshcore-gateway](https://github.com/Silexperience210/meshcore-gateway) *(à venir)*
+- PlatformIO project
+- MQTT bridge automatique (WiFi → LoRa)
+- Topics : `meshcore/lora/outbound` → LoRa TX, LoRa RX → `meshcore/lora/inbound`
+
+**Alternative : Meshtastic** (compatible mais limité) :
+- [meshtastic.org](https://meshtastic.org)
+- Flash via Web Flasher
+- MQTT plugin activé
+
+---
+
+## 💻 Développement
+
+### Lancer les tests
 
 ```bash
-# iOS Simulator
-bun run start -- --ios
+# Unit tests
+bun test
 
-# Android Emulator
-bun run start -- --android
+# E2E tests (Detox)
+bun run test:e2e:android
+bun run test:e2e:ios
 ```
 
-## How can I deploy this project?
-
-### **Publish to App Store (iOS)**
-
-1. **Install EAS CLI**:
-
-   ```bash
-   bun i -g @expo/eas-cli
-   ```
-
-2. **Configure your project**:
-
-   ```bash
-   eas build:configure
-   ```
-
-3. **Build for iOS**:
-
-   ```bash
-   eas build --platform ios
-   ```
-
-4. **Submit to App Store**:
-   ```bash
-   eas submit --platform ios
-   ```
-
-For detailed instructions, visit [Expo's App Store deployment guide](https://docs.expo.dev/submit/ios/).
-
-### **Publish to Google Play (Android)**
-
-1. **Build for Android**:
-
-   ```bash
-   eas build --platform android
-   ```
-
-2. **Submit to Google Play**:
-   ```bash
-   eas submit --platform android
-   ```
-
-For detailed instructions, visit [Expo's Google Play deployment guide](https://docs.expo.dev/submit/android/).
-
-### **Publish as a Website**
-
-Your React Native app can also run on the web:
-
-1. **Build for web**:
-
-   ```bash
-   eas build --platform web
-   ```
-
-2. **Deploy with EAS Hosting**:
-   ```bash
-   eas hosting:configure
-   eas hosting:deploy
-   ```
-
-Alternative web deployment options:
-
-- **Vercel**: Deploy directly from your GitHub repository
-- **Netlify**: Connect your GitHub repo to Netlify for automatic deployments
-
-## App Features
-
-This template includes:
-
-- **Cross-platform compatibility** - Works on iOS, Android, and Web
-- **File-based routing** with Expo Router
-- **Tab navigation** with customizable tabs
-- **Modal screens** for overlays and dialogs
-- **TypeScript support** for better development experience
-- **Async storage** for local data persistence
-- **Vector icons** with Lucide React Native
-
-## Project Structure
-
-```
-├── app/                    # App screens (Expo Router)
-│   ├── (tabs)/            # Tab navigation screens
-│   │   ├── _layout.tsx    # Tab layout configuration
-│   │   └── index.tsx      # Home tab screen
-│   ├── _layout.tsx        # Root layout
-│   ├── modal.tsx          # Modal screen example
-│   └── +not-found.tsx     # 404 screen
-├── assets/                # Static assets
-│   └── images/           # App icons and images
-├── constants/            # App constants and configuration
-├── app.json             # Expo configuration
-├── package.json         # Dependencies and scripts
-└── tsconfig.json        # TypeScript configuration
-```
-
-## Custom Development Builds
-
-For advanced native features, you'll need to create a Custom Development Build instead of using Expo Go.
-
-### **When do you need a Custom Development Build?**
-
-- **Native Authentication**: Face ID, Touch ID, Apple Sign In, Google Sign In
-- **In-App Purchases**: App Store and Google Play subscriptions
-- **Advanced Native Features**: Third-party SDKs, platform-specifc features (e.g. Widgets on iOS)
-- **Background Processing**: Background tasks, location tracking
-
-### **Creating a Custom Development Build**
+### Linter & Formatter
 
 ```bash
-# Install EAS CLI
+# ESLint
+bun run lint
+
+# Prettier
+bun run format
+
+# Type checking
+bun run type-check
+```
+
+### Architecture des providers
+
+Les providers React Context gèrent l'état global de l'application :
+
+**MessagesProvider** :
+- Connexion MQTT (WebSocket TLS)
+- Subscribe aux topics (`identity/+`, `dm/{nodeId}`, `forum/*`)
+- Chiffrement/déchiffrement des messages
+- Stockage AsyncStorage (200 derniers messages)
+- Radar peers avec GPS
+
+**WalletSeedProvider** :
+- Génération/import seed BIP39
+- Stockage sécurisé (Keychain/Keystore)
+- Dérivation BIP32/44
+- Balance tracking
+
+**GatewayProvider** :
+- Bridge MQTT ↔ LoRa (via gateway ESP32)
+- Chunking/reassembly messages LoRa
+- Status connexion gateway
+
+---
+
+## 🏗 Build & Déploiement
+
+### Build local (APK preview)
+
+```bash
+# Installer EAS CLI
 bun i -g @expo/eas-cli
 
-# Configure your project for development builds
-eas build:configure
+# Login
+eas login
 
-# Create a development build for your device
-eas build --profile development --platform ios
-eas build --profile development --platform android
+# Build APK (preview)
+eas build --platform android --profile preview
 
-# Install the development build on your device and start developing
-bun start --dev-client
+# Build AAB (Google Play)
+eas build --platform android --profile production
 ```
 
-**Learn more:**
+### Build automatique (GitHub Actions)
 
-- [Development Builds Introduction](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Creating Development Builds](https://docs.expo.dev/develop/development-builds/create-a-build/)
-- [Installing Development Builds](https://docs.expo.dev/develop/development-builds/installation/)
+Le workflow `.github/workflows/eas-build.yml` se déclenche automatiquement à chaque push sur `main` :
 
-## Advanced Features
+1. Génère un keystore Android
+2. Build APK via EAS
+3. Crée une GitHub Release avec APK téléchargeable
 
-### **Add a Database**
+**Releases** : https://github.com/Silexperience210/BitMesh/releases
 
-Integrate with backend services:
+### Secrets GitHub requis
 
-- **Supabase** - PostgreSQL database with real-time features
-- **Firebase** - Google's mobile development platform
-- **Custom API** - Connect to your own backend
+| Secret | Description |
+|--------|-------------|
+| `EXPO_TOKEN` | Token EAS (généré via `eas login`) |
 
-### **Add Authentication**
+---
 
-Implement user authentication:
+## 🔌 API & Intégrations
 
-**Basic Authentication (works in Expo Go):**
+### MQTT Broker
 
-- **Expo AuthSession** - OAuth providers (Google, Facebook, Apple) - [Guide](https://docs.expo.dev/guides/authentication/)
-- **Supabase Auth** - Email/password and social login - [Integration Guide](https://supabase.com/docs/guides/getting-started/tutorials/with-expo-react-native)
-- **Firebase Auth** - Comprehensive authentication solution - [Setup Guide](https://docs.expo.dev/guides/using-firebase/)
+**Production** : `wss://broker.emqx.io:8084/mqtt` (public)
 
-**Native Authentication (requires Custom Development Build):**
+**Self-hosted** (recommandé pour production) :
+```bash
+# Docker Compose
+version: '3.8'
+services:
+  emqx:
+    image: emqx/emqx:latest
+    ports:
+      - "1883:1883"    # MQTT
+      - "8083:8083"    # WebSocket
+      - "8084:8084"    # WebSocket TLS
+      - "18083:18083"  # Dashboard
+    environment:
+      EMQX_ALLOW_ANONYMOUS: "true"
+```
 
-- **Apple Sign In** - Native Apple authentication - [Implementation Guide](https://docs.expo.dev/versions/latest/sdk/apple-authentication/)
-- **Google Sign In** - Native Google authentication - [Setup Guide](https://docs.expo.dev/guides/google-authentication/)
+### Bitcoin Node (optionnel)
 
-### **Add Push Notifications**
+Pour transactions on-chain, connecter un full node :
 
-Send notifications to your users:
+```bash
+# Bitcoin Core (testnet)
+bitcoind -testnet -daemon
 
-- **Expo Notifications** - Cross-platform push notifications
-- **Firebase Cloud Messaging** - Advanced notification features
+# Ou via Electrum Server
+electrs --network testnet
+```
 
-### **Add Payments**
+Config dans `.env` :
+```env
+BITCOIN_RPC_URL=http://localhost:18332
+BITCOIN_RPC_USER=user
+BITCOIN_RPC_PASS=pass
+```
 
-Monetize your app:
+### Lightning Node (optionnel)
 
-**Web & Credit Card Payments (works in Expo Go):**
+Pour paiements Lightning :
 
-- **Stripe** - Credit card payments and subscriptions - [Expo + Stripe Guide](https://docs.expo.dev/guides/using-stripe/)
-- **PayPal** - PayPal payments integration - [Setup Guide](https://developer.paypal.com/docs/checkout/mobile/react-native/)
+```bash
+# LND
+lnd --bitcoin.testnet --bitcoin.node=bitcoind
 
-**Native In-App Purchases (requires Custom Development Build):**
+# CLN (Core Lightning)
+lightningd --network=testnet
+```
 
-- **RevenueCat** - Cross-platform in-app purchases and subscriptions - [Expo Integration Guide](https://www.revenuecat.com/docs/expo)
-- **Expo In-App Purchases** - Direct App Store/Google Play integration - [Implementation Guide](https://docs.expo.dev/versions/latest/sdk/in-app-purchases/)
+### Cashu Mint
 
-**Paywall Optimization:**
+Utiliser un mint public ou self-hosted :
 
-- **Superwall** - Paywall A/B testing and optimization - [React Native SDK](https://docs.superwall.com/docs/react-native)
-- **Adapty** - Mobile subscription analytics and paywalls - [Expo Integration](https://docs.adapty.io/docs/expo)
+**Public mints** :
+- https://mint.minibits.cash
+- https://cashu.me
+- https://mint.coinos.io
 
-## I want to use a custom domain - is that possible?
+**Self-hosted** (Nutshell) :
+```bash
+git clone https://github.com/cashubtc/nutshell
+cd nutshell
+pip install .
+poetry run mint
+```
 
-For web deployments, you can use custom domains with:
+---
 
-- **EAS Hosting** - Custom domains available on paid plans
-- **Netlify** - Free custom domain support
-- **Vercel** - Custom domains with automatic SSL
+## 🗺 Roadmap
 
-For mobile apps, you'll configure your app's deep linking scheme in `app.json`.
+### Q2 2026
 
-## Troubleshooting
+- [x] Messagerie P2P chiffrée (ECDH + AES-GCM)
+- [x] MQTT real-time (WebSocket)
+- [x] Bitcoin HD wallet (BIP32/39/44)
+- [x] Cashu eCash support
+- [x] GPS radar temps réel
+- [x] Forums multi-utilisateurs
+- [x] Onboarding animé
+- [ ] LoRa hardware integration (BLE)
+- [ ] Multi-hop routing (mesh relay)
+- [ ] Lightning invoices (BOLT11 send/receive)
 
-### **App not loading on device?**
+### Q3 2026
 
-1. Make sure your phone and computer are on the same WiFi network
-2. Try using tunnel mode: `bun start -- --tunnel`
-3. Check if your firewall is blocking the connection
+- [ ] iOS build (App Store)
+- [ ] Push notifications (FCM)
+- [ ] Media sharing (images, voice notes)
+- [ ] Group calls (WebRTC mesh)
+- [ ] Offline message queue
+- [ ] Message reactions & replies
+- [ ] Contact sync (from phonebook)
 
-### **Build failing?**
+### Q4 2026
 
-1. Clear your cache: `bunx expo start --clear`
-2. Delete `node_modules` and reinstall: `rm -rf node_modules && bun install`
-3. Check [Expo's troubleshooting guide](https://docs.expo.dev/troubleshooting/build-errors/)
+- [ ] Nostr integration (NIP-04/17/44)
+- [ ] eSIM data marketplace (via LoRa)
+- [ ] Mesh routing analytics (hop count, latency)
+- [ ] Multi-language (EN, ES, DE, FR)
+- [ ] Desktop app (Electron)
+- [ ] Hardware wallet support (Ledger, Coldcard)
 
-### **Need help with native features?**
+### Futur
 
-- Check [Expo's documentation](https://docs.expo.dev/) for native APIs
-- Browse [React Native's documentation](https://reactnative.dev/docs/getting-started) for core components
-- Visit [Rork's FAQ](https://rork.com/faq) for platform-specific questions
+- [ ] Satellite connectivity (Blockstream Satellite)
+- [ ] Mesh VPN (tunnel IP over LoRa)
+- [ ] Local marketplaces (P2P trades via Cashu)
+- [ ] Emergency broadcast (SOS mode)
 
-## About Rork
+---
 
-Rork builds fully native mobile apps using React Native and Expo - the same technology stack used by Discord, Shopify, Coinbase, Instagram, and nearly 30% of the top 100 apps on the App Store.
+## 🤝 Contribution
 
-Your Rork app is production-ready and can be published to both the App Store and Google Play Store. You can also export your app to run on the web, making it truly cross-platform.
+Les contributions sont les bienvenues ! Merci de suivre ces guidelines :
+
+### Issues
+
+Créer une issue pour :
+- 🐛 **Bug reports** : Description détaillée, steps to reproduce, logs
+- ✨ **Feature requests** : Use case, mockups si possible
+- 📚 **Documentation** : Typos, clarifications
+
+### Pull Requests
+
+1. Fork le repo
+2. Créer une branche : `git checkout -b feature/ma-feature`
+3. Commit avec message conventionnel : `feat: ajouter support NIP-04`
+4. Push : `git push origin feature/ma-feature`
+5. Ouvrir une PR avec description détaillée
+
+**Commit convention** :
+```
+feat: nouvelle fonctionnalité
+fix: correction de bug
+docs: documentation
+refactor: refactoring
+test: ajout de tests
+chore: tâches diverses (deps, config)
+```
+
+### Code Style
+
+- **TypeScript strict mode** : Toujours typer les paramètres/retours
+- **Commentaires en français** : Code comments in French
+- **ESLint + Prettier** : Lancer `bun run lint` avant commit
+- **Tests unitaires** : Couverture >80% pour utils/
+
+---
+
+## 📜 Licence
+
+**MIT License**
+
+Copyright (c) 2026 Silexperience
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+## 👤 Auteur
+
+**Silexperience**
+
+🔗 [GitHub](https://github.com/Silexperience210)
+📧 Contact : noreply@github.com
+🌐 Website : *Coming soon*
+
+---
+
+<div align="center">
+
+**⚡ Construit avec React Native, Bitcoin, et LoRa**
+
+**🚀 BitMesh — Messagerie décentralisée pour un monde souverain**
+
+[⬆ Retour en haut](#-bitmesh)
+
+</div>
