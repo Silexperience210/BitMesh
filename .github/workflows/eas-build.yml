@@ -28,4 +28,30 @@ jobs:
           token: ${{ secrets.EXPO_TOKEN }}
 
       - name: Build APK via EAS
-        run: eas build --platform android --profile preview --non-interactive
+        id: build
+        run: |
+          BUILD_URL=$(eas build --platform android --profile preview --non-interactive --json | jq -r '.[0].artifacts.buildUrl // empty')
+          echo "build_url=$BUILD_URL" >> $GITHUB_OUTPUT
+
+      - name: Download APK
+        if: steps.build.outputs.build_url != ''
+        run: |
+          curl -L "${{ steps.build.outputs.build_url }}" -o BitMesh-release.apk
+
+      - name: Create GitHub Release
+        if: steps.build.outputs.build_url != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "BitMesh v${{ github.run_number }}"
+          body: |
+            ## BitMesh APK — Build automatique
+
+            APK généré par EAS Build depuis le commit `${{ github.sha }}`.
+
+            **Installation** : télécharger `BitMesh-release.apk` et l'installer sur votre Android.
+          files: BitMesh-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
