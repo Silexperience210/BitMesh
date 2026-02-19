@@ -413,18 +413,21 @@ export interface DBCashuToken {
   proofs: string;
   keysetId?: string;
   receivedAt: number;
-  spent: boolean;
+  state: 'unspent' | 'pending' | 'spent' | 'unverified';  // ✅ NOUVEAU : état complet
   spentAt?: number;
   source?: string;
   memo?: string;
+  unverified?: boolean;  // ✅ NOUVEAU : si reçu offline
+  retryCount?: number;   // ✅ NOUVEAU : compteur de retry
+  lastCheckAt?: number;  // ✅ NOUVEAU : dernière vérif
 }
 
 export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): Promise<void> {
   const database = await getDatabase();
   await database.runAsync(`
     INSERT OR REPLACE INTO cashu_tokens 
-    (id, mintUrl, amount, token, proofs, keysetId, receivedAt, spent, source, memo)
-    VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?)
+    (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
+    VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?, ?, ?, ?, ?)
   `, [
     token.id,
     token.mintUrl,
@@ -432,20 +435,25 @@ export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): P
     token.token,
     token.proofs,
     token.keysetId || null,
-    token.spent ? 1 : 0,
+    token.state || 'unspent',
+    token.spentAt || null,
     token.source || null,
     token.memo || null,
+    token.unverified ? 1 : 0,
+    token.retryCount || 0,
+    token.lastCheckAt || null,
   ]);
 }
 
 export async function getUnspentCashuTokens(): Promise<DBCashuToken[]> {
   const database = await getDatabase();
   const rows = await database.getAllAsync<any>(`
-    SELECT * FROM cashu_tokens WHERE spent = 0 ORDER BY receivedAt DESC
+    SELECT * FROM cashu_tokens WHERE state IN ('unspent', 'unverified') ORDER BY receivedAt DESC
   `);
   return rows.map(row => ({
     ...row,
-    spent: Boolean(row.spent),
+    state: row.state || (row.spent ? 'spent' : 'unspent'),
+    unverified: Boolean(row.unverified),
   }));
 }
 
@@ -453,7 +461,37 @@ export async function markCashuTokenSpent(id: string): Promise<void> {
   const database = await getDatabase();
   await database.runAsync(`
     UPDATE cashu_tokens 
-    SET spent = 1, spentAt = strftime('%s', 'now') * 1000
+    SET state = 'spent', spentAt = strftime('%s', 'now') * 1000
+    WHERE id = ?
+  `, [id]);
+}
+
+// ✅ NOUVEAU : Marquer comme pending
+export async function markCashuTokenPending(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    UPDATE cashu_tokens 
+    SET state = 'pending'
+    WHERE id = ?
+  `, [id]);
+}
+
+// ✅ NOUVEAU : Remettre à unspent (rollback)
+export async function markCashuTokenUnspent(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    UPDATE cashu_tokens 
+    SET state = 'unspent', pending = 0
+    WHERE id = ?
+  `, [id]);
+}
+
+// ✅ NOUVEAU : Mettre à jour après vérification
+export async function markCashuTokenVerified(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    UPDATE cashu_tokens 
+    SET state = 'unspent', unverified = 0, lastCheckAt = strftime('%s', 'now') * 1000
     WHERE id = ?
   `, [id]);
 }
@@ -472,7 +510,7 @@ export async function getCashuBalance(): Promise<{ total: number; byMint: Record
   const rows = await database.getAllAsync<{ mintUrl: string; amount: number }>(`
     SELECT mintUrl, SUM(amount) as amount 
     FROM cashu_tokens 
-    WHERE spent = 0 
+    WHERE state IN ('unspent', 'unverified')
     GROUP BY mintUrl
   `);
   
@@ -485,6 +523,71 @@ export async function getCashuBalance(): Promise<{ total: number; byMint: Record
   }
   
   return { total, byMint };
+}
+
+// ✅ NOUVEAU : Export tous les tokens (backup)
+export async function exportCashuTokens(): Promise<DBCashuToken[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(`
+    SELECT * FROM cashu_tokens ORDER BY receivedAt DESC
+  `);
+  return rows.map(row => ({
+    ...row,
+    state: row.state || 'unspent',
+    unverified: Boolean(row.unverified),
+  }));
+}
+
+// ✅ NOUVEAU : Import tokens (restore)
+export async function importCashuTokens(tokens: DBCashuToken[]): Promise<number> {
+  const database = await getDatabase();
+  let imported = 0;
+  
+  for (const token of tokens) {
+    try {
+      await database.runAsync(`
+        INSERT OR IGNORE INTO cashu_tokens 
+        (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        token.id,
+        token.mintUrl,
+        token.amount,
+        token.token,
+        token.proofs,
+        token.keysetId || null,
+        token.receivedAt,
+        token.state || 'unspent',
+        token.spentAt || null,
+        token.source || null,
+        token.memo || null,
+        token.unverified ? 1 : 0,
+        token.retryCount || 0,
+        token.lastCheckAt || null,
+      ]);
+      imported++;
+    } catch (err) {
+      console.log('[Database] Erreur import token:', token.id, err);
+    }
+  }
+  
+  return imported;
+}
+
+// ✅ NOUVEAU : Récupérer les tokens unverified pour retry
+export async function getUnverifiedCashuTokens(): Promise<DBCashuToken[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(`
+    SELECT * FROM cashu_tokens 
+    WHERE state = 'unverified' 
+    AND (retryCount < 5 OR retryCount IS NULL)
+    ORDER BY receivedAt ASC
+  `);
+  return rows.map(row => ({
+    ...row,
+    state: row.state || 'unspent',
+    unverified: Boolean(row.unverified),
+  }));
 }
 
 // --- User Profile (display name personnalisable) ---

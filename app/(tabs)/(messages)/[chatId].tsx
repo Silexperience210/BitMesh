@@ -12,7 +12,8 @@ import { formatMessageTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
 import { useBle } from '@/providers/BleProvider';
-import { decodeCashuToken, getTokenAmount, verifyCashuToken } from '@/utils/cashu';
+import { decodeCashuToken, getTokenAmount, verifyCashuToken, generateTokenId } from '@/utils/cashu';
+import { markCashuTokenSpent, markCashuTokenPending, markCashuTokenUnspent } from '@/utils/database';
 import type { StoredMessage } from '@/utils/messages-store';
 
 function PaymentBubble({ amount }: { amount: number }) {
@@ -108,12 +109,35 @@ function CashuSendModal({
     if (!preview || isSending) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setIsSending(true);
+    
+    let tokenId: string | null = null;
+    
     try {
+      // ✅ NOUVEAU : Marquer comme pending avant envoi
+      const decoded = decodeCashuToken(tokenInput.trim());
+      if (decoded) {
+        tokenId = generateTokenId(decoded);
+        await markCashuTokenPending(tokenId);
+        console.log('[Cashu] Token marqué pending:', tokenId);
+      }
+      
       await onSend(tokenInput.trim(), preview.amount);
+      
+      // ✅ Envoi réussi → marquer spent
+      if (tokenId) {
+        await markCashuTokenSpent(tokenId);
+        console.log('[Cashu] Token marqué spent:', tokenId);
+      }
+      
       setTokenInput('');
       setPreview(null);
       onClose();
     } catch (err) {
+      // ✅ Échec → rollback à unspent
+      if (tokenId) {
+        await markCashuTokenUnspent(tokenId);
+        console.log('[Cashu] Token remis à unspent (échec envoi):', tokenId);
+      }
       setError(err instanceof Error ? err.message : 'Erreur envoi');
     } finally {
       setIsSending(false);

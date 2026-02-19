@@ -1,6 +1,7 @@
 // Provider principal pour la messagerie MeshCore P2P chiffrée
 import { useState, useEffect, useCallback, useRef } from 'react';
 import createContextHook from '@nkzw/create-context-hook';
+import * as Notifications from 'expo-notifications'; // ✅ NOUVEAU
 import {
   type MeshMqttClient,
   createMeshMqttClient,
@@ -39,7 +40,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
-import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken } from '@/utils/database';
+import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken, getUnverifiedCashuTokens, markCashuTokenVerified, incrementRetryCount } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity, verifyNodeId } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -620,9 +621,25 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
               proofs: JSON.stringify(verification.token.token[0].proofs),
               source: fromNodeIdValue,
               memo: `Reçu de ${fromNodeIdValue}`,
-              spent: false,
+              state: verification.unverified ? 'unverified' : 'unspent',
+              unverified: verification.unverified,
+              retryCount: 0,
             });
-            console.log('[Cashu] Token validé et stocké:', tokenId, verification.amount, 'sats');
+            console.log('[Cashu] Token validé et stocké:', tokenId, verification.amount, 'sats', verification.unverified ? '(unverified)' : '');
+            
+            // ✅ NOUVEAU : Notification locale
+            try {
+              await Notifications.scheduleNotificationAsync({
+                content: {
+                  title: '💰 Token Cashu reçu !',
+                  body: `${verification.amount} sats de ${fromNodeIdValue.slice(0, 10)}...`,
+                  data: { type: 'cashu_received', amount: verification.amount },
+                },
+                trigger: null, // Immédiat
+              });
+            } catch (notifErr) {
+              console.log('[Cashu] Erreur notification:', notifErr);
+            }
           } else {
             console.log('[Cashu] Token invalide reçu:', verification.error);
             // On garde le message mais on marque comme invalide
@@ -956,6 +973,49 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const interval = setInterval(() => {
       cleanupOldMessages();
     }, 60 * 60 * 1000); // 1 heure
+    
+    return () => clearInterval(interval);
+  }, []);
+
+  // ✅ NOUVEAU : Vérification périodique des tokens unverified (P2)
+  useEffect(() => {
+    async function verifyUnverifiedTokens() {
+      try {
+        const unverified = await getUnverifiedCashuTokens();
+        if (unverified.length === 0) return;
+        
+        console.log('[Cashu] Vérification de', unverified.length, 'tokens unverified');
+        
+        for (const token of unverified) {
+          try {
+            const verification = await verifyCashuToken(token.token);
+            if (verification.valid && !verification.unverified) {
+              // Token validé !
+              await markCashuTokenVerified(token.id);
+              console.log('[Cashu] Token vérifié avec succès:', token.id);
+            } else if (!verification.valid) {
+              // Token invalide
+              console.log('[Cashu] Token invalide détecté:', token.id, verification.error);
+              await incrementRetryCount(token.id);
+            } else {
+              // Toujours unverified, incrémenter retry
+              await incrementRetryCount(token.id);
+            }
+          } catch (err) {
+            console.log('[Cashu] Erreur vérif token:', token.id, err);
+            await incrementRetryCount(token.id);
+          }
+        }
+      } catch (err) {
+        console.log('[Cashu] Erreur batch verification:', err);
+      }
+    }
+    
+    // Vérifier toutes les 5 minutes
+    const interval = setInterval(verifyUnverifiedTokens, 5 * 60 * 1000);
+    
+    // Vérification immédiate au démarrage
+    setTimeout(verifyUnverifiedTokens, 10000);
     
     return () => clearInterval(interval);
   }, []);

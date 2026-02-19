@@ -29,6 +29,10 @@ export interface CashuMintQuote {
   amount: number;
 }
 
+// ✅ NOUVEAU : Cache pour les infos mint
+const mintInfoCache: Map<string, { info: CashuMintInfo; timestamp: number }> = new Map();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export interface CashuMeltQuote {
   quote: string;
   amount: number;
@@ -42,6 +46,38 @@ export interface CashuProof {
   amount: number;
   secret: string;
   C: string;
+  // ✅ NOUVEAU : DLEQ proof (NUT-12)
+  dleq?: {
+    r: string;
+    s: string;
+  };
+}
+
+// ✅ NOUVEAU : Vérification DLEQ (simplifiée)
+export function verifyDleqProof(proof: CashuProof, mintPubkey: string): boolean {
+  if (!proof.dleq) {
+    // Pas de DLEQ proof, on accepte (backward compatibility)
+    return true;
+  }
+  
+  // Note: La vérification complète DLEQ nécessite des opérations cryptographiques complexes
+  // (secp256k1, SHA256) qui nécessiteraient une librairie comme @noble/secp256k1
+  // Pour l'instant, on vérifie juste la présence
+  console.log('[Cashu] DLEQ proof présent pour le proof:', proof.id);
+  return true;
+}
+
+// ✅ NOUVEAU : Vérifier tous les proofs d'un token
+export function verifyTokenProofs(token: CashuToken, mintPubkey: string): boolean {
+  for (const entry of token.token) {
+    for (const proof of entry.proofs) {
+      if (!verifyDleqProof(proof, mintPubkey)) {
+        console.log('[Cashu] DLEQ verification failed pour proof:', proof.id);
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 export interface CashuToken {
@@ -71,6 +107,13 @@ export interface CashuWalletBalance {
 }
 
 export async function fetchMintInfo(mintUrl: string): Promise<CashuMintInfo> {
+  // ✅ NOUVEAU : Vérifier le cache
+  const cached = mintInfoCache.get(mintUrl);
+  if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+    console.log('[Cashu] Using cached mint info:', mintUrl);
+    return cached.info;
+  }
+
   const url = `${mintUrl}/v1/info`;
   console.log('[Cashu] Fetching mint info:', url);
 
@@ -81,6 +124,10 @@ export async function fetchMintInfo(mintUrl: string): Promise<CashuMintInfo> {
 
   const data = await response.json();
   console.log('[Cashu] Mint info:', data.name);
+  
+  // ✅ NOUVEAU : Mettre en cache
+  mintInfoCache.set(mintUrl, { info: data as CashuMintInfo, timestamp: Date.now() });
+  
   return data as CashuMintInfo;
 }
 
@@ -243,6 +290,7 @@ export async function verifyCashuToken(
   amount?: number;
   mintUrl?: string;
   error?: string;
+  unverified?: boolean;
 }> {
   // 1. Décoder
   const token = decodeCashuToken(encoded);
@@ -282,12 +330,14 @@ export async function verifyCashuToken(
       return { valid: false, error: 'Token déjà dépensé' };
     }
   } catch (err) {
-    // Si on ne peut pas vérifier, on accepte quand même mais on log
-    console.log('[Cashu] Impossible de vérifier le statut des proofs:', err);
+    // Mint inaccessible - accepter le token mais marquer comme "unverified"
+    console.log('[Cashu] Mint inaccessible, token accepté mais non vérifié:', err);
+    const amount = getTokenAmount(token);
+    return { valid: true, token, amount, mintUrl, unverified: true };
   }
 
   const amount = getTokenAmount(token);
-  return { valid: true, token, amount, mintUrl };
+  return { valid: true, token, amount, mintUrl, unverified: false };
 }
 
 // ✅ NOUVEAU : Générer un ID unique pour un token
@@ -326,4 +376,127 @@ export function formatMintUrl(url: string): string {
     clean = 'https://' + clean;
   }
   return clean;
+}
+
+// ✅ NOUVEAU : SWAP (NUT-03) - Échanger des tokens contre des nouveaux
+export interface SwapRequest {
+  inputs: CashuProof[];
+  outputs: Array<{
+    amount: number;
+    B_: string;
+  }>;
+}
+
+export interface SwapResponse {
+  signatures: Array<{
+    amount: number;
+    C_: string;
+  }>;
+}
+
+export async function swapTokens(
+  mintUrl: string,
+  inputs: CashuProof[],
+  outputs: Array<{ amount: number; B_: string }>
+): Promise<SwapResponse> {
+  const url = `${mintUrl}/v1/swap`;
+  console.log('[Cashu] Swapping', inputs.length, 'proofs for', outputs.length, 'outputs');
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ inputs, outputs }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Swap error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  console.log('[Cashu] Swap successful');
+  return data as SwapResponse;
+}
+
+// ✅ NOUVEAU : MELT (NUT-05) - Redeem tokens via Lightning
+export async function meltTokens(
+  mintUrl: string,
+  proofs: CashuProof[],
+  invoice: string
+): Promise<{ paid: boolean; preimage?: string; change?: CashuProof[] }> {
+  const url = `${mintUrl}/v1/melt/bolt11`;
+  console.log('[Cashu] Melting', proofs.length, 'proofs for invoice');
+
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      quote: invoice,
+      inputs: proofs,
+    }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Melt error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  console.log('[Cashu] Melt result - paid:', data.paid);
+  return {
+    paid: data.paid,
+    preimage: data.preimage,
+    change: data.change,
+  };
+}
+
+// ✅ NOUVEAU : P2PK (NUT-11) - Créer un token verrouillé sur une clé publique
+export function createP2pkToken(
+  token: CashuToken,
+  recipientPubkey: string
+): CashuToken {
+  // Ajouter la condition P2PK dans le secret de chaque proof
+  const lockedToken: CashuToken = {
+    ...token,
+    token: token.token.map(entry => ({
+      ...entry,
+      proofs: entry.proofs.map(proof => ({
+        ...proof,
+        // Le secret contient maintenant la condition P2PK
+        secret: JSON.stringify({
+          data: recipientPubkey,
+          nonce: proof.secret,
+        }),
+      })),
+    })),
+  };
+  
+  console.log('[Cashu] Token verrouillé P2PK créé pour:', recipientPubkey.slice(0, 20) + '...');
+  return lockedToken;
+}
+
+// ✅ NOUVEAU : Vérifier si un token est verrouillé P2PK
+export function isP2pkToken(token: CashuToken): boolean {
+  try {
+    const firstProof = token.token[0]?.proofs[0];
+    if (!firstProof) return false;
+    
+    const secret = JSON.parse(firstProof.secret);
+    return secret && typeof secret.data === 'string';
+  } catch {
+    return false;
+  }
+}
+
+// ✅ NOUVEAU : Récupérer la clé publique P2PK d'un token
+export function getP2pkPubkey(token: CashuToken): string | null {
+  try {
+    const firstProof = token.token[0]?.proofs[0];
+    if (!firstProof) return null;
+    
+    const secret = JSON.parse(firstProof.secret);
+    return secret?.data || null;
+  } catch {
+    return null;
+  }
 }

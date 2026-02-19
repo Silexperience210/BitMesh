@@ -55,11 +55,15 @@ import {
   fetchMintKeysets,
   requestMintQuote,
   testMintConnection,
+  swapTokens,  // ✅ NOUVEAU
+  meltTokens,  // ✅ NOUVEAU
   type CashuMintInfo,
   type CashuKeysetInfo,
   type CashuMintQuote,
+  type CashuProof,  // ✅ NOUVEAU
 } from '@/utils/cashu';
 import { formatSats } from '@/utils/helpers';
+import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, type DBCashuToken } from '@/utils/database';  // ✅ NOUVEAU: markCashuTokenSpent
 import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
@@ -286,6 +290,33 @@ function CashuBalanceCard({
   const [mintAmount, setMintAmount] = useState<string>('');
   const [mintQuote, setMintQuote] = useState<CashuMintQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
+  
+  // ✅ NOUVEAU : États pour Swap et Melt
+  const [showMeltModal, setShowMeltModal] = useState<boolean>(false);
+  const [meltInvoice, setMeltInvoice] = useState<string>('');
+  const [meltLoading, setMeltLoading] = useState<boolean>(false);
+  const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
+  
+  // ✅ NOUVEAU : Récupérer le solde Cashu depuis la DB
+  const [cashuBalance, setCashuBalance] = useState<{ total: number; byMint: Record<string, number> }>({ total: 0, byMint: {} });
+  const [tokens, setTokens] = useState<DBCashuToken[]>([]);
+  
+  useEffect(() => {
+    async function loadCashuBalance() {
+      try {
+        const balance = await getCashuBalance();
+        setCashuBalance(balance);
+        const unspent = await getUnspentCashuTokens();
+        setTokens(unspent);
+      } catch (err) {
+        console.log('[Cashu] Erreur chargement solde:', err);
+      }
+    }
+    loadCashuBalance();
+    // Rafraîchir toutes les 10 secondes
+    const interval = setInterval(loadCashuBalance, 10000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     Animated.loop(
@@ -329,6 +360,86 @@ function CashuBalanceCard({
     }
   }, [mintQuote]);
 
+  // ✅ NOUVEAU : Fonction MELT (redeem tokens en Lightning)
+  const handleMelt = useCallback(async () => {
+    if (!meltInvoice.trim() || selectedTokens.length === 0) {
+      Alert.alert('Error', 'Enter a Lightning invoice and select tokens');
+      return;
+    }
+    
+    setMeltLoading(true);
+    try {
+      // Récupérer les proofs des tokens sélectionnés
+      const selectedProofs = tokens
+        .filter(t => selectedTokens.includes(t.id))
+        .flatMap(t => JSON.parse(t.proofs) as CashuProof[]);
+      
+      const result = await meltTokens(mintUrl, selectedProofs, meltInvoice.trim());
+      
+      if (result.paid) {
+        // Marquer les tokens comme spent
+        for (const tokenId of selectedTokens) {
+          await markCashuTokenSpent(tokenId);
+        }
+        
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert(
+          'Success',
+          `Tokens redeemed!${result.preimage ? '\nPreimage: ' + result.preimage.slice(0, 16) + '...' : ''}`
+        );
+        
+        // Rafraîchir le solde
+        const balance = await getCashuBalance();
+        setCashuBalance(balance);
+        const unspent = await getUnspentCashuTokens();
+        setTokens(unspent);
+        
+        setShowMeltModal(false);
+        setMeltInvoice('');
+        setSelectedTokens([]);
+      } else {
+        Alert.alert('Failed', 'Payment failed. Tokens not spent.');
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      Alert.alert('Melt Error', msg);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setMeltLoading(false);
+    }
+  }, [meltInvoice, selectedTokens, tokens, mintUrl]);
+
+  // ✅ NOUVEAU : Fonction SWAP (consolider les tokens)
+  const handleSwap = useCallback(async () => {
+    if (tokens.length < 2) {
+      Alert.alert('Info', 'Need at least 2 tokens to consolidate');
+      return;
+    }
+    
+    Alert.alert(
+      'Consolidate Tokens',
+      `Merge ${tokens.length} tokens into one?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Consolidate',
+          onPress: async () => {
+            try {
+              // Note: Le swap complet nécessite la génération de blinded messages
+              // qui est complexe. Pour l'instant, on affiche juste une info.
+              Alert.alert(
+                'Coming Soon',
+                'Full token consolidation will be available in the next update.'
+              );
+            } catch (err) {
+              console.log('Swap error:', err);
+            }
+          }
+        }
+      ]
+    );
+  }, [tokens]);
+
   return (
     <View style={styles.cashuBalanceCard}>
       <Animated.View style={[styles.cashuGlow, { opacity: glowOpacity }]} />
@@ -351,6 +462,16 @@ function CashuBalanceCard({
         ) : (
           <WifiOff size={12} color={Colors.red} />
         )}
+      </View>
+
+      {/* ✅ NOUVEAU : Affichage du solde */}
+      <View style={styles.cashuBalanceRow}>
+        <Text style={styles.cashuBalanceAmount}>
+          {cashuBalance.total.toLocaleString()} sats
+        </Text>
+        <Text style={styles.cashuBalanceLabel}>
+          {tokens.length} token{tokens.length !== 1 ? 's' : ''}
+        </Text>
       </View>
 
       {mintInfo?.version && (
@@ -392,12 +513,12 @@ function CashuBalanceCard({
           activeOpacity={0.7}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            Alert.alert('Receive Token', 'Waiting for Cashu token via LoRa mesh...');
+            setShowMeltModal(true);
           }}
-          testID="receive-cashu-button"
+          testID="melt-cashu-button"
         >
-          <ArrowDownLeft size={18} color={Colors.cyan} />
-          <Text style={styles.cashuActionTextAlt}>Receive</Text>
+          <Zap size={18} color={Colors.cyan} />
+          <Text style={styles.cashuActionTextAlt}>Melt</Text>
         </TouchableOpacity>
       </View>
 
@@ -448,6 +569,98 @@ function CashuBalanceCard({
               </Text>
             </View>
           )}
+        </View>
+      )}
+
+      {/* ✅ NOUVEAU : Modal MELT (redeem tokens) */}
+      {showMeltModal && (
+        <View style={styles.meltModalContainer}>
+          <Text style={styles.meltModalTitle}>Redeem Tokens (Melt)</Text>
+          <Text style={styles.meltModalDesc}>
+            Enter a Lightning invoice to redeem your tokens
+          </Text>
+          
+          <TextInput
+            style={styles.meltInput}
+            placeholder="Lightning invoice (lnbc...)"
+            placeholderTextColor={Colors.textMuted}
+            value={meltInvoice}
+            onChangeText={setMeltInvoice}
+            multiline
+            numberOfLines={3}
+          />
+          
+          <Text style={styles.meltTokenLabel}>
+            Select tokens to redeem ({selectedTokens.length} selected):
+          </Text>
+          
+          <ScrollView style={styles.tokenList}>
+            {tokens.map((token) => (
+              <TouchableOpacity
+                key={token.id}
+                style={[
+                  styles.tokenItem,
+                  selectedTokens.includes(token.id) && styles.tokenItemSelected
+                ]}
+                onPress={() => {
+                  setSelectedTokens(prev =>
+                    prev.includes(token.id)
+                      ? prev.filter(id => id !== token.id)
+                      : [...prev, token.id]
+                  );
+                }}
+              >
+                <View style={styles.tokenCheckbox}>
+                  {selectedTokens.includes(token.id) && (
+                    <View style={styles.tokenCheckboxChecked} />
+                  )}
+                </View>
+                <View style={styles.tokenInfo}>
+                  <Text style={styles.tokenAmount}>{token.amount} sats</Text>
+                  <Text style={styles.tokenMint} numberOfLines={1}>
+                    {token.mintUrl.replace('https://', '')}
+                  </Text>
+                  {token.unverified && (
+                    <Text style={styles.tokenUnverified}>⚠️ Unverified</Text>
+                  )}
+                </View>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          
+          <View style={styles.meltActions}>
+            <TouchableOpacity
+              style={styles.meltCancelBtn}
+              onPress={() => {
+                setShowMeltModal(false);
+                setMeltInvoice('');
+                setSelectedTokens([]);
+              }}
+            >
+              <Text style={styles.meltCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.meltConfirmBtn,
+                (meltLoading || !meltInvoice.trim() || selectedTokens.length === 0) &&
+                  styles.meltConfirmBtnDisabled
+              ]}
+              onPress={handleMelt}
+              disabled={meltLoading || !meltInvoice.trim() || selectedTokens.length === 0}
+            >
+              {meltLoading ? (
+                <ActivityIndicator color={Colors.black} size="small" />
+              ) : (
+                <Text style={styles.meltConfirmText}>
+                  Redeem {selectedTokens.reduce((sum, id) => {
+                    const t = tokens.find(tok => tok.id === id);
+                    return sum + (t?.amount || 0);
+                  }, 0)} sats
+                </Text>
+              )}
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </View>
@@ -975,6 +1188,143 @@ const styles = StyleSheet.create({
     height: 120,
     borderRadius: 60,
     backgroundColor: Colors.cyan,
+  },
+  // ✅ NOUVEAU : Styles pour le solde Cashu
+  cashuBalanceRow: {
+    alignItems: 'center',
+    marginVertical: 16,
+  },
+  cashuBalanceAmount: {
+    color: Colors.cyan,
+    fontSize: 32,
+    fontWeight: '700' as const,
+  },
+  cashuBalanceLabel: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    marginTop: 4,
+  },
+  // ✅ NOUVEAU : Styles pour le modal MELT
+  meltModalContainer: {
+    backgroundColor: Colors.surfaceLight,
+    borderRadius: 16,
+    padding: 20,
+    marginTop: 16,
+  },
+  meltModalTitle: {
+    color: Colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+    marginBottom: 8,
+  },
+  meltModalDesc: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    marginBottom: 16,
+  },
+  meltInput: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 12,
+    color: Colors.text,
+    fontSize: 14,
+    borderWidth: 0.5,
+    borderColor: Colors.border,
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  meltTokenLabel: {
+    color: Colors.textSecondary,
+    fontSize: 14,
+    fontWeight: '600',
+    marginTop: 16,
+    marginBottom: 8,
+  },
+  tokenList: {
+    maxHeight: 200,
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    padding: 8,
+  },
+  tokenItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 4,
+    backgroundColor: Colors.surfaceHighlight,
+  },
+  tokenItemSelected: {
+    backgroundColor: Colors.cyan + '20',
+    borderWidth: 1,
+    borderColor: Colors.cyan,
+  },
+  tokenCheckbox: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    borderColor: Colors.border,
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  tokenCheckboxChecked: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: Colors.cyan,
+  },
+  tokenInfo: {
+    flex: 1,
+  },
+  tokenAmount: {
+    color: Colors.text,
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  tokenMint: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 2,
+  },
+  tokenUnverified: {
+    color: Colors.yellow,
+    fontSize: 10,
+    marginTop: 2,
+  },
+  meltActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    gap: 12,
+  },
+  meltCancelBtn: {
+    flex: 1,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: Colors.surfaceHighlight,
+    alignItems: 'center',
+  },
+  meltCancelText: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  meltConfirmBtn: {
+    flex: 2,
+    padding: 14,
+    borderRadius: 10,
+    backgroundColor: Colors.cyan,
+    alignItems: 'center',
+  },
+  meltConfirmBtnDisabled: {
+    backgroundColor: Colors.surfaceHighlight,
+  },
+  meltConfirmText: {
+    color: Colors.black,
+    fontSize: 14,
+    fontWeight: '700',
   },
   balanceHeader: {
     flexDirection: 'row',
