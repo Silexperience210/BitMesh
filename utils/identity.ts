@@ -56,3 +56,22 @@ export function hexToBytes(hex: string): Uint8Array {
   }
   return bytes;
 }
+
+// ✅ NOUVEAU : Vérifier qu'un nodeId correspond à une clé publique
+export function verifyNodeId(nodeId: string, pubkeyHex: string): boolean {
+  try {
+    const pubkeyBytes = hexToBytes(pubkeyHex);
+    const hash = sha256(pubkeyBytes);
+    const expectedNodeId = 'MESH-' + bytesToHex(hash).slice(0, 8).toUpperCase();
+    return nodeId === expectedNodeId;
+  } catch {
+    return false;
+  }
+}
+
+// ✅ NOUVEAU : Dériver le nodeId depuis une clé publique
+export function deriveNodeIdFromPubkey(pubkeyHex: string): string {
+  const pubkeyBytes = hexToBytes(pubkeyHex);
+  const hash = sha256(pubkeyBytes);
+  return 'MESH-' + bytesToHex(hash).slice(0, 8).toUpperCase();
+}

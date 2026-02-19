@@ -40,7 +40,7 @@ import {
   generateMsgId,
 } from '@/utils/messages-store';
 import { cleanupOldMessages, getUserProfile, setUserProfile } from '@/utils/database';
-import { deriveMeshIdentity, type MeshIdentity } from '@/utils/identity';
+import { deriveMeshIdentity, type MeshIdentity, verifyNodeId } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
@@ -581,6 +581,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const wire = JSON.parse(payloadStr) as WireMessage;
       if (wire.from === identity.nodeId) return; // ignorer nos propres messages
 
+      // ✅ NOUVEAU : Vérifier que le nodeId correspond à la clé publique
+      if (wire.from && wire.fromPubkey) {
+        const isValid = verifyNodeId(wire.from, wire.fromPubkey);
+        if (!isValid) {
+          console.log('[Messages] ALERTE : Usurpation d\'identité détectée !', {
+            claimedNodeId: wire.from,
+            pubkey: wire.fromPubkey,
+          });
+          return; // Rejeter le message
+        }
+      }
+
       const plaintext = decryptDM(wire.enc, identity.privkeyBytes, wire.fromPubkey);
       
       const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
@@ -776,6 +788,19 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     try {
       const wire = JSON.parse(payloadStr) as WireMessage;
       const convId = `forum:${channelName}`;
+
+      // ✅ NOUVEAU : Vérifier que le nodeId correspond à la clé publique
+      if (wire.from && wire.fromPubkey) {
+        const isValid = verifyNodeId(wire.from, wire.fromPubkey);
+        if (!isValid) {
+          console.log('[Messages] ALERTE : Usurpation d\'identité dans le forum !', {
+            claimedNodeId: wire.from,
+            pubkey: wire.fromPubkey,
+            channel: channelName,
+          });
+          return; // Rejeter le message
+        }
+      }
 
       let plaintext: string;
       try {
