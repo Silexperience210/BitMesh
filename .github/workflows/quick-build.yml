@@ -1,0 +1,77 @@
+name: Quick Android Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"
+
+      - name: Build APK with Gradle
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon --offline 2>/dev/null || ./gradlew assembleDebug --no-daemon
+        timeout-minutes: 20
+        continue-on-error: true
+
+      - name: Check if APK was created
+        id: check_apk
+        run: |
+          if [ -f "android/app/build/outputs/apk/debug/app-debug.apk" ]; then
+            echo "APK_EXISTS=true" >> $GITHUB_OUTPUT
+            cp android/app/build/outputs/apk/debug/app-debug.apk BitMesh-APK.apk
+          else
+            echo "APK_EXISTS=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Upload APK to Artifacts
+        if: steps.check_apk.outputs.APK_EXISTS == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitMesh-APK
+          path: BitMesh-APK.apk
+
+      - name: Create Release
+        if: steps.check_apk.outputs.APK_EXISTS == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "BitMesh v${{ github.run_number }}"
+          files: BitMesh-APK.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
