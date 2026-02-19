@@ -1,0 +1,52 @@
+name: Prebuilt Docker Build
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    container:
+      image: reactnativecommunity/react-native-android:latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Prebuild Android
+        run: npx expo prebuild --platform android
+        timeout-minutes: 5
+
+      - name: Build APK
+        run: |
+          cd android
+          ./gradlew assembleDebug --no-daemon
+        timeout-minutes: 10
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: BitMesh-APK
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: success()
+        with:
+          tag_name: v${{ github.run_number }}
+          name: "BitMesh v${{ github.run_number }}"
+          files: android/app/build/outputs/apk/debug/app-debug.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
