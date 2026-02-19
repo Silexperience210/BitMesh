@@ -35,6 +35,12 @@ export function mnemonicToSeed(mnemonic: string, passphrase?: string): Uint8Arra
   return bip39.mnemonicToSeedSync(mnemonic, passphrase);
 }
 
+export function entropyToMnemonic(entropy: Uint8Array): string {
+  return bip39.entropyToMnemonic(entropy, wordlist);
+}
+
+export { wordlist };
+
 function hash160(data: Uint8Array): Uint8Array {
   return ripemd160(sha256(data));
 }

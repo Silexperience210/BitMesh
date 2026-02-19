@@ -57,6 +57,7 @@ import {
   decodeEncryptedPayload,
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
+  extractPosition,
   compressWithFallback,
 } from '@/utils/meshcore-protocol';
 import { getAckService } from '@/services/AckService';
@@ -408,8 +409,43 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err);
         }
       } else if (packet.type === MeshCoreMessageType.POSITION) {
-        // TODO: Traiter les paquets GPS (ajouter au radar)
-        console.log('[MeshCore] Paquet POSITION reçu (non implémenté)');
+        // ✅ Traiter les paquets GPS (ajouter au radar)
+        const position = extractPosition(packet);
+        if (position) {
+          const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+          console.log('[MeshCore] Position reçue de', fromNodeId, ':', position.lat, position.lng);
+          
+          // Mettre à jour le radar avec la position du pair
+          setRadarPeers(prev => {
+            const existing = prev.find(p => p.nodeId === fromNodeId);
+            if (existing) {
+              return prev.map(p => p.nodeId === fromNodeId 
+                ? { 
+                    ...p, 
+                    lat: position.lat, 
+                    lng: position.lng, 
+                    lastSeen: Date.now(),
+                    online: true,
+                    signalStrength: 80
+                  }
+                : p
+              );
+            } else {
+              return [...prev, {
+                nodeId: fromNodeId,
+                name: fromNodeId,
+                lat: position.lat,
+                lng: position.lng,
+                lastSeen: Date.now(),
+                rssi: -80,
+                distanceMeters: 0,
+                bearingRad: 0,
+                online: true,
+                signalStrength: 80
+              }];
+            }
+          });
+        }
       } else {
         console.log('[MeshCore] Type de paquet non géré:', packet.type);
       }
