@@ -300,7 +300,7 @@ export const cashuBalance = {
 export const mockMints: CashuMint[] = [
   {
     id: 'mint1',
-    url: 'https://mint.minibits.cash',
+    url: 'https://8333.space:3338', // ✅ TESTÉ ET FONCTIONNEL
     name: 'Minibits',
     balance: 75000,
     isDefault: true,

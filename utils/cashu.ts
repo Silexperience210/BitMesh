@@ -106,7 +106,7 @@ export interface CashuWalletBalance {
   }>;
 }
 
-export async function fetchMintInfo(mintUrl: string): Promise<CashuMintInfo> {
+export async function fetchMintInfo(mintUrl: string, fallbackUrl?: string): Promise<CashuMintInfo> {
   // ✅ NOUVEAU : Vérifier le cache
   const cached = mintInfoCache.get(mintUrl);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
@@ -117,18 +117,27 @@ export async function fetchMintInfo(mintUrl: string): Promise<CashuMintInfo> {
   const url = `${mintUrl}/v1/info`;
   console.log('[Cashu] Fetching mint info:', url);
 
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Cashu mint error: ${response.status} ${response.statusText}`);
-  }
+  try {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Cashu mint error: ${response.status} ${response.statusText}`);
+    }
 
-  const data = await response.json();
-  console.log('[Cashu] Mint info:', data.name);
-  
-  // ✅ NOUVEAU : Mettre en cache
-  mintInfoCache.set(mintUrl, { info: data as CashuMintInfo, timestamp: Date.now() });
-  
-  return data as CashuMintInfo;
+    const data = await response.json();
+    console.log('[Cashu] Mint info:', data.name);
+    
+    // ✅ NOUVEAU : Mettre en cache
+    mintInfoCache.set(mintUrl, { info: data as CashuMintInfo, timestamp: Date.now() });
+    
+    return data as CashuMintInfo;
+  } catch (err) {
+    // ✅ NOUVEAU : Fallback vers mint backup
+    if (fallbackUrl) {
+      console.log('[Cashu] Primary mint failed, trying fallback:', fallbackUrl);
+      return fetchMintInfo(fallbackUrl);
+    }
+    throw err;
+  }
 }
 
 export async function fetchMintKeysets(mintUrl: string): Promise<{ keysets: CashuKeysetInfo[] }> {

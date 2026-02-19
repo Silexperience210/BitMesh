@@ -53,7 +53,7 @@ const DEFAULT_GATEWAY_SETTINGS: GatewaySettings = {
   mqttCustomBroker: '',
   useCustomMqttBroker: false,
   mempoolUrl: 'https://mempool.space',
-  cashuMintUrl: 'https://mint.minibits.cash',
+  cashuMintUrl: 'https://8333.space:3338', // ✅ TESTÉ ET FONCTIONNEL
   cleanupIntervalMs: 60000,
   maxRelayJobAge: 3600000,
   maxPeerAge: 300000,

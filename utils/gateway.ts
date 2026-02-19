@@ -110,7 +110,7 @@ export function createInitialGatewayState(): GatewayState {
       lora: true,
     },
     mempoolUrl: 'https://mempool.space',
-    cashuMintUrl: 'https://mint.minibits.cash',
+    cashuMintUrl: 'https://8333.space:3338', // ✅ TESTÉ ET FONCTIONNEL
   };
 }
 

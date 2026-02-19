@@ -13,6 +13,7 @@ export interface AppSettings {
   customMempoolUrl: string;
   useCustomMempool: boolean;
   defaultCashuMint: string;
+  fallbackCashuMint: string;
   customCashuMint: string;
   useCustomCashuMint: boolean;
   bitcoinNetwork: 'mainnet' | 'testnet';
@@ -25,7 +26,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   mempoolUrl: 'https://mempool.space',
   customMempoolUrl: '',
   useCustomMempool: false,
-  defaultCashuMint: 'https://mint.minibits.cash',
+  defaultCashuMint: 'https://8333.space:3338', // ✅ TESTÉ ET FONCTIONNEL
+  fallbackCashuMint: 'https://mint.lnvoltz.com', // ✅ BACKUP TESTÉ ET FONCTIONNEL
   customCashuMint: '',
   useCustomCashuMint: false,
   bitcoinNetwork: 'mainnet',
