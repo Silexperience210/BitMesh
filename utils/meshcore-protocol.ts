@@ -545,6 +545,49 @@ export function extractPosition(packet: MeshCorePacket): { lat: number; lng: num
 }
 
 // ============================================================================
+// ACK (ACKNOWLEDGEMENT) - Confirmation de livraison
+// ============================================================================
+
+/**
+ * Créer un paquet ACK pour confirmer la réception d'un message
+ * Payload: [originalMessageId (4 bytes)]
+ */
+export function createAckPacket(
+  fromNodeId: string,
+  toNodeId: string,
+  originalMessageId: number
+): MeshCorePacket {
+  const payload = new Uint8Array(4);
+  const view = new DataView(payload.buffer);
+  view.setUint32(0, originalMessageId, false);
+
+  return {
+    version: 0x01,
+    type: MeshCoreMessageType.ACK,
+    flags: 0,
+    ttl: 10,
+    messageId: Math.floor(Math.random() * 0xFFFFFFFF),
+    fromNodeId: nodeIdToUint64(fromNodeId),
+    toNodeId: nodeIdToUint64(toNodeId),
+    timestamp: Math.floor(Date.now() / 1000),
+    payload,
+  };
+}
+
+/**
+ * Extraire l'info d'un ACK reçu
+ * Retourne l'ID du message original confirmé
+ */
+export function extractAckInfo(payload: Uint8Array): { originalMessageId: number } | null {
+  if (payload.length < 4) return null;
+  
+  const view = new DataView(payload.buffer, payload.byteOffset);
+  const originalMessageId = view.getUint32(0, false);
+  
+  return { originalMessageId };
+}
+
+// ============================================================================
 // CHUNKING / BATCH MESSAGING
 // Pour envoyer des messages longs en plusieurs paquets LoRa
 // ============================================================================

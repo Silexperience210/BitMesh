@@ -229,6 +229,20 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         saveMessage(msg);
         updateConversationLastMessage(fromNodeId, plaintext.slice(0, 50), msg.timestamp, true);
 
+        // ✅ Envoyer ACK de confirmation
+        try {
+          const { createAckPacket } = await import('@/utils/meshcore-protocol');
+          const ackPacket = createAckPacket(
+            identity.nodeId,
+            fromNodeId,
+            packet.messageId
+          );
+          await ble.sendPacket(ackPacket);
+          console.log('[MeshCore] ACK envoyé pour message', packet.messageId);
+        } catch (ackErr) {
+          console.error('[MeshCore] Erreur envoi ACK:', ackErr);
+        }
+
         setMessagesByConv(prev => ({
           ...prev,
           [fromNodeId]: [...(prev[fromNodeId] ?? []), msg],
@@ -265,6 +279,30 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         });
 
         console.log('[MeshCore] Message TEXT déchiffré et livré depuis', fromNodeId);
+      } else if (packet.type === MeshCoreMessageType.ACK) {
+        // ✅ Traiter l'ACK reçu (confirmation de livraison)
+        const { extractAckInfo } = await import('@/utils/meshcore-protocol');
+        const ackInfo = extractAckInfo(packet.payload);
+        
+        if (ackInfo) {
+          console.log('[MeshCore] ACK reçu pour message', ackInfo.originalMessageId, 'depuis', fromNodeId);
+          
+          // Mettre à jour le statut du message local
+          const msgId = `mc-${ackInfo.originalMessageId}`;
+          setMessagesByConv(prev => {
+            const convMessages = prev[fromNodeId] || [];
+            const updatedMessages = convMessages.map(m => {
+              if (m.id === msgId || m.id.endsWith(`-${ackInfo.originalMessageId}`)) {
+                return { ...m, status: 'delivered' as const };
+              }
+              return m;
+            });
+            return {
+              ...prev,
+              [fromNodeId]: updatedMessages,
+            };
+          });
+        }
       } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
         // ✅ Traiter l'annonce de clé publique
         const pubkeyHex = extractPubkeyFromAnnounce(packet);
