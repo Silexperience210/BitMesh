@@ -17,6 +17,7 @@ import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
 import { BleProvider } from "@/providers/BleProvider";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
+import { OnboardingModal } from "@/components/OnboardingModal";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,7 +34,6 @@ function RootLayoutNav() {
         contentStyle: { backgroundColor: Colors.background },
       }}
     >
-      <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
     </Stack>
   );
@@ -42,15 +42,21 @@ function RootLayoutNav() {
 function AppContent() {
   const { isReady, isMigrating, error } = useAppInitialization();
   const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     async function checkOnboarding() {
       try {
         const done = await AsyncStorage.getItem(ONBOARDING_KEY);
-        setOnboardingDone(done === 'true');
+        const isDone = done === 'true';
+        setOnboardingDone(isDone);
+        if (!isDone) {
+          setShowOnboarding(true);
+        }
       } catch (e) {
         console.warn('Error checking onboarding status:', e);
         setOnboardingDone(false);
+        setShowOnboarding(true);
       }
     }
     checkOnboarding();
@@ -61,6 +67,12 @@ function AppContent() {
       SplashScreen.hideAsync();
     }
   }, [isReady, onboardingDone]);
+
+  const handleOnboardingClose = async () => {
+    setShowOnboarding(false);
+    await AsyncStorage.setItem(ONBOARDING_KEY, 'true');
+    setOnboardingDone(true);
+  };
 
   // Écran de chargement pendant l'initialisation
   if (!isReady || onboardingDone === null) {
@@ -81,7 +93,12 @@ function AppContent() {
     );
   }
 
-  return <RootLayoutNav />;
+  return (
+    <>
+      <RootLayoutNav />
+      <OnboardingModal visible={showOnboarding} onClose={handleOnboardingClose} />
+    </>
+  );
 }
 
 export default function RootLayout() {
