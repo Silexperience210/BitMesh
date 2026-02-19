@@ -1,12 +1,9 @@
 /**
  * NFC Service - Lecture/écriture de transactions sur cartes NFC
- * Compatible avec NDEF (NFC Data Exchange Format)
+ * Utilise react-native-nfc-manager
  */
+import NfcManager, { Ndef, NfcTech } from 'react-native-nfc-manager';
 import { Platform } from 'react-native';
-
-// Note: Pour une vraie implémentation NFC, il faudrait:
-// - react-native-nfc-manager pour React Native
-// - expo-nfc si disponible
 
 export interface NFCTransactionRecord {
   txHex: string;
@@ -16,11 +13,32 @@ export interface NFCTransactionRecord {
 }
 
 /**
- * Vérifie si NFC est disponible sur l'appareil
+ * Initialise le NFC manager
+ */
+export async function initNFC(): Promise<void> {
+  try {
+    await NfcManager.start();
+    console.log('[NFC] Initialisé');
+  } catch (error) {
+    console.error('[NFC] Erreur initialisation:', error);
+    throw error;
+  }
+}
+
+/**
+ * Vérifie si NFC est disponible
  */
 export async function isNFCAvailable(): Promise<boolean> {
-  // Pour l'instant, retourne false (à implémenter avec lib NFC)
-  return false;
+  try {
+    const supported = await NfcManager.isSupported();
+    if (!supported) return false;
+    
+    const enabled = await NfcManager.isEnabled();
+    return enabled;
+  } catch (error) {
+    console.error('[NFC] Erreur vérification:', error);
+    return false;
+  }
 }
 
 /**
@@ -30,18 +48,29 @@ export async function writeTransactionToNFC(
   record: NFCTransactionRecord
 ): Promise<{ success: boolean; error?: string }> {
   try {
-    // TODO: Implémenter avec react-native-nfc-manager
-    // 1. Formater en NDEF
-    // 2. Écrire sur la carte
+    // Formater en NDEF
+    const message = formatTransactionForNDEF(record);
+    const bytes = Ndef.encodeMessage([Ndef.textRecord(message)]);
     
-    console.log('[NFC] Écriture transaction:', record.txid);
+    if (!bytes) {
+      throw new Error('Échec encodage NDEF');
+    }
+
+    // Demander à l'utilisateur d'approcher la carte
+    await NfcManager.requestTechnology(NfcTech.Ndef);
     
-    return {
-      success: false,
-      error: 'NFC non implémenté. Utilisez expo-nfc ou react-native-nfc-manager.',
-    };
+    // Écrire
+    await NfcManager.ndefHandler.writeNdefMessage(bytes);
+    
+    console.log('[NFC] Transaction écrite:', record.txid);
+    
+    // Arrêter la session
+    await NfcManager.cancelTechnologyRequest();
+    
+    return { success: true };
   } catch (error) {
     console.error('[NFC] Erreur écriture:', error);
+    await NfcManager.cancelTechnologyRequest().catch(() => {});
     return { success: false, error: String(error) };
   }
 }
@@ -55,19 +84,37 @@ export async function readTransactionFromNFC(): Promise<{
   error?: string;
 }> {
   try {
-    // TODO: Implémenter avec react-native-nfc-manager
-    // 1. Démarrer le scan NFC
-    // 2. Parser le NDEF
-    // 3. Retourner la transaction
+    // Demander à l'utilisateur d'approcher la carte
+    await NfcManager.requestTechnology(NfcTech.Ndef);
     
-    console.log('[NFC] Lecture transaction...');
+    // Lire le message NDEF
+    const tag = await NfcManager.getTag();
+    const ndefRecords = tag?.ndefMessage;
     
-    return {
-      success: false,
-      error: 'NFC non implémenté. Utilisez expo-nfc ou react-native-nfc-manager.',
-    };
+    if (!ndefRecords || ndefRecords.length === 0) {
+      throw new Error('Aucun enregistrement NDEF trouvé');
+    }
+    
+    // Décoder le premier record
+    const record = ndefRecords[0];
+    const decoded = Ndef.text.decodePayload(record.payload);
+    
+    // Parser la transaction
+    const txRecord = parseNDEFTransaction(decoded);
+    
+    if (!txRecord) {
+      throw new Error('Format de transaction invalide');
+    }
+    
+    console.log('[NFC] Transaction lue:', txRecord.txid);
+    
+    // Arrêter la session
+    await NfcManager.cancelTechnologyRequest();
+    
+    return { success: true, record: txRecord };
   } catch (error) {
     console.error('[NFC] Erreur lecture:', error);
+    await NfcManager.cancelTechnologyRequest().catch(() => {});
     return { success: false, error: String(error) };
   }
 }
@@ -77,7 +124,7 @@ export async function readTransactionFromNFC(): Promise<{
  */
 export function formatTransactionForNDEF(record: NFCTransactionRecord): string {
   return JSON.stringify({
-    t: 'bitmesh-tx', // type
+    t: 'bitmesh-tx',
     h: record.txHex,
     i: record.txid,
     ts: record.timestamp,
@@ -104,5 +151,17 @@ export function parseNDEFTransaction(data: string): NFCTransactionRecord | null 
     };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Arrête le NFC manager
+ */
+export async function stopNFC(): Promise<void> {
+  try {
+    await NfcManager.cancelTechnologyRequest();
+    console.log('[NFC] Arrêté');
+  } catch (error) {
+    console.error('[NFC] Erreur arrêt:', error);
   }
 }

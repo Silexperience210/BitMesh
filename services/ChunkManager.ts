@@ -104,7 +104,7 @@ class ChunkManager {
    * Traite un chunk reçu
    * Retourne le message complet si tous les chunks sont reçus
    */
-  handleIncomingChunk(packet: MeshCorePacket): { complete: boolean; message?: string; progress?: number }> {
+  handleIncomingChunk(packet: MeshCorePacket): { complete: boolean; message?: string; progress?: number; error?: string } {
     if (!isChunkPacket(packet)) {
       return { complete: false };
     }

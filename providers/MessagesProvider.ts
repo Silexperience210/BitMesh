@@ -66,7 +66,7 @@ import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/ser
 interface WireMessage {
   v: number;
   id: string;
-  from: string;
+  fromNodeId: string;
   fromPubkey: string;
   to: string;          // nodeId destinataire ou "forum:channelName"
   enc: EncryptedPayload;
@@ -149,7 +149,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     try {
       console.log('[MeshCore] Paquet reçu via BLE:', {
         type: packet.type,
-        from: uint64ToNodeId(packet.fromNodeId),
+        fromNodeId: uint64ToNodeId(packet.fromNodeId),
         to: uint64ToNodeId(packet.toNodeId),
         ttl: packet.ttl,
       });
@@ -194,7 +194,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           const msg: StoredMessage = {
             id: `chunk-${packet.messageId}`,
             conversationId: fromNodeId,
-            from: fromNodeId,
+            fromNodeId: fromNodeId,
             fromPubkey: '', // TODO: récupérer la pubkey
             text: result.message,
             type: 'text',
@@ -271,7 +271,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const msg: StoredMessage = {
           id: `mc-${packet.messageId}`,
           conversationId: fromNodeId,
-          from: fromNodeId,
+          fromNodeId: fromNodeId,
           fromPubkey: senderPubkey,
           text: plaintext,
           type: 'text',

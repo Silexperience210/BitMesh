@@ -101,12 +101,12 @@ export default function NFCModal({ visible, onClose, txHex, txid, onTxRead }: NF
           {isChecking ? (
             <View style={styles.center}>
               <ActivityIndicator color={Colors.accent} />
-              <Text style={styles.text}>Vérification NFC...\u003c/Text>
+              <Text style={styles.text}>Vérification NFC...</Text>
             </View>
           ) : !isAvailable ? (
             <View style={styles.center}>
               <Nfc size={48} color={Colors.textMuted} />
-              <Text style={styles.text}>NFC non disponible\u003c/Text>
+              <Text style={styles.text}>NFC non disponible</Text>
               <Text style={styles.subtext}>
                 Cet appareil ne supporte pas le NFC, ou la permission est refusée.
               </Text>
@@ -119,7 +119,7 @@ export default function NFCModal({ visible, onClose, txHex, txid, onTxRead }: NF
                   onPress={() => setMode('write')}
                 >
                   <Upload size={32} color={Colors.accent} />
-                  <Text style={styles.optionText}>Écrire sur NFC\u003c/Text>
+                  <Text style={styles.optionText}>Écrire sur NFC</Text>
                   <Text style={styles.optionSubtext}>
                     Sauvegarder la transaction sur une carte NFC
                   </Text>
@@ -131,7 +131,7 @@ export default function NFCModal({ visible, onClose, txHex, txid, onTxRead }: NF
                 onPress={() => setMode('read')}
               >
                 <Download size={32} color={Colors.blue} />
-                <Text style={styles.optionText}>Lire depuis NFC\u003c/Text>
+                <Text style={styles.optionText}>Lire depuis NFC</Text>
                 <Text style={styles.optionSubtext}>
                   Charger une transaction depuis une carte NFC
                 </Text>
@@ -161,7 +161,7 @@ export default function NFCModal({ visible, onClose, txHex, txid, onTxRead }: NF
                 style={styles.backButton}
                 onPress={() => setMode(null)}
               >
-                <Text style={styles.backButtonText}>Retour\u003c/Text>
+                <Text style={styles.backButtonText}>Retour</Text>
               </TouchableOpacity>
             </View>
           )}
