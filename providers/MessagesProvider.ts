@@ -39,6 +39,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
+import { cleanupOldMessages } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -868,6 +869,19 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identity]); // connect dépend de identity — on ne se reconnecte qu'une fois par identité
+
+  // ✅ NOUVEAU : Cleanup automatique des messages > 24h toutes les heures
+  useEffect(() => {
+    // Cleanup immédiat au démarrage
+    cleanupOldMessages();
+    
+    // Puis toutes les heures
+    const interval = setInterval(() => {
+      cleanupOldMessages();
+    }, 60 * 60 * 1000); // 1 heure
+    
+    return () => clearInterval(interval);
+  }, []);
 
   const disconnect = useCallback(() => {
     if (mqttRef.current) {

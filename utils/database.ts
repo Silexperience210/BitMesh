@@ -354,6 +354,25 @@ export async function incrementRetryCount(id: string, error?: string): Promise<v
   `, [error || null, id]);
 }
 
+// --- Auto-cleanup (messages > 24h) ---
+
+const MESSAGE_RETENTION_HOURS = 24;
+
+export async function cleanupOldMessages(): Promise<number> {
+  const database = await getDatabase();
+  const cutoffTime = Date.now() - (MESSAGE_RETENTION_HOURS * 60 * 60 * 1000);
+  
+  const result = await database.runAsync(`
+    DELETE FROM messages WHERE timestamp < ?
+  `, [cutoffTime]);
+  
+  const deletedCount = result.changes || 0;
+  if (deletedCount > 0) {
+    console.log(`[Database] ${deletedCount} messages effacés (> ${MESSAGE_RETENTION_HOURS}h)`);
+  }
+  return deletedCount;
+}
+
 // --- Key Store ---
 
 export async function savePubkey(nodeId: string, pubkeyHex: string): Promise<void> {
