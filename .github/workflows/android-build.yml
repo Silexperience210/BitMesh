@@ -77,7 +77,12 @@ jobs:
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleRelease --no-daemon
+          ./gradlew assembleRelease \
+            -PMYAPP_UPLOAD_STORE_FILE=bitmesh-release.keystore \
+            -PMYAPP_UPLOAD_KEY_ALIAS=bitmesh \
+            -PMYAPP_UPLOAD_STORE_PASSWORD=bitmesh2024 \
+            -PMYAPP_UPLOAD_KEY_PASSWORD=bitmesh2024 \
+            --no-daemon
         timeout-minutes: 25
 
       - name: Upload APK
