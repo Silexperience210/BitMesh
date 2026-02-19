@@ -167,9 +167,63 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const result = chunkManagerRef.current.handleIncomingChunk(packet);
         
         if (result.complete && result.message) {
-          // Message complet reconstitué
+          // Message complet reconstitué, traiter comme un TEXT normal
           console.log('[MeshCore] Message chunké reconstitué:', result.message.length, 'caractères');
-          // TODO: Traiter le message reconstitué comme un TEXT normal
+          
+          // Créer un faux paquet TEXT pour réutiliser le traitement existant
+          const reconstructedPacket: MeshCorePacket = {
+            version: 0x01,
+            type: MeshCoreMessageType.TEXT,
+            flags: packet.flags, // Garder les flags (encrypted, etc.)
+            ttl: packet.ttl,
+            messageId: packet.messageId,
+            fromNodeId: packet.fromNodeId,
+            toNodeId: packet.toNodeId,
+            timestamp: packet.timestamp,
+            payload: new TextEncoder().encode(result.message),
+          };
+          
+          // Relancer le traitement avec le paquet reconstruit
+          // Note: handleIncomingMeshCorePacket est défini plus haut dans le useCallback
+          // On ne peut pas l'appeler directement ici, il faut dupliquer le code ou utiliser une ref
+          // Pour l'instant, on log juste le message
+          console.log('[MeshCore] Message reconstitué prêt:', result.message);
+          
+          // TODO: Stocker le message dans la base de données
+          const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+          const msg: StoredMessage = {
+            id: `chunk-${packet.messageId}`,
+            conversationId: fromNodeId,
+            from: fromNodeId,
+            fromPubkey: '', // TODO: récupérer la pubkey
+            text: result.message,
+            type: 'text',
+            timestamp: packet.timestamp * 1000,
+            isMine: false,
+            status: 'delivered',
+          };
+          
+          saveMessage(msg);
+          updateConversationLastMessage(fromNodeId, result.message.slice(0, 50), msg.timestamp, true);
+          
+          setMessagesByConv(prev => ({
+            ...prev,
+            [fromNodeId]: [...(prev[fromNodeId] ?? []), msg],
+          }));
+          
+          // Envoyer ACK
+          try {
+            const { createAckPacket } = await import('@/utils/meshcore-protocol');
+            const ackPacket = createAckPacket(
+              identity.nodeId,
+              fromNodeId,
+              packet.messageId
+            );
+            await ble.sendPacket(ackPacket);
+          } catch (ackErr) {
+            console.error('[MeshCore] Erreur envoi ACK:', ackErr);
+          }
+          
         } else if (result.progress) {
           console.log('[MeshCore] Chunk reçu:', result.progress, '%');
         }

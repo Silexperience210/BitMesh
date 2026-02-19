@@ -566,6 +566,7 @@ export default function WalletScreen() {
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
 
   const { walletInfo, isInitialized, receiveAddresses } = useWalletSeed();
+  const { balance: bitcoinBalance, isLoading: bitcoinLoading, refreshBalance: refreshBitcoinBalance } = useBitcoin();
   const { getMempoolUrl, getCashuMintUrl, settings } = useAppSettings();
 
   const mempoolUrl = getMempoolUrl();
