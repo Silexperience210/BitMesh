@@ -85,8 +85,7 @@ jobs:
             -PMYAPP_UPLOAD_STORE_PASSWORD=bitmesh2024 \
             -PMYAPP_UPLOAD_KEY_PASSWORD=bitmesh2024 \
             --no-daemon \
-            --max-workers=2 \
-            --parallel-threads=2
+            --max-workers=2
         timeout-minutes: 25
         env:
           JAVA_OPTS: "-Xmx3072m -XX:MaxMetaspaceSize=768m"
