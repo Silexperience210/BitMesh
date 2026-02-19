@@ -2,7 +2,7 @@
  * Ack Service - Gestion des accusés de réception
  * Ajoute des ACK pour confirmer la livraison des messages
  */
-import { MeshCorePacket, MeshCoreMessageType, createTextMessage, nodeIdToUint64, uint64ToNodeId } from '@/utils/meshcore-protocol';
+import { MeshCorePacket, MeshCoreMessageType, createTextMessageSync, nodeIdToUint64, uint64ToNodeId } from '@/utils/meshcore-protocol';
 import { getBleGatewayClient } from '@/utils/ble-gateway';
 import { updateMessageStatusDB } from '@/utils/database';
 
@@ -93,17 +93,7 @@ class AckService {
     const encoder = new TextEncoder();
     const payload = encoder.encode(originalMsgId);
     
-    return {
-      version: 0x01,
-      type: MeshCoreMessageType.ACK,
-      flags: 0,
-      ttl: 3,
-      messageId: Date.now(),
-      fromNodeId: nodeIdToUint64(myNodeId),
-      toNodeId: nodeIdToUint64(toNodeId),
-      timestamp: Math.floor(Date.now() / 1000),
-      payload,
-    };
+    return createTextMessageSync(myNodeId, toNodeId, originalMsgId);
   }
 
   /**
