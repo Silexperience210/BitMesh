@@ -9,7 +9,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
     permissions:
       contents: write
     steps:
@@ -52,16 +52,12 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Prebuild Android project
-        run: npx expo prebuild --platform android --clean
-        timeout-minutes: 5
-
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon
-        timeout-minutes: 35
+        timeout-minutes: 25
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
