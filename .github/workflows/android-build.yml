@@ -1,4 +1,4 @@
-name: Android Build
+name: Android Build Release
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build:
-    name: Build APK
+    name: Build Release APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -52,24 +52,70 @@ jobs:
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
           restore-keys: gradle-${{ runner.os }}-
 
-      - name: Build Debug APK
+      - name: Generate Keystore
+        run: |
+          keytool -genkey -v \
+            -keystore android/app/bitmesh-release.keystore \
+            -alias bitmesh \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass bitmesh2024 \
+            -keypass bitmesh2024 \
+            -dname "CN=BitMesh, OU=BitMesh, O=BitMesh, L=Unknown, ST=Unknown, C=US"
+
+      - name: Setup Signing Config
+        run: |
+          cat > android/app/signing.properties << EOF
+          MYAPP_UPLOAD_STORE_FILE=bitmesh-release.keystore
+          MYAPP_UPLOAD_KEY_ALIAS=bitmesh
+          MYAPP_UPLOAD_STORE_PASSWORD=bitmesh2024
+          MYAPP_UPLOAD_KEY_PASSWORD=bitmesh2024
+          EOF
+
+      - name: Build Release APK
         run: |
           cd android
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleRelease --no-daemon
         timeout-minutes: 25
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: BitMesh-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: BitMesh-Release-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Delete Old Releases
+        uses: dev-drprasad/delete-older-releases@v0.3.4
+        with:
+          keep_latest: 0
+          delete_tags: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ github.run_number }}
-          name: "BitMesh v${{ github.run_number }}"
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          tag_name: v1.0.0
+          name: "BitMesh V1.0"
+          body: |
+            ## BitMesh V1.0 - Release Officielle
+            
+            ### Fonctionnalités
+            - Messagerie P2P via MQTT et BLE/LoRa
+            - Encryption E2E (ECDH + AES-GCM)
+            - Wallet Bitcoin avec envoi/réception
+            - Cashu tokens
+            - SQLite persistence
+            - Message retry et ACKs
+            - Compression Smaz
+            - Chunking pour messages longs
+            
+            ### Installation
+            1. Télécharger l'APK
+            2. Autoriser l'installation depuis sources inconnues
+            3. Installer et profiter !
+          files: android/app/build/outputs/apk/release/app-release.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
