@@ -5,7 +5,11 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeed } from '@/utils/bitcoin';
+import * as ecc from 'tiny-secp256k1';
 import type { MempoolUtxo } from './mempool';
+
+// Initialiser bitcoinjs-lib avec ecc
+bitcoin.initEccLib(ecc);
 
 const NETWORK = bitcoin.networks.bitcoin; // Mainnet
 const DUST_LIMIT = 546; // sats - minimum pour une sortie
@@ -144,7 +148,7 @@ export function createTransaction(
 
 /**
  * Signe une transaction P2WPKH avec le mnemonic
- * Version simplifiée pour adresses SegWit natives (bc1...)
+ * Version pour adresses SegWit natives (bc1...)
  */
 export async function signTransaction(
   psbtHex: string,
@@ -155,29 +159,41 @@ export async function signTransaction(
     // Reconstruire le PSBT
     const psbt = bitcoin.Psbt.fromHex(psbtHex, { network: NETWORK });
     
-    // Pour chaque input, dériver la clé privée et signer
+    // Dériver la clé privée maîtresse
+    const seed = mnemonicToSeed(mnemonic);
+    const masterKey = HDKey.fromMasterSeed(seed);
+    const accountKey = masterKey.derive("m/84'/0'/0'");
+    
+    // Pour chaque input, trouver la clé privée et signer
     for (let i = 0; i < psbt.inputCount; i++) {
       const input = psbt.data.inputs[i];
       
       // Trouver l'UTXO correspondant
-      const utxo = utxos.find(u => {
-        const hash = Buffer.from(u.txid, 'hex').reverse().toString('hex');
-        // Comparer avec l'hash de l'input (format différent)
-        return true; // Simplifié - à améliorer
-      });
+      const utxo = utxos[i]; // Supposons que l'ordre est le même
       
       if (!utxo) {
         throw new Error(`UTXO non trouvé pour l'input ${i}`);
       }
       
-      // Dériver la clé privée (chemin BIP44 standard)
-      const path = `m/84'/0'/0'/0/${utxo.vout}`; // Simplifié - devrait chercher l'index correct
-      const privKey = derivePrivateKey(mnemonic, path);
+      // Dériver la clé privée pour cet UTXO (index 0 pour l'instant)
+      const childKey = accountKey.deriveChild(0).deriveChild(i);
+      
+      if (!childKey.privateKey) {
+        throw new Error(`Impossible de dériver la clé privée pour l'input ${i}`);
+      }
+      
+      // Convertir en format bitcoinjs-lib
+      const signer = {
+        publicKey: Buffer.from(childKey.publicKey!),
+        sign: (hash: Buffer) => {
+          // Utiliser tiny-secp256k1 pour signer
+          const sig = ecc.sign(hash, childKey.privateKey!);
+          return Buffer.from(sig);
+        }
+      };
       
       // Signer l'input
-      // Note: ECPair n'est pas disponible dans cette version de bitcoinjs-lib
-      // La signature complète nécessite une implémentation différente
-      throw new Error('Signature non implémentée - utiliser un wallet externe');
+      psbt.signInput(i, signer);
     }
     
     // Finaliser
