@@ -137,7 +137,9 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
       return;
     }
     const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
+    console.log('[Forum] Création du forum:', channelName);
     await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
+    console.log('[Forum] Forum rejoint, annonce en cours...');
     announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
     Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
     setNewForumName(''); setNewForumDesc(''); setShowCreateForm(false);
