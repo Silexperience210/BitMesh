@@ -179,6 +179,46 @@ async function initDatabase(): Promise<void> {
   `);
 
   console.log('[Database] Tables initialisées');
+
+  // Table: submeshes
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS submeshes (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      color TEXT NOT NULL,
+      icon TEXT,
+      is_default INTEGER DEFAULT 0,
+      auto_join INTEGER DEFAULT 0,
+      require_invite INTEGER DEFAULT 1,
+      max_hops INTEGER DEFAULT 5,
+      parent_mesh TEXT,
+      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+    );
+  `);
+  console.log('[Database] Table submeshes créée');
+
+  // Table: submesh_peers
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS submesh_peers (
+      node_id TEXT NOT NULL,
+      submesh_id TEXT NOT NULL,
+      rssi INTEGER DEFAULT -100,
+      last_seen INTEGER DEFAULT 0,
+      hops INTEGER DEFAULT 1,
+      is_bridge INTEGER DEFAULT 0,
+      PRIMARY KEY (node_id, submesh_id),
+      FOREIGN KEY (submesh_id) REFERENCES submeshes(id) ON DELETE CASCADE
+    );
+  `);
+  console.log('[Database] Table submesh_peers créée');
+
+  // Insert submesh default
+  await db.runAsync(
+    `INSERT OR IGNORE INTO submeshes (id, name, color, is_default, auto_join, require_invite, max_hops)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ['0x0000', 'Réseau Principal', '#22D3EE', 1, 1, 0, 10]
+  );
 }
 
 // --- Conversations ---
@@ -796,4 +836,100 @@ export async function migrateFromAsyncStorage(): Promise<void> {
     console.error('[Database] Erreur migration:', error);
     throw error;
   }
+}
+
+// --- Sub-meshes ---
+
+export interface DBSubMesh {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon?: string;
+  isDefault: boolean;
+  autoJoin: boolean;
+  requireInvite: boolean;
+  maxHops: number;
+  parentMesh?: string;
+  createdAt: number;
+}
+
+export interface DBSubMeshPeer {
+  nodeId: string;
+  submeshId: string;
+  rssi: number;
+  lastSeen: number;
+  hops: number;
+  isBridge: boolean;
+}
+
+export async function saveSubMeshDB(submesh: DBSubMesh): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    `INSERT OR REPLACE INTO submeshes 
+     (id, name, description, color, icon, is_default, auto_join, require_invite, max_hops, parent_mesh, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      submesh.id,
+      submesh.name,
+      submesh.description || null,
+      submesh.color,
+      submesh.icon || null,
+      submesh.isDefault ? 1 : 0,
+      submesh.autoJoin ? 1 : 0,
+      submesh.requireInvite ? 1 : 0,
+      submesh.maxHops,
+      submesh.parentMesh || null,
+      submesh.createdAt || Date.now(),
+    ]
+  );
+}
+
+export async function getSubMeshesDB(): Promise<DBSubMesh[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>('SELECT * FROM submeshes ORDER BY created_at DESC');
+  return rows.map(row => ({
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    color: row.color,
+    icon: row.icon,
+    isDefault: Boolean(row.is_default),
+    autoJoin: Boolean(row.auto_join),
+    requireInvite: Boolean(row.require_invite),
+    maxHops: row.max_hops,
+    parentMesh: row.parent_mesh,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function deleteSubMeshDB(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM submeshes WHERE id = ?', [id]);
+}
+
+export async function saveSubMeshPeerDB(peer: DBSubMeshPeer): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(
+    `INSERT OR REPLACE INTO submesh_peers 
+     (node_id, submesh_id, rssi, last_seen, hops, is_bridge)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [peer.nodeId, peer.submeshId, peer.rssi, peer.lastSeen, peer.hops, peer.isBridge ? 1 : 0]
+  );
+}
+
+export async function getSubMeshPeersDB(submeshId: string): Promise<DBSubMeshPeer[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(
+    'SELECT * FROM submesh_peers WHERE submesh_id = ? ORDER BY last_seen DESC',
+    [submeshId]
+  );
+  return rows.map(row => ({
+    nodeId: row.node_id,
+    submeshId: row.submesh_id,
+    rssi: row.rssi,
+    lastSeen: row.last_seen,
+    hops: row.hops,
+    isBridge: Boolean(row.is_bridge),
+  }));
 }

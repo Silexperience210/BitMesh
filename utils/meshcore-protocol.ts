@@ -5,6 +5,8 @@
  * Compatible avec firmware MeshCore Companion
  */
 
+import { compressMeshCoreMessage, decompressMeshCoreMessage, shouldCompress } from './lzw';
+
 // UUIDs BLE MeshCore (Nordic UART Service standard)
 export const MESHCORE_BLE = {
   SERVICE_UUID: '6e400001-b5a3-f393-e0a9-e50e24dcca9e',
@@ -24,6 +26,18 @@ export enum MeshCoreMessageType {
   CHUNK_START = 0x08,    // Premier chunk d'un message batch
   CHUNK_MIDDLE = 0x09,   // Chunk intermédiaire
   CHUNK_END = 0x0A,      // Dernier chunk
+}
+
+// Flags MeshCore
+export enum MeshCoreFlags {
+  ENCRYPTED = 0x01,      // Payload chiffré
+  COMPRESSED = 0x02,     // Payload compressé (LZW)
+  MULTI_HOP = 0x04,      // Message multi-hop
+  ACK_REQUESTED = 0x08,  // Accusé de réception demandé
+  SUBMESH = 0x10,        // Sub-mesh ID présent
+  SIGNED = 0x20,         // Message signé
+  BROADCAST = 0x40,      // Broadcast à tous
+  RELAY = 0x80,          // Relay requis
 }
 
 // Limite LoRa (taille max payload après header)
@@ -53,14 +67,7 @@ export interface MessageChunk {
   data: Uint8Array;
 }
 
-// Flags de message
-export enum MeshCoreFlags {
-  ENCRYPTED = 0x01,      // Message chiffré
-  SIGNED = 0x02,         // Message signé
-  RELAY = 0x04,          // Relay requis (multi-hop)
-  BROADCAST = 0x08,      // Broadcast à tous
-  COMPRESSED = 0x10,     // Payload compressé avec Smaz
-}
+// Flags de message (définis plus haut avec LZW)
 
 /**
  * Format de paquet MeshCore (binaire)
