@@ -282,17 +282,31 @@ export async function createTextMessage(
 /**
  * Créer un message texte synchrone (sans DB) - pour compatibilité
  * Utilise un compteur basé sur le timestamp (moins robuste mais synchrone)
+ * ✅ Compression automatique si avantageuse
  */
 export function createTextMessageSync(
   fromNodeId: string,
   toNodeId: string,
   text: string,
-  encrypted: boolean = false
+  encrypted: boolean = false,
+  useCompression: boolean = true
 ): MeshCorePacket {
-  const encoder = new TextEncoder();
-  const payload = encoder.encode(text);
-
+  let payload: Uint8Array;
   let flags = 0;
+
+  // ✅ Compression si activée et avantageuse (sauf si chiffré)
+  if (useCompression && !encrypted) {
+    const compressed = compressWithFallback(text);
+    payload = compressed.data;
+    if (compressed.compressed) {
+      flags |= MeshCoreFlags.COMPRESSED;
+      console.log('[MeshCore] Compression activée:', text.length, '→', payload.length, 'bytes');
+    }
+  } else {
+    const encoder = new TextEncoder();
+    payload = encoder.encode(text);
+  }
+
   if (encrypted) flags |= MeshCoreFlags.ENCRYPTED;
 
   // ID basé sur timestamp + compteur statique

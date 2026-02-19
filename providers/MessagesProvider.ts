@@ -396,6 +396,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             return [newConv, ...prev];
           }
         });
+        
+        // ✅ Répondre avec notre propre clé publique (échange bidirectionnel)
+        try {
+          const announcePacket = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
+          await ble.sendPacket(announcePacket);
+          console.log('[MeshCore] Notre clé publique envoyée à', fromNodeId);
+        } catch (err) {
+          console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err);
+        }
       } else if (packet.type === MeshCoreMessageType.POSITION) {
         // TODO: Traiter les paquets GPS (ajouter au radar)
         console.log('[MeshCore] Paquet POSITION reçu (non implémenté)');
