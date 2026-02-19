@@ -131,6 +131,7 @@ function WalletTabSelector({
 
 function BitcoinBalanceCard({
   balance,
+  bitcoinBalance,
   btcPrice,
   fees,
   isLoading,
@@ -138,6 +139,7 @@ function BitcoinBalanceCard({
   onReceivePress,
 }: {
   balance: AddressBalance | null;
+  bitcoinBalance?: number;
   btcPrice: number;
   fees: MempoolFeeEstimate | null;
   isLoading: boolean;
@@ -161,7 +163,7 @@ function BitcoinBalanceCard({
     outputRange: [0.3, 0.8],
   });
 
-  const totalSats = balance?.total ?? 0;
+  const totalSats = bitcoinBalance ?? balance?.total ?? 0;
   const fiatValue = satsToFiat(totalSats, btcPrice);
 
   const handleCopyAddress = useCallback(() => {
@@ -648,6 +650,7 @@ export default function WalletScreen() {
     try {
       if (activeTab === 'bitcoin') {
         await Promise.all([
+          refreshBitcoinBalance(),
           balanceQuery.refetch(),
           txQuery.refetch(),
           feeQuery.refetch(),
@@ -663,7 +666,7 @@ export default function WalletScreen() {
     } finally {
       setRefreshing(false);
     }
-  }, [activeTab, balanceQuery, txQuery, feeQuery, priceQuery, mintInfoQuery, mintKeysetsQuery, mintConnectionQuery]);
+  }, [activeTab, refreshBitcoinBalance, balanceQuery, txQuery, feeQuery, priceQuery, mintInfoQuery, mintKeysetsQuery, mintConnectionQuery]);
 
   const transactions = txQuery.data ?? [];
   const btcPrice = priceQuery.data ?? 0;
@@ -689,9 +692,10 @@ export default function WalletScreen() {
         <>
           <BitcoinBalanceCard
             balance={balanceQuery.data ?? null}
+            bitcoinBalance={bitcoinBalance}
             btcPrice={btcPrice}
             fees={feeQuery.data ?? null}
-            isLoading={balanceQuery.isLoading || balanceQuery.isFetching}
+            isLoading={bitcoinLoading || balanceQuery.isLoading || balanceQuery.isFetching}
             currency={settings.fiatCurrency}
             onReceivePress={() => setShowReceiveModal(true)}
           />

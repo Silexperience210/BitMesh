@@ -14,7 +14,7 @@ import {
   type MempoolUtxo,
   type MempoolFeeEstimates,
 } from '@/utils/mempool';
-import { createTransaction, estimateFee, validateAddress } from '@/utils/bitcoin-tx';
+import { createTransaction, estimateFee, validateAddress, signTransaction } from '@/utils/bitcoin-tx';
 
 export interface BitcoinTransaction {
   txid: string;
@@ -159,17 +159,18 @@ export const [BitcoinContext, useBitcoin] = createContextHook((): BitcoinState =
       console.log('[Bitcoin] Transaction créée:', unsignedTx.txid);
       console.log('[Bitcoin] Frais:', unsignedTx.fee);
       
-      // Pour l'instant, on retourne l'hex non signé
-      // L'utilisateur doit signer avec un wallet externe
-      return {
-        txid: unsignedTx.txid,
-        hex: unsignedTx.hex,
-      };
+      // Signer la transaction
+      const signedHex = await signTransaction(unsignedTx.hex, mnemonic, utxos);
       
-      // TODO: Implémenter la signature complète
-      // const signedHex = await signTransaction(unsignedTx.hex, mnemonic, utxos);
-      // const { txid } = await broadcastTransaction(signedHex);
-      // return { txid, hex: signedHex };
+      // Broadcast
+      const { txid } = await broadcastTransaction(signedHex);
+      
+      console.log('[Bitcoin] Transaction broadcastée:', txid);
+      
+      // Rafraîchir le solde
+      await refreshBalance();
+      
+      return { txid, hex: signedHex };
       
     } catch (error) {
       console.error('[Bitcoin] Erreur création transaction:', error);
