@@ -38,6 +38,7 @@ import { useWalletSeed } from '@/providers/WalletSeedProvider';
 import { useBitcoin } from '@/providers/BitcoinProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { shortenAddress } from '@/utils/bitcoin';
+import { getBitcoinPrice } from '@/utils/mempool';
 import {
   fetchAddressBalance,
   fetchAddressTransactions,

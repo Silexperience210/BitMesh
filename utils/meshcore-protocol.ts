@@ -70,7 +70,7 @@ export interface MessageChunk {
 // Flags de message (définis plus haut avec LZW)
 
 /**
- * Format de paquet MeshCore (binaire)
+ * Format de paquet MeshCore (binaire) avec Sub-mesh support
  *
  * Structure :
  * [0]      : Version (1 byte) = 0x01
@@ -81,8 +81,9 @@ export interface MessageChunk {
  * [8-15]   : From Node ID (8 bytes) = uint64
  * [16-23]  : To Node ID (8 bytes) = uint64
  * [24-27]  : Timestamp (4 bytes) = unix timestamp (secondes)
- * [28-29]  : Payload length (2 bytes) = uint16
- * [30-N]   : Payload (variable)
+ * [28-29]  : Sub-mesh ID (2 bytes) = uint16 (0x0000 = default)
+ * [30-31]  : Payload length (2 bytes) = uint16
+ * [32-N]   : Payload (variable)
  * [N+1-N+2]: Checksum (2 bytes) = CRC16
  */
 
@@ -95,6 +96,7 @@ export interface MeshCorePacket {
   fromNodeId: bigint;
   toNodeId: bigint;
   timestamp: number;
+  subMeshId: number;  // ✅ NOUVEAU: 2 bytes
   payload: Uint8Array;
 }
 
@@ -103,7 +105,7 @@ export interface MeshCorePacket {
  */
 export function encodeMeshCorePacket(packet: MeshCorePacket): Uint8Array {
   const payloadLen = packet.payload.length;
-  const totalLen = 30 + payloadLen + 2; // Header (30) + Payload + CRC (2)
+  const totalLen = 32 + payloadLen + 2; // Header (32) + Payload + CRC (2)
   const buffer = new Uint8Array(totalLen);
   const view = new DataView(buffer.buffer);
 
@@ -130,6 +132,10 @@ export function encodeMeshCorePacket(packet: MeshCorePacket): Uint8Array {
   // Timestamp (4 bytes, big endian)
   view.setUint32(offset, packet.timestamp, false);
   offset += 4;
+
+  // Sub-mesh ID (2 bytes, big endian) ✅ NOUVEAU
+  view.setUint16(offset, packet.subMeshId || 0, false);
+  offset += 2;
 
   // Payload length (2 bytes, big endian)
   view.setUint16(offset, payloadLen, false);
@@ -181,6 +187,10 @@ export function decodeMeshCorePacket(data: Uint8Array): MeshCorePacket | null {
     const timestamp = view.getUint32(offset, false);
     offset += 4;
 
+    // Sub-mesh ID (2 bytes) ✅ NOUVEAU
+    const subMeshId = view.getUint16(offset, false);
+    offset += 2;
+
     // Payload length
     const payloadLen = view.getUint16(offset, false);
     offset += 2;
@@ -212,6 +222,7 @@ export function decodeMeshCorePacket(data: Uint8Array): MeshCorePacket | null {
       fromNodeId,
       toNodeId,
       timestamp,
+      subMeshId,
       payload,
     };
   } catch (err) {
@@ -282,6 +293,7 @@ export async function createTextMessage(
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: nodeIdToUint64(toNodeId),
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0, // Default sub-mesh
     payload,
   };
 }
@@ -330,6 +342,7 @@ export function createTextMessageSync(
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: nodeIdToUint64(toNodeId),
     timestamp: Math.floor(now / 1000),
+    subMeshId: 0,
     payload,
   };
 }
@@ -475,6 +488,7 @@ export function createPingPacket(fromNodeId: string): MeshCorePacket {
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: 0n, // Broadcast
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0,
     payload: new Uint8Array(0),
   };
 }
@@ -496,6 +510,7 @@ export function createKeyAnnouncePacket(fromNodeId: string, pubkeyHex: string): 
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: 0n, // Broadcast
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0,
     payload,
   };
 }
@@ -545,6 +560,7 @@ export function createPositionPacket(
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: 0n, // Broadcast
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0,
     payload: new Uint8Array(buffer),
   };
 }
@@ -592,6 +608,7 @@ export function createAckPacket(
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: nodeIdToUint64(toNodeId),
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0,
     payload,
   };
 }
@@ -692,6 +709,7 @@ export function createChunkPacket(
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: nodeIdToUint64(toNodeId),
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: 0,
     payload: chunk.data,
   };
 }

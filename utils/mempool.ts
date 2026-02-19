@@ -173,6 +173,28 @@ export async function getTransactionStatus(txid: string): Promise<MempoolTxStatu
 }
 
 /**
+ * Récupère le prix actuel du Bitcoin en USD
+ */
+export async function getBitcoinPrice(): Promise<number> {
+  try {
+    const response = await fetch(`${MEMPOOL_API_BASE}/v1/prices`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const price = data.USD;
+    console.log('[Mempool] Prix Bitcoin:', price, 'USD');
+    return price;
+  } catch (error) {
+    console.error('[Mempool] Erreur récupération prix:', error);
+    // Fallback sur prix approximatif si API fail
+    return 65000;
+  }
+}
+
+/**
  * Récupère l'historique des transactions d'une adresse
  */
 export async function getAddressTransactions(address: string, limit: number = 50, url?: string): Promise<any[]> {
@@ -197,8 +219,23 @@ export const fetchAddressBalance = getAddressBalance;
 export const fetchAddressTransactions = getAddressTransactions;
 export const fetchFeeEstimates = getFeeEstimates;
 export const fetchBtcPrice = async (mempoolUrl?: string, currency?: string): Promise<number> => {
-  // TODO: Implémenter récupération prix BTC
-  return currency === 'USD' ? 65000 : 60000;
+  try {
+    const baseUrl = mempoolUrl?.replace('/api', '') || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/v1/prices`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const price = currency === 'EUR' ? data.EUR : data.USD;
+    console.log('[Mempool] Prix BTC:', price, currency || 'USD');
+    return price;
+  } catch (error) {
+    console.error('[Mempool] Erreur prix BTC:', error);
+    // Fallback
+    return currency === 'EUR' ? 60000 : 65000;
+  }
 };
 export const formatTransactions = (raw: any[], addresses: string[]): any[] => raw;
 export const satsToBtc = (sats: number): string => (sats / 100000000).toFixed(8);

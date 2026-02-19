@@ -238,6 +238,7 @@ export function sendToSubMesh(
     toNodeId: 0n, // Broadcast
     messageId: Date.now(),
     timestamp: Math.floor(Date.now() / 1000),
+    subMeshId: parseInt(subMeshId, 16) || 0,
     payload: new TextEncoder().encode(message),
   };
   

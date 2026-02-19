@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
+    "@liamcottle/meshcore.js": "^1.11.0",
     "@nkzw/create-context-hook": "^1.1.0",
     "@noble/ciphers": "^1.1.0",
     "@noble/curves": "^1.6.0",

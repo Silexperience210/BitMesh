@@ -199,6 +199,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             fromNodeId: packet.fromNodeId,
             toNodeId: packet.toNodeId,
             timestamp: packet.timestamp,
+            subMeshId: (packet as any).subMeshId || 0,
             payload: new TextEncoder().encode(result.message),
           };
           
@@ -1062,6 +1063,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           fromNodeId: nodeIdToUint64(id.nodeId),
           toNodeId: nodeIdToUint64(convId),
           timestamp: Math.floor(Date.now() / 1000),
+          subMeshId: 0,
           payload: encryptedPayload,
         };
 

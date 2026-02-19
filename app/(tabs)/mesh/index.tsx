@@ -34,6 +34,8 @@ import { formatTime } from '@/utils/helpers';
 import MeshRadar from '@/components/MeshRadar';
 import GatewayScanModal from '@/components/GatewayScanModal';
 import UsbSerialScanModal from '@/components/UsbSerialScanModal';
+import RoomServerConfigModal from '@/components/RoomServerConfigModal';
+import RepeaterConfigModal from '@/components/RepeaterConfigModal';
 import { useBle } from '@/providers/BleProvider';
 import { useUsbSerial } from '@/providers/UsbSerialProvider';
 
@@ -495,9 +497,12 @@ export default function MeshScreen() {
   const [viewMode, setViewMode] = useState<ViewMode>('radar');
   const [filter, setFilter] = useState<FilterMode>('all');
   const [selectedPeer, setSelectedPeer] = useState<RadarPeer | null>(null);
-  const [showDetail, setShowDetail] = useState<boolean>(false);
-  const [showGatewayModal, setShowGatewayModal] = useState<boolean>(false);
-  const [showUsbModal, setShowUsbModal] = useState<boolean>(false);
+  const [showDetail, setShowDetail] = useState(false);
+  const [showGatewayModal, setShowGatewayModal] = useState(false);
+  const [showUsbModal, setShowUsbModal] = useState(false);
+  const [showRoomServerModal, setShowRoomServerModal] = useState(false);
+  const [showRepeaterModal, setShowRepeaterModal] = useState(false);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity } = useMessages();
@@ -703,9 +708,54 @@ export default function MeshScreen() {
         </TouchableOpacity>
       )}
 
+      {/* ✅ NOUVEAU: Boutons Room Server et Repeater - utilisent le device connecté */}
+      {!isInternetOnly && bleConnected && bleDevice && (
+        <View style={styles.deviceConfigRow}>
+          <TouchableOpacity
+            style={[styles.configBtn, { backgroundColor: Colors.purple }]}
+            onPress={() => {
+              setSelectedDeviceId(typeof bleDevice.id === 'string' ? parseInt(bleDevice.id) || 1 : (bleDevice.id || 1));
+              setShowRoomServerModal(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Server size={16} color={Colors.background} />
+            <Text style={styles.configBtnText}>Room Server</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.configBtn, { backgroundColor: Colors.cyan }]}
+            onPress={() => {
+              setSelectedDeviceId(typeof bleDevice.id === 'string' ? parseInt(bleDevice.id) || 1 : (bleDevice.id || 1));
+              setShowRepeaterModal(true);
+            }}
+            activeOpacity={0.8}
+          >
+            <Radio size={16} color={Colors.background} />
+            <Text style={styles.configBtnText}>Repeater</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       <NodeDetailModal peer={selectedPeer} visible={showDetail} onClose={handleCloseDetail} />
       <GatewayScanModal visible={showGatewayModal} onClose={() => setShowGatewayModal(false)} />
       <UsbSerialScanModal visible={showUsbModal} onClose={() => setShowUsbModal(false)} />
+      
+      {/* Modals Room Server et Repeater */}
+      {selectedDeviceId && (
+        <>
+          <RoomServerConfigModal 
+            visible={showRoomServerModal} 
+            onClose={() => setShowRoomServerModal(false)} 
+            deviceId={selectedDeviceId}
+          />
+          <RepeaterConfigModal 
+            visible={showRepeaterModal} 
+            onClose={() => setShowRepeaterModal(false)} 
+            deviceId={selectedDeviceId}
+          />
+        </>
+      )}
     </ScrollView>
   );
 }
@@ -1496,6 +1546,27 @@ const styles = StyleSheet.create({
   },
   gatewayFloatingText: {
     fontSize: 14,
+    fontWeight: '700',
+    color: Colors.background,
+  },
+  deviceConfigRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 16,
+    marginBottom: 20,
+    paddingHorizontal: 16,
+  },
+  configBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  configBtnText: {
+    fontSize: 13,
     fontWeight: '700',
     color: Colors.background,
   },
