@@ -115,25 +115,13 @@ export function MeshCoreProvider({ children }: { children: React.ReactNode }) {
     type: 'companion' | 'roomserver' | 'repeater' = 'companion'
   ) => {
     try {
-      // Ouvrir le port série
-      const serial = await (UsbSerialManager as any).open(deviceId);
+      // ✅ Utiliser l'adapter meshcore-usb qui fonctionne avec React Native
+      const { createMeshCoreAdapter } = await import('@/utils/meshcore-usb');
+      const adapter = await createMeshCoreAdapter(deviceId);
       
-      // Créer une connexion meshcore.js
-      // Note: meshcore.js attend un objet avec les méthodes read/write
-      const meshConnection = new MeshCore.NodeJSSerialConnection(`/dev/ttyUSB${deviceId}`);
+      // Créer une connexion meshcore.js avec l'adapter
+      const meshConnection = new MeshCore.NodeJSSerialConnection(adapter as any);
       
-      // Wrapper pour adapter react-native-usb-serialport à meshcore.js
-      const adapter = {
-        write: async (data: Uint8Array) => {
-          await serial.send(data);
-        },
-        onData: (callback: (data: Uint8Array) => void) => {
-          serial.onReceived((event: any) => {
-            callback(new Uint8Array(event.data));
-          });
-        },
-      };
-
       // Attendre la connexion
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Connection timeout')), 10000);

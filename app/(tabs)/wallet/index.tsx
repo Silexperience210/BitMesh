@@ -66,6 +66,7 @@ import {
 import { formatSats } from '@/utils/helpers';
 import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, type DBCashuToken } from '@/utils/database';  // ✅ NOUVEAU: markCashuTokenSpent
 import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
+import NFCModal from '@/components/NFCModal';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -780,6 +781,7 @@ export default function WalletScreen() {
   const [activeTab, setActiveTab] = useState<WalletTab>('bitcoin');
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [showNFCModal, setShowNFCModal] = useState<boolean>(false);
 
   const { walletInfo, isInitialized, receiveAddresses } = useWalletSeed();
   const { balance: bitcoinBalance, isLoading: bitcoinLoading, refreshBalance: refreshBitcoinBalance } = useBitcoin();
@@ -915,6 +917,14 @@ export default function WalletScreen() {
           />
 
           <View style={styles.quickActions}>
+            <TouchableOpacity
+              style={styles.quickAction}
+              activeOpacity={0.7}
+              onPress={() => setShowNFCModal(true)}
+            >
+              <Wifi size={18} color={Colors.textSecondary} />
+              <Text style={styles.quickActionText}>NFC</Text>
+            </TouchableOpacity>
             <TouchableOpacity
               style={styles.quickAction}
               activeOpacity={0.7}
@@ -1100,6 +1110,18 @@ export default function WalletScreen() {
       onClose={() => setShowReceiveModal(false)}
       address={walletInfo?.firstReceiveAddress || ''}
       addresses={receiveAddresses}
+    />
+    
+    {/* Modal NFC */}
+    <NFCModal
+      visible={showNFCModal}
+      onClose={() => setShowNFCModal(false)}
+      txHex=""
+      txid=""
+      onTxRead={(tx) => {
+        console.log('[NFC] Transaction lue:', tx.txid);
+        Alert.alert('NFC', `Transaction ${tx.txid.slice(0, 16)}... lue depuis la carte`);
+      }}
     />
     </>
   );

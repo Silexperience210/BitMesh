@@ -23,7 +23,7 @@ import {
   Check
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
-import { useUsbSerial } from '@/providers/UsbSerialProvider';
+import { useMeshCore } from '@/providers/MeshCoreProvider';
 import {
   configureRoomServer,
   getRoomServerStatus,

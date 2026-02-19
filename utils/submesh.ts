@@ -7,7 +7,7 @@
  * NUT-XX: Proposition pour MeshCore v2
  */
 
-import { type MeshCorePacket, MeshCoreMessageType } from './meshcore-protocol';
+import { type MeshCorePacket, MeshCoreMessageType, MeshCoreFlags, nodeIdToUint64 } from './meshcore-protocol';
 
 // Identifiants de sub-mesh (16 bits = 65536 réseaux possibles)
 export type SubMeshId = string; // Format: "0xABCD"
@@ -223,26 +223,32 @@ export function createSubMesh(
 export function sendToSubMesh(
   subMeshId: SubMeshId,
   message: string,
+  fromNodeId: string,
   options: {
     encrypt?: boolean;
     priority?: 'low' | 'normal' | 'high';
   } = {}
 ): MeshCorePacket {
-  // TODO: Implémenter l'envoi réel
+  const subMesh = subMeshRegistry.getAllSubMeshes().find(s => s.id === subMeshId);
+  
+  let flags = 0;
+  if (options.encrypt) flags |= 0x01;
+  flags |= MeshCoreFlags.SUBMESH; // ✅ Flag sub-mesh activé
+  
   const packet: MeshCorePacket = {
     version: 0x01,
     type: MeshCoreMessageType.TEXT,
-    flags: 0x00,
-    ttl: subMeshRegistry.getAllSubMeshes().find(s => s.id === subMeshId)?.maxHops || 5,
-    fromNodeId: 0n, // TODO: Récupérer notre nodeId
-    toNodeId: 0n, // Broadcast
+    flags,
+    ttl: subMesh?.maxHops || 5,
+    fromNodeId: nodeIdToUint64(fromNodeId),
+    toNodeId: 0n, // Broadcast dans le sub-mesh
     messageId: Date.now(),
     timestamp: Math.floor(Date.now() / 1000),
     subMeshId: parseInt(subMeshId, 16) || 0,
     payload: new TextEncoder().encode(message),
   };
   
-  console.log('[SubMesh] Sending to:', subMeshId, message.slice(0, 50));
+  console.log('[SubMesh] Packet created:', subMeshId, 'hops:', packet.ttl);
   return packet;
 }
 

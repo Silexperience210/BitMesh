@@ -44,6 +44,20 @@ export async function updateConversationLastMessage(
   return updateConversationLastMessageDB(convId, lastMessage, ts, incrementUnread);
 }
 
+export async function updateConversationPubkey(
+  convId: string,
+  pubkey: string
+): Promise<void> {
+  // Récupérer la conversation existante
+  const convs = await listConversationsDB();
+  const conv = convs.find(c => c.id === convId);
+  if (conv) {
+    conv.peerPubkey = pubkey;
+    await saveConversationDB(conv);
+    console.log('[MessagesStore] Pubkey updated for:', convId);
+  }
+}
+
 export async function markConversationRead(convId: string): Promise<void> {
   return markConversationReadDB(convId);
 }

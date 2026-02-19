@@ -214,6 +214,27 @@ export function shouldCompress(message: string): boolean {
 }
 
 /**
+ * Test de compression/décompression
+ * @returns true si le test passe
+ */
+export function testLzwCompression(): boolean {
+  const testText = 'This is a test message for LZW compression. '.repeat(10);
+  
+  try {
+    const compressed = compressMeshCoreMessage(testText);
+    const decompressed = decompressMeshCoreMessage(compressed.compressed);
+    
+    const success = decompressed === testText;
+    console.log('[LZW] Test:', success ? 'PASSED' : 'FAILED', 
+      'Ratio:', Math.round(compressed.ratio * 100) + '%');
+    return success;
+  } catch (err) {
+    console.error('[LZW] Test failed:', err);
+    return false;
+  }
+}
+
+/**
  * Stats de compression pour debug
  */
 export function getCompressionStats(text: string): {

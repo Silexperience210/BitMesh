@@ -37,6 +37,7 @@ import {
   loadMessages,
   saveMessage,
   updateConversationLastMessage,
+  updateConversationPubkey,
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
@@ -209,7 +210,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           // Pour l'instant, on log juste le message
           console.log('[MeshCore] Message reconstitué prêt:', result.message);
           
-          // TODO: Stocker le message dans la base de données
+          // ✅ Message chunké reconstitué - stocké dans la DB
           const fromNodeId = uint64ToNodeId(packet.fromNodeId);
           const msg: StoredMessage = {
             id: `chunk-${packet.messageId}`,
@@ -251,6 +252,19 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
 
       // Traiter selon le type de message
+      if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
+        // ✅ Gérer la réception d'une pubkey
+        const { extractPubkeyFromAnnounce } = await import('@/utils/meshcore-protocol');
+        const pubkey = extractPubkeyFromAnnounce(packet);
+        if (pubkey) {
+          const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+          console.log('[MeshCore] Pubkey reçue via KEY_ANNOUNCE:', fromNodeId, pubkey.slice(0, 20) + '...');
+          // Mettre à jour la conversation avec la pubkey
+          updateConversationPubkey(fromNodeId, pubkey);
+        }
+        return;
+      }
+
       if (packet.type === MeshCoreMessageType.TEXT) {
         const fromNodeId = uint64ToNodeId(packet.fromNodeId);
 
@@ -270,7 +284,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           const conv = conversations.find(c => c.id === fromNodeId);
           if (!conv?.peerPubkey) {
             console.error('[MeshCore] Impossible de déchiffrer: pubkey du sender inconnue');
-            // TODO: Implémenter KEY_ANNOUNCE pour échanger les pubkeys via LoRa
+            // ✅ Envoyer une demande de KEY_ANNOUNCE
+            try {
+              const { createKeyAnnouncePacket } = await import('@/utils/meshcore-protocol');
+              const requestPacket = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
+              await ble.sendPacket(requestPacket);
+              console.log('[MeshCore] KEY_ANNOUNCE envoyé pour demander la pubkey');
+            } catch (err) {
+              console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err);
+            }
             return;
           }
 
@@ -378,7 +400,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             };
           });
         }
-      } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
+      } else if (packet.type === (MeshCoreMessageType as any).KEY_ANNOUNCE) {
         // ✅ Traiter l'annonce de clé publique
         const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         const pubkeyHex = extractPubkeyFromAnnounce(packet);

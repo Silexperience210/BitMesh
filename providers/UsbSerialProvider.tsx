@@ -11,7 +11,7 @@ import {
   UsbSerialManager,
   UsbSerial,
 } from 'react-native-usb-serialport-for-android';
-import { type MeshCorePacket } from '@/utils/meshcore-protocol';
+import { type MeshCorePacket, encodeMeshCorePacket, decodeMeshCorePacket } from '@/utils/meshcore-protocol';
 
 export interface UsbDevice {
   id: number;
@@ -109,13 +109,14 @@ export function UsbSerialProvider({ children }: { children: React.ReactNode }) {
       // Écouter les données reçues
       serial.onReceived((event: any) => {
         try {
-          const data = event.data;
-          console.log('[UsbSerial] Data received:', data);
-          // TODO: Décoder le paquet MeshCore
-          // const packet = decodeMeshCorePacket(data);
-          // if (packet && packetHandlerRef.current) {
-          //   packetHandlerRef.current(packet);
-          // }
+          const data = new Uint8Array(event.data);
+          console.log('[UsbSerial] Data received:', data.length, 'bytes');
+          
+          // ✅ Implémenté: Décoder le paquet MeshCore
+          const packet = decodeMeshCorePacket(data);
+          if (packet && packetHandlerRef.current) {
+            packetHandlerRef.current(packet);
+          }
         } catch (err) {
           console.log('[UsbSerial] Failed to decode data:', err);
         }
@@ -165,10 +166,12 @@ export function UsbSerialProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // TODO: Encoder et envoyer
-      // const data = encodeMeshCorePacket(packet);
-      // await serialRef.current.send(data);
-      console.log('[UsbSerial] Packet sent (not implemented)');
+      // ✅ Implémenté: Encoder et envoyer
+      const data = encodeMeshCorePacket(packet);
+      const arr = Array.from(data);
+      const str = String.fromCharCode(...arr);
+      await serialRef.current.send(str);
+      console.log('[UsbSerial] Packet sent:', packet.type, packet.payload.length, 'bytes');
     } catch (err) {
       console.error('[UsbSerial] Send error:', err);
       throw err;
