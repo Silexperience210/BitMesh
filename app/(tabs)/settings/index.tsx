@@ -44,7 +44,7 @@ import Colors from '@/constants/colors';
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
 import { useBitcoin } from '@/providers/BitcoinProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
-// import SeedQRScanner from '@/components/SeedQRScanner';
+import SeedQRScanner from '@/components/SeedQRScanner';
 import { useGateway } from '@/providers/GatewayProvider';
 import { type ConnectionMode } from '@/providers/AppSettingsProvider';
 import { testMempoolConnection } from '@/utils/mempool';
@@ -132,7 +132,7 @@ function SeedManagementCard() {
 
   const [showSeed, setShowSeed] = useState<boolean>(false);
   const [showImport, setShowImport] = useState<boolean>(false);
-  // const [showSeedQRScanner, setShowSeedQRScanner] = useState<boolean>(false);
+  const [showSeedQRScanner, setShowSeedQRScanner] = useState<boolean>(false);
   const [importText, setImportText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -203,7 +203,7 @@ function SeedManagementCard() {
   const handleSeedQRScanned = useCallback((mnemonic: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     importWallet(mnemonic);
-    // setShowSeedQRScanner(false);
+    setShowSeedQRScanner(false);
     Alert.alert('Succès', 'Seed importée depuis SeedQR');
   }, [importWallet]);
 
@@ -428,7 +428,7 @@ function SeedManagementCard() {
               {/* Bouton Scan SeedQR */}
               <TouchableOpacity
                 style={styles.scanQRButton}
-                // onPress={() => setShowSeedQRScanner(true)}
+                onPress={() => setShowSeedQRScanner(true)}
                 activeOpacity={0.7}
               >
                 <QrCode size={18} color={Colors.background} />
@@ -1134,13 +1134,13 @@ export default function SettingsScreen() {
   const [autoRelay, setAutoRelay] = React.useState<boolean>(true);
   const [notifications, setNotifications] = React.useState<boolean>(true);
   const [btEnabled, setBtEnabled] = React.useState<boolean>(false);
-  // const [showSeedQRScanner, setShowSeedQRScanner] = React.useState<boolean>(false);
+  const [showSeedQRScanner, setShowSeedQRScanner] = React.useState<boolean>(false);
   const { isInitialized, importWallet } = useWalletSeed();
 
   const handleSeedQRScanned = useCallback((mnemonic: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     importWallet(mnemonic);
-    // setShowSeedQRScanner(false);
+    setShowSeedQRScanner(false);
     Alert.alert('Succès', 'Seed importée depuis SeedQR');
   }, [importWallet]);
 
@@ -1257,13 +1257,12 @@ export default function SettingsScreen() {
         Off-grid. Decentralized. Sovereign.
       </Text>
 
-      {/* SeedQR Scanner Modal - DÉSACTIVÉ (expo-camera retiré)
+      {/* SeedQR Scanner Modal */}
       <SeedQRScanner
         visible={showSeedQRScanner}
         onClose={() => setShowSeedQRScanner(false)}
         onSeedScanned={handleSeedQRScanned}
       />
-      */}
     </ScrollView>
   );
 }

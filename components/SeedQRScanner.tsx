@@ -7,7 +7,12 @@ import {
   Modal,
   Alert,
 } from 'react-native';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import {
+  Camera,
+  useCameraDevice,
+  useCameraPermission,
+  useCodeScanner,
+} from 'react-native-vision-camera';
 import { X, Scan, QrCode } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { isValidSeedQR, seedQRDataToSeed } from '@/utils/seedqr';
@@ -19,52 +24,59 @@ interface SeedQRScannerProps {
 }
 
 export default function SeedQRScanner({ visible, onClose, onSeedScanned }: SeedQRScannerProps) {
-  const [permission, requestPermission] = useCameraPermissions();
+  const device = useCameraDevice('back');
+  const { hasPermission, requestPermission } = useCameraPermission();
   const [scanned, setScanned] = useState(false);
 
   useEffect(() => {
-    if (visible && !permission?.granted) {
+    if (visible && !hasPermission) {
       requestPermission();
     }
-  }, [visible, permission]);
+  }, [visible, hasPermission]);
 
-  const handleBarCodeScanned = ({ data }: { data: string }) => {
-    if (scanned) return;
-    
-    setScanned(true);
-    
-    try {
-      // Vérifier si c'est une seed valide
-      if (isValidSeedQR(data)) {
-        Alert.alert(
-          'SeedQR détecté',
-          'Voulez-vous importer cette seed ?',
-          [
-            { text: 'Annuler', style: 'cancel', onPress: () => setScanned(false) },
-            {
-              text: 'Importer',
-              onPress: () => {
-                onSeedScanned(data.trim().toLowerCase());
-                onClose();
+  const codeScanner = useCodeScanner({
+    codeTypes: ['qr'],
+    onCodeScanned: (codes) => {
+      if (scanned || codes.length === 0) return;
+      
+      const data = codes[0].value;
+      if (!data) return;
+      
+      setScanned(true);
+      
+      try {
+        // Vérifier si c'est une seed valide
+        if (isValidSeedQR(data)) {
+          Alert.alert(
+            'SeedQR détecté',
+            'Voulez-vous importer cette seed ?',
+            [
+              { text: 'Annuler', style: 'cancel', onPress: () => setScanned(false) },
+              {
+                text: 'Importer',
+                onPress: () => {
+                  onSeedScanned(data.trim().toLowerCase());
+                  onClose();
+                },
               },
-            },
-          ]
-        );
-      } else {
-        Alert.alert(
-          'QR Code invalide',
-          'Ce QR code ne contient pas une seed BIP39 valide.',
-          [{ text: 'OK', onPress: () => setScanned(false) }]
-        );
+            ]
+          );
+        } else {
+          Alert.alert(
+            'QR Code invalide',
+            'Ce QR code ne contient pas une seed BIP39 valide.',
+            [{ text: 'OK', onPress: () => setScanned(false) }]
+          );
+        }
+      } catch (error) {
+        console.error('[SeedQR] Erreur scan:', error);
+        Alert.alert('Erreur', 'Impossible de lire le QR code');
+        setScanned(false);
       }
-    } catch (error) {
-      console.error('[SeedQR] Erreur scan:', error);
-      Alert.alert('Erreur', 'Impossible de lire le QR code');
-      setScanned(false);
-    }
-  };
+    },
+  });
 
-  if (!permission?.granted) {
+  if (!hasPermission) {
     return (
       <Modal visible={visible} animationType="slide" transparent={false}>
         <View style={styles.container}>
@@ -92,6 +104,28 @@ export default function SeedQRScanner({ visible, onClose, onSeedScanned }: SeedQ
     );
   }
 
+  if (device == null) {
+    return (
+      <Modal visible={visible} animationType="slide" transparent={false}>
+        <View style={styles.container}>
+          <View style={styles.header}>
+            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+              <X size={24} color={Colors.text} />
+            </TouchableOpacity>
+            <Text style={styles.title}>Scanner SeedQR</Text>
+          </View>
+          
+          <View style={styles.permissionContainer}>
+            <QrCode size={64} color={Colors.textMuted} />
+            <Text style={styles.permissionText}>
+              Aucune caméra disponible sur cet appareil
+            </Text>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <Modal visible={visible} animationType="slide" transparent={false}>
       <View style={styles.container}>
@@ -103,13 +137,11 @@ export default function SeedQRScanner({ visible, onClose, onSeedScanned }: SeedQ
         </View>
 
         <View style={styles.cameraContainer}>
-          <CameraView
+          <Camera
             style={styles.camera}
-            facing="back"
-            barcodeScannerSettings={{
-              barcodeTypes: ['qr'],
-            }}
-            onBarcodeScanned={scanned ? undefined : handleBarCodeScanned}
+            device={device}
+            isActive={visible && !scanned}
+            codeScanner={codeScanner}
           />
           
           <View style={styles.overlay}>
