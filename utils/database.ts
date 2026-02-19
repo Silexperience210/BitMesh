@@ -180,6 +180,22 @@ async function initDatabase(): Promise<void> {
 
   console.log('[Database] Tables initialisées');
 
+  // ✅ NOUVEAU: Table mqtt_queue (file d'attente persistante)
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS mqtt_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      qos INTEGER DEFAULT 1,
+      retry_count INTEGER DEFAULT 0,
+      max_retries INTEGER DEFAULT 3,
+      created_at INTEGER DEFAULT (strftime('%s', 'now') * 1000),
+      next_retry_at INTEGER DEFAULT (strftime('%s', 'now') * 1000)
+    );
+    CREATE INDEX IF NOT EXISTS idx_mqtt_queue_retry ON mqtt_queue(next_retry_at) WHERE retry_count < max_retries;
+  `);
+  console.log('[Database] Table mqtt_queue créée');
+
   // Table: submeshes
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS submeshes (
@@ -836,6 +852,71 @@ export async function migrateFromAsyncStorage(): Promise<void> {
     console.error('[Database] Erreur migration:', error);
     throw error;
   }
+}
+
+// --- MQTT Queue (file d'attente persistante) ---
+
+export interface DBMqttQueueItem {
+  id: number;
+  topic: string;
+  payload: string;
+  qos: number;
+  retryCount: number;
+  maxRetries: number;
+  createdAt: number;
+  nextRetryAt: number;
+}
+
+export async function enqueueMqttMessage(
+  topic: string,
+  payload: string,
+  qos: number = 1,
+  maxRetries: number = 3
+): Promise<number> {
+  const database = await getDatabase();
+  const result = await database.runAsync(
+    `INSERT INTO mqtt_queue (topic, payload, qos, max_retries, next_retry_at) VALUES (?, ?, ?, ?, ?)`,
+    [topic, payload, qos, maxRetries, Date.now()]
+  );
+  console.log('[Database] MQTT message enqueued:', topic, 'id:', result.lastInsertRowId);
+  return result.lastInsertRowId;
+}
+
+export async function getPendingMqttMessages(): Promise<DBMqttQueueItem[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(
+    `SELECT * FROM mqtt_queue 
+     WHERE retry_count < max_retries AND next_retry_at <= ? 
+     ORDER BY created_at ASC`,
+    [Date.now()]
+  );
+  return rows.map(row => ({
+    id: row.id,
+    topic: row.topic,
+    payload: row.payload,
+    qos: row.qos,
+    retryCount: row.retry_count,
+    maxRetries: row.max_retries,
+    createdAt: row.created_at,
+    nextRetryAt: row.next_retry_at,
+  }));
+}
+
+export async function markMqttMessageSent(id: number): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`DELETE FROM mqtt_queue WHERE id = ?`, [id]);
+}
+
+export async function incrementMqttRetry(id: number): Promise<void> {
+  const database = await getDatabase();
+  const nextRetry = Date.now() + Math.pow(2, (await database.getFirstAsync<{retry_count: number}>(
+    `SELECT retry_count FROM mqtt_queue WHERE id = ?`, [id]
+  ))?.retry_count || 0) * 1000;
+  
+  await database.runAsync(
+    `UPDATE mqtt_queue SET retry_count = retry_count + 1, next_retry_at = ? WHERE id = ?`,
+    [nextRetry, id]
+  );
 }
 
 // --- Sub-meshes ---

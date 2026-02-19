@@ -1,5 +1,8 @@
 // Vrai client MQTT WebSocket pour messagerie P2P MeshCore
 import mqtt, { MqttClient as MqttJsClient, IClientOptions } from 'mqtt';
+import { publishWithRetry as publishWithRetryUtil } from './mqtt';
+
+export { publishWithRetryUtil as publishWithRetry };
 
 export type MqttConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type MessageHandler = (topic: string, payload: string) => void;

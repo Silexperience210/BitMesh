@@ -1,11 +1,44 @@
 export type MqttQoS = 0 | 1 | 2;
 
+// ✅ NOUVEAU: Import LZW pour compression
+import { lzwCompress, lzwDecompress } from './lzw';
+
 export interface MqttMessage {
   topic: string;
   payload: string;
   qos: MqttQoS;
   timestamp: number;
   retained: boolean;
+}
+
+/**
+ * ✅ NOUVEAU: Compresse un payload pour MQTT si > 500 caractères
+ * @returns payload compressé avec préfixe 'LZ:'
+ */
+export function compressMqttPayload(payload: string): string {
+  if (payload.length < 500) return payload;
+  
+  try {
+    const compressed = lzwCompress(payload);
+    return 'LZ:' + compressed;
+  } catch (err) {
+    console.warn('[MQTT] Compression failed, sending raw:', err);
+    return payload;
+  }
+}
+
+/**
+ * ✅ NOUVEAU: Décompresse un payload MQTT si compressé
+ */
+export function decompressMqttPayload(payload: string): string {
+  if (!payload.startsWith('LZ:')) return payload;
+  
+  try {
+    return lzwDecompress(payload.slice(3));
+  } catch (err) {
+    console.warn('[MQTT] Decompression failed:', err);
+    return payload;
+  }
 }
 
 export interface MqttSubscription {
@@ -108,6 +141,9 @@ export function unsubscribeTopic(client: MqttClient, topic: string): MqttClient 
   return { ...client, subscriptions: newSubs };
 }
 
+// ✅ NOUVEAU: Map pour tracker les ACKs en attente
+const pendingAcks = new Map<string, { resolve: () => void; reject: (err: Error) => void; timeout: NodeJS.Timeout }>();
+
 export function publishMessage(
   client: MqttClient,
   topic: string,
@@ -133,6 +169,71 @@ export function publishMessage(
   }
 
   return { ...client, messageQueue: newQueue };
+}
+
+// ✅ NOUVEAU: Publier avec ACK et timeout
+export function publishWithAck(
+  client: MqttClient,
+  topic: string,
+  payload: string,
+  qos: MqttQoS = 1,
+  timeoutMs: number = 5000
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const msgId = `${topic}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    
+    const timeout = setTimeout(() => {
+      pendingAcks.delete(msgId);
+      reject(new Error(`ACK timeout for message ${msgId}`));
+    }, timeoutMs);
+    
+    pendingAcks.set(msgId, { resolve, reject, timeout });
+    
+    // Publier le message avec l'ID pour corrélation
+    const payloadWithId = JSON.stringify({ ...JSON.parse(payload), _ackId: msgId });
+    publishMessage(client, topic, payloadWithId, qos);
+    
+    console.log('[MQTT] Published with ACK:', msgId);
+  });
+}
+
+// ✅ NOUVEAU: Confirmer réception d'un ACK
+export function confirmAck(msgId: string): void {
+  const pending = pendingAcks.get(msgId);
+  if (pending) {
+    clearTimeout(pending.timeout);
+    pending.resolve();
+    pendingAcks.delete(msgId);
+    console.log('[MQTT] ACK confirmed:', msgId);
+  }
+}
+
+// ✅ NOUVEAU: Retry avec backoff exponentiel
+export async function publishWithRetry(
+  client: MqttClient,
+  topic: string,
+  payload: string,
+  qos: MqttQoS = 1,
+  maxRetries: number = 3
+): Promise<boolean> {
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      await publishWithAck(client, topic, payload, qos, 5000);
+      return true;
+    } catch (err) {
+      console.log(`[MQTT] Attempt ${attempt + 1}/${maxRetries} failed:`, err);
+      
+      if (attempt < maxRetries - 1) {
+        // Backoff exponentiel: 1s, 2s, 4s
+        const delay = Math.pow(2, attempt) * 1000;
+        console.log(`[MQTT] Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+  }
+  
+  console.error('[MQTT] All retries failed for:', topic);
+  return false;
 }
 
 export function createGatewayAnnouncement(
