@@ -100,7 +100,7 @@ export interface MessagesState {
   leaveForum: (channelName: string) => void;
   markRead: (convId: string) => Promise<void>;
   // ✅ NOUVEAU : Annoncer un forum public
-  announceForumPublic: (channelName: string, description: string) => void;
+  announceForumPublic: (channelName: string, description: string) => boolean;
 }
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
@@ -846,6 +846,10 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             joinForumChannel(client, ch, handleIncomingForum(ch));
           });
           clearInterval(statePoller);
+        } else if (s === 'error' || s === 'disconnected') {
+          // Arrêter le poller en cas d'erreur ou de déconnexion
+          console.log('[Messages] Connexion MQTT échouée ou perdue:', s);
+          clearInterval(statePoller);
         }
       }
     }, 500);
@@ -1141,10 +1145,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   }, [conversations, handleIncomingForum]);
 
   // ✅ NOUVEAU : Annoncer un forum public
-  const announceForumPublic = useCallback((channelName: string, description: string): void => {
+  const announceForumPublic = useCallback((channelName: string, description: string): boolean => {
     if (!mqttRef.current || !identity) {
       console.log('[Forums] Impossible d\'annoncer — non connecté');
-      return;
+      return false;
+    }
+
+    if (mqttRef.current.state !== 'connected') {
+      console.log('[Forums] Impossible d\'annoncer — MQTT pas connecté (state:', mqttRef.current.state + ')');
+      return false;
     }
 
     announceForumChannel(
@@ -1156,6 +1165,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     );
 
     console.log('[Forums] Forum annoncé publiquement:', channelName);
+    return true;
   }, [identity]);
 
   // Quitter un forum

@@ -136,13 +136,29 @@ function NewChatModal({ visible, onClose, onDM, onForum }: {
       Alert.alert('Erreur', 'Entrez un nom de forum');
       return;
     }
+    
+    // Vérifier si MQTT est connecté
+    if (mqttState !== 'connected') {
+      Alert.alert(
+        'Non connecté',
+        `La messagerie n'est pas encore connectée (status: ${mqttState}). Veuillez patienter quelques secondes et réessayer.`
+      );
+      return;
+    }
+    
     const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
     console.log('[Forum] Création du forum:', channelName);
     await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
     console.log('[Forum] Forum rejoint, annonce en cours...');
-    announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
-    Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
-    setNewForumName(''); setNewForumDesc(''); setShowCreateForm(false);
+    
+    const announced = announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
+    
+    if (announced) {
+      Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
+      setNewForumName(''); setNewForumDesc(''); setShowCreateForm(false);
+    } else {
+      Alert.alert('Erreur', 'Impossible d\'annoncer le forum. Vérifiez votre connexion.');
+    }
   };
 
   const handleJoinDiscoveredForum = async (channelName: string, description: string) => {
