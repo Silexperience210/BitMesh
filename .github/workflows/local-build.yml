@@ -1,0 +1,95 @@
+name: Build Android APK (Local)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK locally
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: |
+          sdkmanager "platforms;android-34"
+          sdkmanager "build-tools;34.0.0"
+
+      - name: Generate Android native project
+        run: npx expo prebuild --platform android --clean
+
+      - name: Generate keystore
+        run: |
+          keytool -genkeypair \
+            -v \
+            -keystore android/app/bitmesh.keystore \
+            -alias bitmesh \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass bitmesh123 \
+            -keypass bitmesh123 \
+            -dname "CN=BitMesh, OU=Mobile, O=BitMesh, L=Paris, ST=IDF, C=FR"
+
+      - name: Configure signing
+        run: |
+          cat > android/keystore.properties << 'EOF'
+          MYAPP_UPLOAD_STORE_FILE=bitmesh.keystore
+          MYAPP_UPLOAD_KEY_ALIAS=bitmesh
+          MYAPP_UPLOAD_STORE_PASSWORD=bitmesh123
+          MYAPP_UPLOAD_KEY_PASSWORD=bitmesh123
+          EOF
+
+      - name: Build APK
+        run: |
+          cd android
+          ./gradlew assembleRelease
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: BitMesh-APK
+          path: android/app/build/outputs/apk/release/app-release.apk
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ github.run_number }}-local
+          name: "BitMesh v${{ github.run_number }} (Local Build)"
+          body: |
+            ## BitMesh APK — Build local
+
+            APK généré sans EAS (quota épuisé).
+
+            **Installation** : télécharger `BitMesh-APK` et l'installer sur Android.
+          files: android/app/build/outputs/apk/release/app-release.apk
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
