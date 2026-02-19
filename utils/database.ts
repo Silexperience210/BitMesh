@@ -525,6 +525,30 @@ export async function getCashuBalance(): Promise<{ total: number; byMint: Record
   return { total, byMint };
 }
 
+// ✅ NOUVEAU : Récupérer tous les mints utilisés
+export async function getAllMints(): Promise<string[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<{ mintUrl: string }>(`
+    SELECT DISTINCT mintUrl FROM cashu_tokens ORDER BY mintUrl
+  `);
+  return rows.map(r => r.mintUrl);
+}
+
+// ✅ NOUVEAU : Récupérer les tokens par mint
+export async function getTokensByMint(mintUrl: string): Promise<DBCashuToken[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(`
+    SELECT * FROM cashu_tokens 
+    WHERE mintUrl = ? AND state IN ('unspent', 'unverified')
+    ORDER BY amount DESC
+  `, [mintUrl]);
+  return rows.map(row => ({
+    ...row,
+    state: row.state || 'unspent',
+    unverified: Boolean(row.unverified),
+  }));
+}
+
 // ✅ NOUVEAU : Export tous les tokens (backup)
 export async function exportCashuTokens(): Promise<DBCashuToken[]> {
   const database = await getDatabase();
