@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import * as SecureStore from 'expo-secure-store';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import createContextHook from '@nkzw/create-context-hook';
 import {
   generateMnemonic,
@@ -41,9 +42,21 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
     queryFn: async () => {
       console.log('[WalletSeed] Loading stored mnemonic...');
       try {
-        const stored = await SecureStore.getItemAsync(MNEMONIC_KEY);
+        // Essayer SecureStore d'abord
+        let stored = await SecureStore.getItemAsync(MNEMONIC_KEY);
+        
+        // Fallback sur AsyncStorage si SecureStore vide
+        if (!stored) {
+          stored = await AsyncStorage.getItem(MNEMONIC_KEY);
+          if (stored) {
+            console.log('[WalletSeed] Mnemonic trouvé dans AsyncStorage (fallback)');
+          }
+        } else {
+          console.log('[WalletSeed] Mnemonic trouvé dans SecureStore');
+        }
+        
         if (stored && validateMnemonic(stored)) {
-          console.log('[WalletSeed] Found valid stored mnemonic');
+          console.log('[WalletSeed] Mnemonic valide chargé');
           return stored;
         }
         console.log('[WalletSeed] No stored mnemonic found');
@@ -73,10 +86,20 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
       console.log('[WalletSeed] Generating new wallet with', strength, 'words...');
       try {
         const newMnemonic = generateMnemonic(strength);
-        console.log('[WalletSeed] Mnemonic generated, saving to SecureStore...');
-        await SecureStore.setItemAsync(MNEMONIC_KEY, newMnemonic);
-        await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
-        console.log('[WalletSeed] New wallet saved to SecureStore');
+        console.log('[WalletSeed] Mnemonic generated, saving...');
+        
+        // Essayer SecureStore d'abord, fallback sur AsyncStorage
+        try {
+          await SecureStore.setItemAsync(MNEMONIC_KEY, newMnemonic);
+          await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
+          console.log('[WalletSeed] Saved to SecureStore');
+        } catch (secureErr) {
+          console.warn('[WalletSeed] SecureStore failed, using AsyncStorage fallback:', secureErr);
+          await AsyncStorage.setItem(MNEMONIC_KEY, newMnemonic);
+          await AsyncStorage.setItem(WALLET_INITIALIZED_KEY, 'true');
+          console.log('[WalletSeed] Saved to AsyncStorage (fallback)');
+        }
+        
         return newMnemonic;
       } catch (error: any) {
         console.error('[WalletSeed] Error in mutationFn:', error);
@@ -106,9 +129,18 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
       if (!validateMnemonic(trimmed)) {
         throw new Error('Invalid mnemonic phrase');
       }
-      await SecureStore.setItemAsync(MNEMONIC_KEY, trimmed);
-      await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
-      console.log('[WalletSeed] Imported wallet saved to SecureStore');
+      
+      // Essayer SecureStore d'abord, fallback sur AsyncStorage
+      try {
+        await SecureStore.setItemAsync(MNEMONIC_KEY, trimmed);
+        await SecureStore.setItemAsync(WALLET_INITIALIZED_KEY, 'true');
+      } catch (secureErr) {
+        console.warn('[WalletSeed] SecureStore failed, using AsyncStorage fallback:', secureErr);
+        await AsyncStorage.setItem(MNEMONIC_KEY, trimmed);
+        await AsyncStorage.setItem(WALLET_INITIALIZED_KEY, 'true');
+      }
+      
+      console.log('[WalletSeed] Imported wallet saved');
       return trimmed;
     },
     onSuccess: (importedMnemonic) => {
@@ -128,7 +160,9 @@ export const [WalletSeedContext, useWalletSeed] = createContextHook(() => {
       console.log('[WalletSeed] Deleting wallet...');
       await SecureStore.deleteItemAsync(MNEMONIC_KEY);
       await SecureStore.deleteItemAsync(WALLET_INITIALIZED_KEY);
-      console.log('[WalletSeed] Wallet deleted from SecureStore');
+      await AsyncStorage.removeItem(MNEMONIC_KEY);
+      await AsyncStorage.removeItem(WALLET_INITIALIZED_KEY);
+      console.log('[WalletSeed] Wallet deleted');
     },
     onSuccess: () => {
       setMnemonic(null);

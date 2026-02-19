@@ -1,49 +1,26 @@
-export interface MempoolAddressInfo {
-  address: string;
-  chain_stats: {
-    funded_txo_count: number;
-    funded_txo_sum: number;
-    spent_txo_count: number;
-    spent_txo_sum: number;
-    tx_count: number;
-  };
-  mempool_stats: {
-    funded_txo_count: number;
-    funded_txo_sum: number;
-    spent_txo_count: number;
-    spent_txo_sum: number;
-    tx_count: number;
-  };
+/**
+ * Mempool.space API - Broadcast de transactions Bitcoin
+ * Permet d'envoyer des transactions raw hex directement
+ */
+
+const MEMPOOL_API_BASE = 'https://mempool.space/api';
+const MEMPOOL_TESTNET_API_BASE = 'https://mempool.space/testnet/api';
+
+export interface MempoolTxStatus {
+  confirmed: boolean;
+  blockHeight?: number;
+  blockHash?: string;
+  blockTime?: number;
 }
 
-export interface MempoolTransaction {
+export interface MempoolUtxo {
   txid: string;
-  version: number;
-  locktime: number;
-  size: number;
-  weight: number;
-  fee: number;
-  status: {
-    confirmed: boolean;
-    block_height?: number;
-    block_hash?: string;
-    block_time?: number;
-  };
-  vin: Array<{
-    txid: string;
-    vout: number;
-    prevout: {
-      scriptpubkey_address: string;
-      value: number;
-    } | null;
-  }>;
-  vout: Array<{
-    scriptpubkey_address: string;
-    value: number;
-  }>;
+  vout: number;
+  value: number;
+  status: MempoolTxStatus;
 }
 
-export interface MempoolFeeEstimate {
+export interface MempoolFeeEstimates {
   fastestFee: number;
   halfHourFee: number;
   hourFee: number;
@@ -51,187 +28,160 @@ export interface MempoolFeeEstimate {
   minimumFee: number;
 }
 
-export interface MempoolBlockTip {
-  height: number;
-  hash: string;
-}
-
-export interface AddressBalance {
-  confirmed: number;
-  unconfirmed: number;
-  total: number;
-}
-
-export interface FormattedTransaction {
-  txid: string;
-  type: 'sent' | 'received';
-  amount: number;
-  fee: number;
-  confirmed: boolean;
-  blockTime: number | null;
-  blockHeight: number | null;
-}
-
-export async function fetchAddressInfo(
-  baseUrl: string,
-  address: string
-): Promise<MempoolAddressInfo> {
-  const url = `${baseUrl}/api/address/${address}`;
-  console.log('[Mempool] Fetching address info:', url);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Mempool API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  console.log('[Mempool] Address info received for', address);
-  return data as MempoolAddressInfo;
-}
-
-export async function fetchAddressBalance(
-  baseUrl: string,
-  address: string
-): Promise<AddressBalance> {
-  const info = await fetchAddressInfo(baseUrl, address);
-
-  const confirmed = info.chain_stats.funded_txo_sum - info.chain_stats.spent_txo_sum;
-  const unconfirmed = info.mempool_stats.funded_txo_sum - info.mempool_stats.spent_txo_sum;
-
-  console.log('[Mempool] Balance - confirmed:', confirmed, 'unconfirmed:', unconfirmed);
-  return {
-    confirmed,
-    unconfirmed,
-    total: confirmed + unconfirmed,
-  };
-}
-
-export async function fetchAddressTransactions(
-  baseUrl: string,
-  address: string
-): Promise<MempoolTransaction[]> {
-  const url = `${baseUrl}/api/address/${address}/txs`;
-  console.log('[Mempool] Fetching transactions:', url);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Mempool API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  console.log('[Mempool] Received', (data as MempoolTransaction[]).length, 'transactions');
-  return data as MempoolTransaction[];
-}
-
-export async function fetchFeeEstimates(
-  baseUrl: string
-): Promise<MempoolFeeEstimate> {
-  const url = `${baseUrl}/api/v1/fees/recommended`;
-  console.log('[Mempool] Fetching fee estimates:', url);
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Mempool API error: ${response.status} ${response.statusText}`);
-  }
-
-  const data = await response.json();
-  console.log('[Mempool] Fee estimates:', data);
-  return data as MempoolFeeEstimate;
-}
-
-export async function fetchBlockTipHeight(
-  baseUrl: string
-): Promise<number> {
-  const url = `${baseUrl}/api/blocks/tip/height`;
-  console.log('[Mempool] Fetching block tip height');
-
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Mempool API error: ${response.status} ${response.statusText}`);
-  }
-
-  const height = parseInt(await response.text(), 10);
-  console.log('[Mempool] Block tip height:', height);
-  return height;
-}
-
-export async function fetchBtcPrice(
-  baseUrl: string,
-  currency: string = 'EUR'
-): Promise<number> {
-  const url = `${baseUrl}/api/v1/prices`;
-  console.log('[Mempool] Fetching BTC price');
-
+/**
+ * Teste la connexion à mempool.space
+ */
+export async function testMempoolConnection(): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(url);
+    const response = await fetch(`${MEMPOOL_API_BASE}/blocks/tip/height`, {
+      method: 'GET',
+      headers: { 'Accept': 'text/plain' },
+    });
+    
+    if (response.ok) {
+      const height = await response.text();
+      console.log('[Mempool] Connecté, hauteur bloc:', height);
+      return { success: true };
+    }
+    
+    return { success: false, error: `HTTP ${response.status}` };
+  } catch (error) {
+    console.error('[Mempool] Erreur connexion:', error);
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Récupère les UTXOs d'une adresse Bitcoin
+ */
+export async function getAddressUtxos(address: string): Promise<MempoolUtxo[]> {
+  try {
+    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}/utxo`);
+    
     if (!response.ok) {
-      throw new Error(`Price API error: ${response.status}`);
+      throw new Error(`HTTP ${response.status}`);
     }
-
-    const data = await response.json();
-    const price = currency === 'USD' ? data.USD : data.EUR;
-    console.log('[Mempool] BTC price in', currency, ':', price);
-    return price ?? 0;
-  } catch (err) {
-    console.log('[Mempool] Price fetch error, using fallback:', err);
-    return 0;
+    
+    const utxos: MempoolUtxo[] = await response.json();
+    console.log(`[Mempool] ${utxos.length} UTXOs trouvés pour ${address}`);
+    return utxos;
+  } catch (error) {
+    console.error('[Mempool] Erreur récupération UTXOs:', error);
+    throw error;
   }
 }
 
-export function formatTransactions(
-  txs: MempoolTransaction[],
-  ownAddresses: string[]
-): FormattedTransaction[] {
-  const addressSet = new Set(ownAddresses.map(a => a.toLowerCase()));
-
-  return txs.map((tx) => {
-    let totalIn = 0;
-    let totalOut = 0;
-
-    for (const vin of tx.vin) {
-      if (vin.prevout && addressSet.has(vin.prevout.scriptpubkey_address.toLowerCase())) {
-        totalIn += vin.prevout.value;
-      }
-    }
-
-    for (const vout of tx.vout) {
-      if (addressSet.has(vout.scriptpubkey_address.toLowerCase())) {
-        totalOut += vout.value;
-      }
-    }
-
-    const isSent = totalIn > 0;
-    const amount = isSent ? totalIn - totalOut - tx.fee : totalOut;
-
-    return {
-      txid: tx.txid,
-      type: isSent ? 'sent' as const : 'received' as const,
-      amount,
-      fee: tx.fee,
-      confirmed: tx.status.confirmed,
-      blockTime: tx.status.block_time ?? null,
-      blockHeight: tx.status.block_height ?? null,
-    };
-  });
-}
-
-export function satsToBtc(sats: number): string {
-  return (sats / 100000000).toFixed(8);
-}
-
-export function satsToFiat(sats: number, btcPrice: number): number {
-  return (sats / 100000000) * btcPrice;
-}
-
-export async function testMempoolConnection(baseUrl: string): Promise<boolean> {
+/**
+ * Récupère le solde confirmé d'une adresse
+ */
+export async function getAddressBalance(address: string): Promise<{ confirmed: number; unconfirmed: number }> {
   try {
-    console.log('[Mempool] Testing connection to:', baseUrl);
-    const response = await fetch(`${baseUrl}/api/blocks/tip/height`);
-    const ok = response.ok;
-    console.log('[Mempool] Connection test:', ok ? 'SUCCESS' : 'FAILED');
-    return ok;
-  } catch (err) {
-    console.log('[Mempool] Connection test FAILED:', err);
-    return false;
+    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const data = await response.json();
+    const confirmed = data.chain_stats?.funded_txo_sum - data.chain_stats?.spent_txo_sum || 0;
+    const unconfirmed = data.mempool_stats?.funded_txo_sum - data.mempool_stats?.spent_txo_sum || 0;
+    
+    return { confirmed, unconfirmed };
+  } catch (error) {
+    console.error('[Mempool] Erreur récupération solde:', error);
+    throw error;
+  }
+}
+
+/**
+ * Récupère les estimations de frais actuels
+ */
+export async function getFeeEstimates(): Promise<MempoolFeeEstimates> {
+  try {
+    const response = await fetch(`${MEMPOOL_API_BASE}/v1/fees/recommended`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('[Mempool] Erreur récupération frais:', error);
+    // Valeurs par défaut sécuritaires
+    return {
+      fastestFee: 20,
+      halfHourFee: 10,
+      hourFee: 5,
+      economyFee: 2,
+      minimumFee: 1,
+    };
+  }
+}
+
+/**
+ * Broadcast une transaction raw hex sur le réseau Bitcoin
+ * C'est la fonction clé pour envoyer des bitcoins
+ */
+export async function broadcastTransaction(txHex: string): Promise<{ txid: string }> {
+  try {
+    console.log('[Mempool] Broadcast transaction...');
+    
+    const response = await fetch(`${MEMPOOL_API_BASE}/tx`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain',
+      },
+      body: txHex,
+    });
+    
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Broadcast failed: ${errorText}`);
+    }
+    
+    const txid = await response.text();
+    console.log('[Mempool] Transaction broadcastée:', txid);
+    
+    return { txid };
+  } catch (error) {
+    console.error('[Mempool] Erreur broadcast:', error);
+    throw error;
+  }
+}
+
+/**
+ * Récupère le statut d'une transaction
+ */
+export async function getTransactionStatus(txid: string): Promise<MempoolTxStatus> {
+  try {
+    const response = await fetch(`${MEMPOOL_API_BASE}/tx/${txid}/status`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('[Mempool] Erreur statut transaction:', error);
+    throw error;
+  }
+}
+
+/**
+ * Récupère l'historique des transactions d'une adresse
+ */
+export async function getAddressTransactions(address: string, limit: number = 50): Promise<any[]> {
+  try {
+    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}/txs`);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    
+    const txs = await response.json();
+    return txs.slice(0, limit);
+  } catch (error) {
+    console.error('[Mempool] Erreur historique transactions:', error);
+    throw error;
   }
 }
