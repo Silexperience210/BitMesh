@@ -66,6 +66,7 @@ import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/ser
 interface WireMessage {
   v: number;
   id: string;
+  from: string;
   fromNodeId: string;
   fromPubkey: string;
   to: string;          // nodeId destinataire ou "forum:channelName"
@@ -335,6 +336,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         console.log('[MeshCore] Message TEXT déchiffré et livré depuis', fromNodeId);
       } else if (packet.type === MeshCoreMessageType.ACK) {
         // ✅ Traiter l'ACK reçu (confirmation de livraison)
+        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         const { extractAckInfo } = await import('@/utils/meshcore-protocol');
         const ackInfo = extractAckInfo(packet.payload);
         
@@ -359,6 +361,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
         // ✅ Traiter l'annonce de clé publique
+        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         const pubkeyHex = extractPubkeyFromAnnounce(packet);
         if (!pubkeyHex) {
           console.error('[MeshCore] KEY_ANNOUNCE invalide');
