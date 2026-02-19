@@ -412,7 +412,91 @@ export async function getAppState(key: string): Promise<string | null> {
 // --- Migration depuis AsyncStorage ---
 
 export async function migrateFromAsyncStorage(): Promise<void> {
-  // Cette fonction sera appelée au démarrage pour migrer les données existantes
-  console.log('[Database] Migration depuis AsyncStorage si nécessaire...');
-  // TODO: Implémenter la migration si des données existent dans AsyncStorage
+  console.log('[Database] Vérification migration depuis AsyncStorage...');
+  
+  try {
+    const AsyncStorage = (await import('@react-native-async-storage/async-storage')).default;
+    
+    // Vérifier si migration déjà faite
+    const migrationDone = await AsyncStorage.getItem('meshcore_migration_done');
+    if (migrationDone === 'true') {
+      console.log('[Database] Migration déjà effectuée');
+      return;
+    }
+    
+    const db = await getDatabase();
+    
+    // Vérifier si des conversations existent déjà dans SQLite
+    const existingConvs = await db.getAllAsync('SELECT COUNT(*) as count FROM conversations');
+    const hasConversations = (existingConvs[0] as any).count > 0;
+    
+    if (hasConversations) {
+      console.log('[Database] Données SQLite existantes, pas de migration nécessaire');
+      await AsyncStorage.setItem('meshcore_migration_done', 'true');
+      return;
+    }
+    
+    // Migrer les conversations
+    const convsJson = await AsyncStorage.getItem('meshcore_conversations');
+    if (convsJson) {
+      const conversations = JSON.parse(convsJson);
+      console.log(`[Database] Migration de ${conversations.length} conversations...`);
+      
+      for (const conv of conversations) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO conversations 
+           (id, name, is_forum, peer_pubkey, last_message, last_message_time, unread_count, online)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            conv.id,
+            conv.name,
+            conv.isForum ? 1 : 0,
+            conv.peerPubkey || null,
+            conv.lastMessage || '',
+            conv.lastMessageTime || Date.now(),
+            conv.unreadCount || 0,
+            conv.online ? 1 : 0
+          ]
+        );
+      }
+      console.log('[Database] Conversations migrées');
+    }
+    
+    // Migrer les messages
+    const messagesJson = await AsyncStorage.getItem('meshcore_messages');
+    if (messagesJson) {
+      const messages = JSON.parse(messagesJson);
+      console.log(`[Database] Migration de ${messages.length} messages...`);
+      
+      for (const msg of messages) {
+        await db.runAsync(
+          `INSERT OR IGNORE INTO messages 
+           (id, conversation_id, from_node_id, from_pubkey, text, type, timestamp, is_mine, status, cashu_amount, cashu_token)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            msg.id,
+            msg.conversationId,
+            msg.from,
+            msg.fromPubkey || null,
+            msg.text,
+            msg.type,
+            msg.timestamp,
+            msg.isMine ? 1 : 0,
+            msg.status,
+            msg.cashuAmount || null,
+            msg.cashuToken || null
+          ]
+        );
+      }
+      console.log('[Database] Messages migrés');
+    }
+    
+    // Marquer la migration comme terminée
+    await AsyncStorage.setItem('meshcore_migration_done', 'true');
+    console.log('[Database] Migration terminée avec succès');
+    
+  } catch (error) {
+    console.error('[Database] Erreur migration:', error);
+    throw error;
+  }
 }

@@ -8,7 +8,7 @@
  * 4. Les handlers sont enregistrés
  */
 import { useEffect, useState } from 'react';
-import { getDatabase } from '@/utils/database';
+import { getDatabase, migrateFromAsyncStorage } from '@/utils/database';
 import { isMigrationNeeded, runMigration } from '@/services/MigrationService';
 import { getMessageRetryService } from '@/services/MessageRetryService';
 import { getAckService } from '@/services/AckService';
@@ -33,6 +33,10 @@ export function useAppInitialization(): InitState {
         // 1. Initialiser la base de données
         console.log('[Init] Initialisation de la base de données...');
         await getDatabase();
+
+        // 1.5 Migrer les données depuis AsyncStorage si nécessaire
+        console.log('[Init] Vérification migration AsyncStorage...');
+        await migrateFromAsyncStorage();
 
         // 2. Vérifier si migration nécessaire
         const needsMigration = await isMigrationNeeded();
