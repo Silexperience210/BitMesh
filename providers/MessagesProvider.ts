@@ -143,7 +143,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   }, [mnemonic, identity]);
 
   // Handler pour paquets MeshCore entrants via BLE → LoRa
-  const handleIncomingMeshCorePacket = useCallback((packet: MeshCorePacket) => {
+  const handleIncomingMeshCorePacket = useCallback(async (packet: MeshCorePacket) => {
     if (!identity) return;
 
     try {
@@ -534,7 +534,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: wire.from,
-        from: wire.from,
+        fromNodeId: wire.from,
         fromPubkey: wire.fromPubkey,
         text: plaintext,
         type: wire.type,
@@ -611,7 +611,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const msg: StoredMessage = {
           id: meshMsg.msgId,
           conversationId: meshMsg.from,
-          from: meshMsg.from,
+          fromNodeId: meshMsg.from,
           fromPubkey: meshMsg.fromPubkey,
           text: plaintext,
           type: meshMsg.type,
@@ -736,7 +736,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: convId,
-        from: wire.from,
+        fromNodeId: wire.from,
         fromPubkey: wire.fromPubkey,
         text: plaintext,
         type: wire.type,
@@ -888,7 +888,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const wire: WireMessage = {
           v: 1,
           id: msgId,
-          from: id.nodeId,
+          fromNodeId: id.nodeId,
           fromPubkey: id.pubkeyHex,
           to: convId,
           enc,
@@ -904,7 +904,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const msg: StoredMessage = {
       id: msgId,
       conversationId: convId,
-      from: id.nodeId,
+      fromNodeId: id.nodeId,
       fromPubkey: id.pubkeyHex,
       text,
       type,
@@ -979,7 +979,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const msg: StoredMessage = {
         id: msgId,
         conversationId: convId,
-        from: id.nodeId,
+        fromNodeId: id.nodeId,
         fromPubkey: id.pubkeyHex,
         text,
         type,

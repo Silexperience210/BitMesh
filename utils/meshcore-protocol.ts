@@ -233,7 +233,7 @@ export function uint64ToNodeId(value: bigint): string {
 }
 
 import { getNextMessageId } from './database';
-import { compressWithFallback, isCompressed } from './compression';
+import { compressWithFallback, isCompressed, decompress } from './compression';
 
 /**
  * Créer un message texte MeshCore

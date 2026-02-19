@@ -179,3 +179,7 @@ export function compressWithFallback(text: string): { data: Uint8Array; compress
   
   return { data: result, compressed: false };
 }
+
+export function decompress(data: Uint8Array): string {
+  return decompressText(data);
+}

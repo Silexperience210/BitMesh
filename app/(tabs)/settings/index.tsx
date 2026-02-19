@@ -36,6 +36,7 @@ import {
   ExternalLink,
   CircleCheck,
   CircleX,
+  QrCode,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';

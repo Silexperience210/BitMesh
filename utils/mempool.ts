@@ -185,3 +185,37 @@ export async function getAddressTransactions(address: string, limit: number = 50
     throw error;
   }
 }
+
+// Aliases pour compatibilité
+export const fetchAddressBalance = getAddressBalance;
+export const fetchAddressTransactions = getAddressTransactions;
+export const fetchFeeEstimates = getFeeEstimates;
+export const fetchBtcPrice = async (mempoolUrl: string, currency: string): Promise<number> => {
+  // TODO: Implémenter récupération prix BTC
+  return currency === 'USD' ? 65000 : 60000;
+};
+export const formatTransactions = (raw: any[], addresses: string[]): any[] => raw;
+export const satsToBtc = (sats: number): string => (sats / 100000000).toFixed(8);
+export const satsToFiat = (sats: number, price: number): number => (sats / 100000000) * price;
+
+export interface AddressBalance {
+  confirmed: number;
+  unconfirmed: number;
+  total: number;
+}
+
+export interface FormattedTransaction {
+  txid: string;
+  amount: number;
+  type: 'incoming' | 'outgoing';
+  confirmed: boolean;
+  timestamp?: number;
+}
+
+export interface MempoolFeeEstimate {
+  fastestFee: number;
+  halfHourFee: number;
+  hourFee: number;
+  economyFee: number;
+  minimumFee: number;
+}

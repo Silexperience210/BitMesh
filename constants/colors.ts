@@ -25,6 +25,7 @@ export const Colors = {
   yellowDim: 'rgba(251, 191, 36, 0.15)',
   white: '#FFFFFF',
   black: '#000000',
+  tint: '#F7931A', // Alias pour accent
 };
 
 export default Colors;
