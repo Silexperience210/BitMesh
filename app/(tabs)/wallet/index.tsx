@@ -35,6 +35,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useQuery } from '@tanstack/react-query';
 import Colors from '@/constants/colors';
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
+import { useBitcoin } from '@/providers/BitcoinProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { shortenAddress } from '@/utils/bitcoin';
 import {

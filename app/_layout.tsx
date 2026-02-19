@@ -8,6 +8,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import { ActivityIndicator, View, Text } from "react-native";
 import Colors from "@/constants/colors";
 import { WalletSeedContext } from "@/providers/WalletSeedProvider";
+import { BitcoinContext } from "@/providers/BitcoinProvider";
 import { AppSettingsContext } from "@/providers/AppSettingsProvider";
 import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
@@ -85,16 +86,18 @@ export default function RootLayout() {
     <QueryClientProvider client={queryClient}>
       <AppSettingsContext>
         <WalletSeedContext>
-          <BleProvider>
-            <GatewayContext>
-              <MessagesContext>
-                <GestureHandlerRootView style={{ flex: 1 }}>
-                  <StatusBar style="light" />
-                  <AppContent />
-                </GestureHandlerRootView>
-              </MessagesContext>
-            </GatewayContext>
-          </BleProvider>
+          <BitcoinContext>
+            <BleProvider>
+              <GatewayContext>
+                <MessagesContext>
+                  <GestureHandlerRootView style={{ flex: 1 }}>
+                    <StatusBar style="light" />
+                    <AppContent />
+                  </GestureHandlerRootView>
+                </MessagesContext>
+              </GatewayContext>
+            </BleProvider>
+          </BitcoinContext>
         </WalletSeedContext>
       </AppSettingsContext>
     </QueryClientProvider>
