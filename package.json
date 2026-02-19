@@ -55,9 +55,9 @@
     "react-native-web": "^0.21.0",
     "react-native-worklets": "0.5.1",
     "expo-sqlite": "~15.2.0",
-    "expo-background-fetch": "~13.2.0",
-    "expo-task-manager": "~12.2.0",
-    "expo-notifications": "~0.30.0",
+    "expo-background-fetch": "~13.1.0",
+    "expo-task-manager": "~12.1.0",
+    "expo-notifications": "~0.29.0",
     "zustand": "^5.0.2"
   },
   "devDependencies": {
