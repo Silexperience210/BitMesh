@@ -85,13 +85,17 @@ android {
     ndkVersion rootProject.ext.ndkVersion
 
     buildToolsVersion rootProject.ext.buildToolsVersion
-    compileSdk rootProject.ext.compileSdkVersion
+    // ✅ FORCER compileSdkVersion 34 pour support lStar
+    compileSdk 34
+    // compileSdk rootProject.ext.compileSdkVersion
 
     namespace 'app.rork.meshpay_lora_messaging_btc'
     defaultConfig {
         applicationId 'app.rork.meshpay_lora_messaging_btc'
         minSdkVersion rootProject.ext.minSdkVersion
-        targetSdkVersion rootProject.ext.targetSdkVersion
+        // ✅ FORCER targetSdkVersion 34 pour support lStar
+        targetSdk 34
+        // targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0.0"
 
