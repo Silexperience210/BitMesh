@@ -120,11 +120,20 @@ function DeviceItem({ device, onConnect }: DeviceItemProps) {
   const signalColor =
     device.rssi > -70 ? Colors.green : device.rssi > -85 ? Colors.accent : Colors.red;
 
+  // ✅ NOUVEAU: Couleur et label selon le type
+  const typeColor = device.type === 'gateway' ? Colors.cyan : Colors.yellow;
+  const typeLabel = device.type === 'gateway' ? 'Gateway' : 'Compagnon';
+
   return (
     <TouchableOpacity style={styles.deviceItem} onPress={() => onConnect(device.id)}>
       <View style={styles.deviceInfo}>
         <Text style={styles.deviceName}>{device.name}</Text>
-        <Text style={styles.deviceId}>{device.id.slice(0, 17)}</Text>
+        <View style={styles.deviceMeta}>
+          <View style={[styles.typeBadge, { backgroundColor: `${typeColor}20` }]}>
+            <Text style={[styles.typeText, { color: typeColor }]}>{typeLabel}</Text>
+          </View>
+          <Text style={styles.deviceId}>{device.id.slice(0, 17)}</Text>
+        </View>
       </View>
       <View style={styles.deviceRight}>
         <View style={[styles.signalBadge, { backgroundColor: `${signalColor}20` }]}>
@@ -241,6 +250,21 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     color: Colors.text,
     marginBottom: 4,
+  },
+  deviceMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  typeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  typeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
   },
   deviceId: {
     fontSize: 12,

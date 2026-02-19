@@ -22,6 +22,7 @@ export interface BleGatewayDevice {
   id: string;
   name: string;
   rssi: number;
+  type?: 'gateway' | 'companion';  // ✅ NOUVEAU: Type de device
 }
 
 export interface BleGatewayState {
@@ -91,22 +92,35 @@ export class BleGatewayClient {
           }
 
           if (device && !foundDevices.has(device.id)) {
-            // Filtrer par nom pour trouver les gateways MeshCore/ESP32
+            // Filtrer par nom pour trouver les gateways ET compagnons MeshCore/ESP32
             const name = device.name || '';
-            const isMeshCoreGateway =
+            const isMeshCoreDevice =
               name.toLowerCase().includes('meshcore') ||
               name.toLowerCase().includes('esp32') ||
               name.toLowerCase().includes('mesh') ||
-              name.toLowerCase().includes('lora');
+              name.toLowerCase().includes('lora') ||
+              name.toLowerCase().includes('companion') ||
+              name.toLowerCase().includes('mimi') ||
+              name.toLowerCase().includes('lilyclaw');
 
-            if (isMeshCoreGateway) {
+            if (isMeshCoreDevice) {
               foundDevices.add(device.id);
               console.log(`[BleGateway] Found device: ${device.name || 'Unknown'} (${device.id}), RSSI: ${device.rssi}`);
 
+              // ✅ NOUVEAU: Détecter si c'est un gateway ou compagnon
+              const name = device.name || '';
+              const type: 'gateway' | 'companion' = 
+                name.toLowerCase().includes('gateway') || 
+                name.toLowerCase().includes('gw') ||
+                name.toLowerCase().includes('relay')
+                  ? 'gateway'
+                  : 'companion';
+
               onDeviceFound({
                 id: device.id,
-                name: device.name || 'MeshCore Gateway',
+                name: device.name || 'MeshCore Device',
                 rssi: device.rssi || -100,
+                type,
               });
             }
           }
