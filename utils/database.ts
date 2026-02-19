@@ -119,6 +119,17 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_pending_retry ON pending_messages(nextRetryAt) WHERE retries < maxRetries;
   `);
 
+  // Table: user_profile (nom affiché personnalisable)
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS user_profile (
+      id INTEGER PRIMARY KEY CHECK (id = 1),
+      displayName TEXT,
+      statusMessage TEXT,
+      avatarEmoji TEXT,
+      updatedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    );
+  `);
+
   // Table: key_store (stockage des clés publiques des pairs)
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS key_store (
@@ -371,6 +382,43 @@ export async function cleanupOldMessages(): Promise<number> {
     console.log(`[Database] ${deletedCount} messages effacés (> ${MESSAGE_RETENTION_HOURS}h)`);
   }
   return deletedCount;
+}
+
+// --- User Profile (display name personnalisable) ---
+
+export interface UserProfile {
+  displayName: string | null;
+  statusMessage: string | null;
+  avatarEmoji: string | null;
+}
+
+export async function getUserProfile(): Promise<UserProfile | null> {
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ displayName: string | null; statusMessage: string | null; avatarEmoji: string | null }>(`
+    SELECT displayName, statusMessage, avatarEmoji FROM user_profile WHERE id = 1
+  `);
+  return row || null;
+}
+
+export async function setUserProfile(profile: Partial<UserProfile>): Promise<void> {
+  const database = await getDatabase();
+  const existing = await getUserProfile();
+  
+  if (existing) {
+    await database.runAsync(`
+      UPDATE user_profile 
+      SET displayName = COALESCE(?, displayName),
+          statusMessage = COALESCE(?, statusMessage),
+          avatarEmoji = COALESCE(?, avatarEmoji),
+          updatedAt = strftime('%s', 'now') * 1000
+      WHERE id = 1
+    `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+  } else {
+    await database.runAsync(`
+      INSERT INTO user_profile (id, displayName, statusMessage, avatarEmoji)
+      VALUES (1, ?, ?, ?)
+    `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+  }
 }
 
 // --- Key Store ---

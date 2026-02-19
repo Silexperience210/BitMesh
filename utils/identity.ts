@@ -11,6 +11,7 @@ const MESHCORE_PATH = "m/69'/0'/0'/0";
 
 export interface MeshIdentity {
   nodeId: string;       // ex: "MESH-A7F2"
+  displayName: string | null;  // Nom personnalisable affiché dans les chats
   pubkeyHex: string;    // clé publique compressée 33 bytes hex
   privkeyHex: string;   // clé privée 32 bytes hex (ne jamais exposer en UI)
   pubkeyBytes: Uint8Array;
@@ -38,6 +39,7 @@ export function deriveMeshIdentity(mnemonic: string, passphrase?: string): MeshI
 
   return {
     nodeId,
+    displayName: null, // Sera chargé depuis la DB
     pubkeyHex: bytesToHex(pubkeyBytes),
     privkeyHex: bytesToHex(privkeyBytes),
     pubkeyBytes,

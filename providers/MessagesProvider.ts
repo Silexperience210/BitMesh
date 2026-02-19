@@ -39,7 +39,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
-import { cleanupOldMessages } from '@/utils/database';
+import { cleanupOldMessages, getUserProfile, setUserProfile } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -102,6 +102,8 @@ export interface MessagesState {
   markRead: (convId: string) => Promise<void>;
   // ✅ NOUVEAU : Annoncer un forum public
   announceForumPublic: (channelName: string, description: string) => boolean;
+  // ✅ NOUVEAU : Mettre à jour le display name
+  setDisplayName: (name: string) => Promise<void>;
 }
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
@@ -127,7 +129,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     if (mnemonic && !identity) {
       try {
         const id = deriveMeshIdentity(mnemonic);
-        setIdentity(id);
+        
+        // Charger le display name depuis la DB
+        getUserProfile().then(profile => {
+          if (profile?.displayName) {
+            id.displayName = profile.displayName;
+            console.log('[Messages] Display name chargé:', profile.displayName);
+          }
+          setIdentity(id);
+        }).catch(() => {
+          setIdentity(id);
+        });
+        
         console.log('[Messages] Identité dérivée:', id.nodeId);
 
         // Initialiser le MeshRouter
@@ -1182,6 +1195,20 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     return true;
   }, [identity]);
 
+  // ✅ NOUVEAU : Mettre à jour le display name
+  const setDisplayName = useCallback(async (name: string): Promise<void> => {
+    if (!identity) return;
+    
+    await setUserProfile({ displayName: name });
+    
+    setIdentity(prev => {
+      if (!prev) return null;
+      return { ...prev, displayName: name };
+    });
+    
+    console.log('[Messages] Display name mis à jour:', name);
+  }, [identity]);
+
   // Quitter un forum
   const leaveForum = useCallback((channelName: string): void => {
     joinedForums.current.delete(channelName);
@@ -1217,6 +1244,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     leaveForum,
     markRead,
     announceForumPublic, // ✅ NOUVEAU
+    setDisplayName, // ✅ NOUVEAU
   };
 });
 
