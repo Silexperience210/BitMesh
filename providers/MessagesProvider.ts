@@ -57,6 +57,7 @@ import {
   decodeEncryptedPayload,
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
+  compressWithFallback,
 } from '@/utils/meshcore-protocol';
 import { getAckService } from '@/services/AckService';
 import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/services/ChunkManager';
