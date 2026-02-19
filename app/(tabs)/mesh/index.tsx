@@ -21,6 +21,7 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   Layers,
+  Usb,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -32,7 +33,9 @@ import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { formatTime } from '@/utils/helpers';
 import MeshRadar from '@/components/MeshRadar';
 import GatewayScanModal from '@/components/GatewayScanModal';
+import UsbSerialScanModal from '@/components/UsbSerialScanModal';
 import { useBle } from '@/providers/BleProvider';
+import { useUsbSerial } from '@/providers/UsbSerialProvider';
 
 type ViewMode = 'radar' | 'list';
 type FilterMode = 'all' | 'online';
@@ -494,6 +497,7 @@ export default function MeshScreen() {
   const [selectedPeer, setSelectedPeer] = useState<RadarPeer | null>(null);
   const [showDetail, setShowDetail] = useState<boolean>(false);
   const [showGatewayModal, setShowGatewayModal] = useState<boolean>(false);
+  const [showUsbModal, setShowUsbModal] = useState<boolean>(false);
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity } = useMessages();
@@ -671,7 +675,7 @@ export default function MeshScreen() {
         </View>
       )}
 
-      {/* Button flottant Gateway BLE */}
+      {/* Bouton flottant Gateway BLE */}
       {!isInternetOnly && (
         <TouchableOpacity
           style={styles.gatewayFloatingBtn}
@@ -685,8 +689,23 @@ export default function MeshScreen() {
         </TouchableOpacity>
       )}
 
+      {/* ✅ NOUVEAU: Bouton flottant USB Serial */}
+      {!isInternetOnly && (
+        <TouchableOpacity
+          style={[styles.gatewayFloatingBtn, { bottom: 100, backgroundColor: Colors.accent }]}
+          onPress={() => setShowUsbModal(true)}
+          activeOpacity={0.8}
+        >
+          <Usb size={20} color={Colors.background} />
+          <Text style={styles.gatewayFloatingText}>
+            USB Serial
+          </Text>
+        </TouchableOpacity>
+      )}
+
       <NodeDetailModal peer={selectedPeer} visible={showDetail} onClose={handleCloseDetail} />
       <GatewayScanModal visible={showGatewayModal} onClose={() => setShowGatewayModal(false)} />
+      <UsbSerialScanModal visible={showUsbModal} onClose={() => setShowUsbModal(false)} />
     </ScrollView>
   );
 }

@@ -16,6 +16,7 @@ import { AppSettingsContext } from "@/providers/AppSettingsProvider";
 import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
 import { BleProvider } from "@/providers/BleProvider";
+import { UsbSerialProvider } from "@/providers/UsbSerialProvider";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
 import { WelcomeModal } from "@/components/WelcomeModal";
 
@@ -108,14 +109,16 @@ export default function RootLayout() {
         <WalletSeedContext>
           <BitcoinContext>
             <BleProvider>
-              <GatewayContext>
-                <MessagesContext>
-                  <GestureHandlerRootView style={{ flex: 1 }}>
-                    <StatusBar style="light" />
-                    <AppContent />
-                  </GestureHandlerRootView>
-                </MessagesContext>
-              </GatewayContext>
+              <UsbSerialProvider>
+                <GatewayContext>
+                  <MessagesContext>
+                    <GestureHandlerRootView style={{ flex: 1 }}>
+                      <StatusBar style="light" />
+                      <AppContent />
+                    </GestureHandlerRootView>
+                  </MessagesContext>
+                </GatewayContext>
+              </UsbSerialProvider>
             </BleProvider>
           </BitcoinContext>
         </WalletSeedContext>
