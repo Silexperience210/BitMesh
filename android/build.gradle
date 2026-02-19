@@ -18,6 +18,15 @@ allprojects {
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
   }
+  
+  // ✅ FORCER compileSdk 35 pour les librairies problématiques
+  afterEvaluate { project ->
+    if (project.hasProperty("android")) {
+      project.android {
+        compileSdkVersion 35
+      }
+    }
+  }
 }
 
 apply plugin: "expo-root-project"

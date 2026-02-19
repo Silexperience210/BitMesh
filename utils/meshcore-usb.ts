@@ -71,12 +71,12 @@ export async function createMeshCoreAdapter(deviceId: number): Promise<MeshCoreA
 /**
  * Parser un paquet MeshCore reçu en binaire
  */
-export function parseMeshCorePacket(data: Uint8Array): {
+export async function parseMeshCorePacket(data: Uint8Array): Promise<{
   valid: boolean;
   type?: string;
   payload?: any;
   raw?: Uint8Array;
-} {
+}> {
   // Vérifier la taille minimum
   if (data.length < 4) {
     return { valid: false };
@@ -96,7 +96,7 @@ export function parseMeshCorePacket(data: Uint8Array): {
   // Parser selon le type
   switch (type) {
     case 0x01: // TEXT
-      return parseTextPacket(data, flags);
+      return await parseTextPacket(data, flags);
     case 0x02: // POSITION
       return parsePositionPacket(data);
     case 0x03: // KEY_ANNOUNCE
@@ -108,11 +108,11 @@ export function parseMeshCorePacket(data: Uint8Array): {
   }
 }
 
-function parseTextPacket(data: Uint8Array, flags: number): {
+async function parseTextPacket(data: Uint8Array, flags: number): Promise<{
   valid: boolean;
   type: string;
   payload: any;
-} {
+}> {
   try {
     const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
     let offset = 4; // Skip header
@@ -147,8 +147,15 @@ function parseTextPacket(data: Uint8Array, flags: number): {
     // Décompresser si nécessaire
     let text: string;
     if (flags & 0x02) { // COMPRESSED flag
-      // TODO: Décompression LZW
-      text = '[Compressed message]';
+      // ✅ Décompression LZW implémentée
+      try {
+        const { lzwDecompress } = await import('./lzw');
+        const compressed = new TextDecoder().decode(payload);
+        text = lzwDecompress(compressed);
+      } catch (err) {
+        console.error('[MeshCore-USB] LZW decompression failed:', err);
+        text = '[Decompression failed]';
+      }
     } else {
       text = new TextDecoder().decode(payload);
     }

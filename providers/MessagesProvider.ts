@@ -212,11 +212,30 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           
           // ✅ Message chunké reconstitué - stocké dans la DB
           const fromNodeId = uint64ToNodeId(packet.fromNodeId);
+          // ✅ Récupérer la pubkey depuis le packet ou la conversation
+          let senderPubkey = '';
+          const existingConv = conversations.find(c => c.id === fromNodeId);
+          if (existingConv?.peerPubkey) {
+            senderPubkey = existingConv.peerPubkey;
+          } else {
+            // Essayer d'extraire la pubkey du payload si présente
+            try {
+              const payloadStr = new TextDecoder().decode(packet.payload);
+              if (payloadStr.startsWith('04') || payloadStr.startsWith('02') || payloadStr.startsWith('03')) {
+                senderPubkey = payloadStr.slice(0, 66); // Pubkey compressed
+                // Sauvegarder la pubkey pour futures utilisations
+                updateConversationPubkey(fromNodeId, senderPubkey);
+              }
+            } catch {
+              // Ignorer erreur décodage
+            }
+          }
+          
           const msg: StoredMessage = {
             id: `chunk-${packet.messageId}`,
             conversationId: fromNodeId,
             fromNodeId: fromNodeId,
-            fromPubkey: '', // TODO: récupérer la pubkey
+            fromPubkey: senderPubkey, // ✅ Pubkey récupérée
             text: result.message,
             type: 'text',
             timestamp: packet.timestamp * 1000,
