@@ -3,12 +3,16 @@
  *
  * Gère la connexion BLE au gateway ESP32 LoRa
  * Expose l'état BLE et les fonctions scan/connect/disconnect
+ * 
+ * V2.0: Utilise MessageRetryService pour persistance des messages
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
 import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice } from '@/utils/ble-gateway';
 import { type MeshCorePacket } from '@/utils/meshcore-protocol';
+import { getMessageRetryService } from '@/services/MessageRetryService';
+import { getBackgroundBleService } from '@/services/BackgroundBleService';
 
 interface BleState {
   connected: boolean;
@@ -46,8 +50,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   });
 
   const clientRef = useRef<BleGatewayClient | null>(null);
-  const queueRef = useRef<MeshCorePacket[]>([]); // Queue pour messages hors ligne
-  const MAX_QUEUE_SIZE = 100;
+  const retryServiceRef = useRef(getMessageRetryService());
 
   useEffect(() => {
     // Initialiser le client BLE
@@ -79,35 +82,24 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       if (clientRef.current) {
         clientRef.current.disconnect().catch(console.error);
       }
+      retryServiceRef.current.stop();
     };
   }, []);
 
   /**
-   * Vide la queue de messages quand BLE se reconnecte
+   * Démarre le service de retry et le background service quand BLE se reconnecte
    */
   useEffect(() => {
-    if (state.connected && clientRef.current && queueRef.current.length > 0) {
-      console.log(`[BleProvider] BLE reconnecté, envoi de ${queueRef.current.length} messages en queue...`);
-
-      const queue = [...queueRef.current];
-      queueRef.current = [];
-
-      // Envoyer tous les messages en queue
-      (async () => {
-        for (const packet of queue) {
-          try {
-            await clientRef.current!.sendPacket(packet);
-            console.log('[BleProvider] Message de la queue envoyé');
-          } catch (error) {
-            console.error('[BleProvider] Erreur envoi message de la queue:', error);
-            // Remettre dans la queue en cas d'erreur
-            if (queueRef.current.length < MAX_QUEUE_SIZE) {
-              queueRef.current.push(packet);
-            }
-          }
-        }
-        console.log('[BleProvider] Queue vidée');
-      })();
+    if (state.connected) {
+      // Démarrer le service de retry
+      retryServiceRef.current.start();
+      
+      // Enregistrer le background service
+      getBackgroundBleService().register().catch(console.error);
+      
+      console.log('[BleProvider] Services démarrés');
+    } else {
+      retryServiceRef.current.stop();
     }
   }, [state.connected]);
 
@@ -238,22 +230,26 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Envoie un paquet MeshCore via BLE → LoRa
-   * Si déconnecté, ajoute à la queue pour envoi ultérieur
+   * Si déconnecté, ajoute à la file d'attente persistante
    */
   const sendPacket = async (packet: MeshCorePacket) => {
     if (!clientRef.current || !state.connected) {
-      // Si déconnecté, ajouter à la queue (max 100 messages)
-      if (queueRef.current.length < MAX_QUEUE_SIZE) {
-        queueRef.current.push(packet);
-        console.log(`[BleProvider] Message ajouté à la queue (${queueRef.current.length}/${MAX_QUEUE_SIZE})`);
-      } else {
-        console.warn('[BleProvider] Queue pleine, message ignoré');
-        throw new Error('BLE queue full (100 messages pending)');
-      }
+      // Si déconnecté, ajouter à la file persistante
+      const msgId = `pending-${Date.now()}`;
+      await retryServiceRef.current.queueMessage(msgId, packet);
+      console.log(`[BleProvider] Message mis en file d'attente persistante: ${msgId}`);
       return;
     }
 
-    await clientRef.current.sendPacket(packet);
+    try {
+      await clientRef.current.sendPacket(packet);
+    } catch (error) {
+      // En cas d'erreur, mettre en file d'attente pour retry
+      const msgId = `retry-${Date.now()}`;
+      await retryServiceRef.current.queueMessage(msgId, packet);
+      console.log(`[BleProvider] Échec envoi, message en file d'attente: ${msgId}`);
+      throw error;
+    }
   };
 
   /**

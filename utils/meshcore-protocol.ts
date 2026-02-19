@@ -29,6 +29,7 @@ export enum MeshCoreFlags {
   SIGNED = 0x02,         // Message signé
   RELAY = 0x04,          // Relay requis (multi-hop)
   BROADCAST = 0x08,      // Broadcast à tous
+  COMPRESSED = 0x10,     // Payload compressé avec Smaz
 }
 
 /**
@@ -201,10 +202,58 @@ export function uint64ToNodeId(value: bigint): string {
   return 'MESH-' + hex.toUpperCase();
 }
 
+import { getNextMessageId } from './database';
+import { compressWithFallback, isCompressed } from './compression';
+
 /**
  * Créer un message texte MeshCore
+ * Utilise un ID unique persistant et la compression si avantageuse
  */
-export function createTextMessage(
+export async function createTextMessage(
+  fromNodeId: string,
+  toNodeId: string,
+  text: string,
+  encrypted: boolean = false,
+  useCompression: boolean = true
+): Promise<MeshCorePacket> {
+  let payload: Uint8Array;
+  let flags = 0;
+
+  // Compression si activée et avantageuse
+  if (useCompression && !encrypted) {
+    const compressed = compressWithFallback(text);
+    payload = compressed.data;
+    if (compressed.compressed) {
+      flags |= MeshCoreFlags.COMPRESSED;
+    }
+  } else {
+    const encoder = new TextEncoder();
+    payload = encoder.encode(text);
+  }
+
+  if (encrypted) flags |= MeshCoreFlags.ENCRYPTED;
+
+  // ID unique persistant (pas de collision)
+  const messageId = await getNextMessageId();
+
+  return {
+    version: 0x01,
+    type: MeshCoreMessageType.TEXT,
+    flags,
+    ttl: 10,
+    messageId,
+    fromNodeId: nodeIdToUint64(fromNodeId),
+    toNodeId: nodeIdToUint64(toNodeId),
+    timestamp: Math.floor(Date.now() / 1000),
+    payload,
+  };
+}
+
+/**
+ * Créer un message texte synchrone (sans DB) - pour compatibilité
+ * Utilise un compteur basé sur le timestamp (moins robuste mais synchrone)
+ */
+export function createTextMessageSync(
   fromNodeId: string,
   toNodeId: string,
   text: string,
@@ -216,23 +265,36 @@ export function createTextMessage(
   let flags = 0;
   if (encrypted) flags |= MeshCoreFlags.ENCRYPTED;
 
+  // ID basé sur timestamp + compteur statique
+  const now = Date.now();
+  createTextMessageSync.counter = (createTextMessageSync.counter + 1) % 0xFFFF;
+  const messageId = ((now % 0xFFFF) << 16) | createTextMessageSync.counter;
+
   return {
     version: 0x01,
     type: MeshCoreMessageType.TEXT,
     flags,
     ttl: 10,
-    messageId: Math.floor(Math.random() * 0xFFFFFFFF),
+    messageId,
     fromNodeId: nodeIdToUint64(fromNodeId),
     toNodeId: nodeIdToUint64(toNodeId),
-    timestamp: Math.floor(Date.now() / 1000),
+    timestamp: Math.floor(now / 1000),
     payload,
   };
 }
+createTextMessageSync.counter = 0;
 
 /**
  * Extraire le texte d'un paquet MeshCore
+ * Gère la décompression automatique
  */
 export function extractTextFromPacket(packet: MeshCorePacket): string {
+  // Vérifier si compressé
+  if (packet.flags & MeshCoreFlags.COMPRESSED) {
+    const { decompressFromLora } = require('./compression');
+    return decompressFromLora(packet.payload);
+  }
+  
   const decoder = new TextDecoder();
   return decoder.decode(packet.payload);
 }
