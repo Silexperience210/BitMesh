@@ -40,7 +40,7 @@ function MessageBubble({ message }: { message: StoredMessage }) {
   return (
     <View style={[styles.messageBubbleContainer, isMe ? styles.bubbleRight : styles.bubbleLeft]}>
       {!isMe && (
-        <Text style={styles.senderLabel}>{message.from}</Text>
+        <Text style={styles.senderLabel}>{message.fromNodeId}</Text>
       )}
       <View style={[
         styles.messageBubble,

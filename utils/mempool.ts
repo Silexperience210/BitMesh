@@ -74,7 +74,7 @@ export async function getAddressUtxos(address: string): Promise<MempoolUtxo[]> {
 /**
  * Récupère le solde confirmé d'une adresse
  */
-export async function getAddressBalance(address: string): Promise<{ confirmed: number; unconfirmed: number }> {
+export async function getAddressBalance(address: string): Promise<{ confirmed: number; unconfirmed: number; total: number }> {
   try {
     const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}`);
     
@@ -86,7 +86,7 @@ export async function getAddressBalance(address: string): Promise<{ confirmed: n
     const confirmed = data.chain_stats?.funded_txo_sum - data.chain_stats?.spent_txo_sum || 0;
     const unconfirmed = data.mempool_stats?.funded_txo_sum - data.mempool_stats?.spent_txo_sum || 0;
     
-    return { confirmed, unconfirmed };
+    return { confirmed, unconfirmed, total: confirmed + unconfirmed };
   } catch (error) {
     console.error('[Mempool] Erreur récupération solde:', error);
     throw error;
@@ -210,6 +210,8 @@ export interface FormattedTransaction {
   type: 'incoming' | 'outgoing';
   confirmed: boolean;
   timestamp?: number;
+  blockTime?: number;
+  fee?: number;
 }
 
 export interface MempoolFeeEstimate {
