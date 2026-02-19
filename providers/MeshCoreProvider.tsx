@@ -48,6 +48,8 @@ interface MeshCoreContextValue extends MeshCoreState {
   sendMessage: (publicKey: string, text: string) => Promise<void>;
   getContacts: () => Promise<MeshCoreContact[]>;
   getStatus: () => Promise<any>;
+  // ✅ NOUVEAU: Envoi de données brutes (pour Room Server/Repeater)
+  sendRawData: (data: Uint8Array) => Promise<void>;
   // Room Server specific
   getRoomServerPosts: () => Promise<any[]>;
   sendRoomServerPost: (text: string) => Promise<void>;
@@ -235,6 +237,22 @@ export function MeshCoreProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // ✅ NOUVEAU: Envoi de données brutes (pour Room Server/Repeater)
+  const sendRawData = useCallback(async (data: Uint8Array) => {
+    if (!connectionRef.current || !state.connected) {
+      throw new Error('Not connected to MeshCore device');
+    }
+
+    try {
+      // Utiliser l'adapter pour envoyer des données brutes
+      await connectionRef.current.sendRaw(data);
+      console.log('[MeshCore] Raw data sent:', data.length, 'bytes');
+    } catch (err) {
+      console.error('[MeshCore] Send raw error:', err);
+      throw err;
+    }
+  }, [state.connected]);
+
   // Room Server: récupérer les posts
   const getRoomServerPosts = useCallback(async () => {
     if (!connectionRef.current || state.deviceType !== 'roomserver') {
@@ -290,6 +308,7 @@ export function MeshCoreProvider({ children }: { children: React.ReactNode }) {
         sendMessage,
         getContacts,
         getStatus,
+        sendRawData,
         getRoomServerPosts,
         sendRoomServerPost,
         getRepeaterStatus,

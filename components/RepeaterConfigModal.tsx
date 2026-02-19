@@ -15,41 +15,34 @@ import {
   X, 
   Signal,
   Activity,
-  Users,
   RefreshCw,
-  Power,
-  BarChart3,
-  Settings2
+  Info,
 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
+import { useMeshCore } from '@/providers/MeshCoreProvider';
 import {
   configureRepeater,
   getRepeaterStatus,
   getRepeaterNeighbors,
-  getRepeaterStats,
-  resetRepeaterStats,
   rebootRepeater,
   type RepeaterConfig,
   type RepeaterStatus,
   type RepeaterNeighbor,
-  type RepeaterStats,
 } from '@/utils/repeater';
 
 interface RepeaterConfigModalProps {
   visible: boolean;
   onClose: () => void;
-  deviceId: number;
 }
 
 export default function RepeaterConfigModal({ 
   visible, 
-  onClose, 
-  deviceId 
+  onClose,
 }: RepeaterConfigModalProps) {
+  const { connected, deviceType, sendRawData } = useMeshCore();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RepeaterStatus | null>(null);
   const [neighbors, setNeighbors] = useState<RepeaterNeighbor[]>([]);
-  const [stats, setStats] = useState<RepeaterStats | null>(null);
   const [config, setConfig] = useState<Partial<RepeaterConfig>>({
     name: '',
     maxHops: 5,
@@ -61,47 +54,113 @@ export default function RepeaterConfigModal({
   });
 
   useEffect(() => {
-    if (visible && deviceId) {
+    if (visible && connected && deviceType === 'repeater') {
       loadData();
     }
-  }, [visible, deviceId]);
+  }, [visible, connected, deviceType]);
 
   const loadData = async () => {
+    if (!sendRawData) return;
     setLoading(true);
-    const [s, n, st] = await Promise.all([
-      getRepeaterStatus(deviceId),
-      getRepeaterNeighbors(deviceId),
-      getRepeaterStats(deviceId),
-    ]);
-    setStatus(s);
-    setNeighbors(n);
-    setStats(st);
+    
+    try {
+      const onResponse = async (): Promise<Uint8Array | null> => null;
+      
+      const s = await getRepeaterStatus(sendRawData, onResponse);
+      const n = await getRepeaterNeighbors(sendRawData, onResponse);
+      setStatus(s);
+      setNeighbors(n);
+    } catch (err) {
+      console.error('[Repeater] Load data error:', err);
+    }
+    
     setLoading(false);
   };
 
   const handleSave = async () => {
-    setLoading(true);
-    const success = await configureRepeater(deviceId, config);
-    setLoading(false);
+    if (!sendRawData) {
+      Alert.alert('Erreur', 'Pas de connexion Repeater');
+      return;
+    }
     
-    if (success) {
-      Alert.alert('Succès', 'Configuration appliquée');
-      loadData();
-    } else {
+    setLoading(true);
+    
+    try {
+      const success = await configureRepeater(sendRawData, config);
+      
+      if (success) {
+        Alert.alert('Succès', 'Configuration envoyée');
+      } else {
+        Alert.alert('Erreur', 'Échec de la configuration');
+      }
+    } catch (err) {
+      console.error('[Repeater] Save error:', err);
       Alert.alert('Erreur', 'Échec de la configuration');
     }
+    
+    setLoading(false);
   };
 
-  const handleResetStats = async () => {
-    await resetRepeaterStats(deviceId);
-    loadData();
+  const handleReboot = async () => {
+    if (!sendRawData) {
+      Alert.alert('Erreur', 'Pas de connexion');
+      return;
+    }
+    
+    Alert.alert(
+      'Redémarrer',
+      'Redémarrer le Repeater ?',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        { 
+          text: 'Redémarrer', 
+          style: 'destructive',
+          onPress: async () => {
+            setLoading(true);
+            await rebootRepeater(sendRawData);
+            setLoading(false);
+          }
+        },
+      ]
+    );
   };
+
+  if (!connected || deviceType !== 'repeater') {
+    return (
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View style={styles.overlay}>
+          <View style={styles.container}>
+            <View style={styles.header}>
+              <View style={styles.headerLeft}>
+                <Radio size={24} color={Colors.cyan} />
+                <Text style={styles.title}>Repeater</Text>
+              </View>
+              <TouchableOpacity onPress={onClose}>
+                <X size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.offlineContainer}>
+              <Info size={48} color={Colors.textMuted} />
+              <Text style={styles.offlineText}>
+                {deviceType !== 'repeater' 
+                  ? 'Ce device n\'est pas un Repeater' 
+                  : 'Pas de connexion Repeater'}
+              </Text>
+              <Text style={styles.offlineSubtext}>
+                Connectez-vous via USB à un Repeater MeshCore
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
 
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Radio size={24} color={Colors.cyan} />
@@ -116,7 +175,6 @@ export default function RepeaterConfigModal({
             <ActivityIndicator size="large" color={Colors.cyan} />
           ) : (
             <ScrollView style={styles.content}>
-              {/* Status */}
               {status && (
                 <View style={styles.statusCard}>
                   <View style={styles.statusRow}>
@@ -127,30 +185,12 @@ export default function RepeaterConfigModal({
                   </View>
                   
                   <View style={styles.statsGrid}>
-                    <StatBox 
-                      icon={Activity} 
-                      label="Relayés" 
-                      value={status.packetsRelayed}
-                      color={Colors.green}
-                    />
-                    <StatBox 
-                      icon={X} 
-                      label="Drop" 
-                      value={status.packetsDropped}
-                      color={Colors.red}
-                    />
-                    <StatBox 
-                      icon={Signal} 
-                      label="RSSI" 
-                      value={status.averageRssi}
-                      color={Colors.cyan}
-                      suffix="dBm"
-                    />
+                    <StatBox icon={Activity} label="Relayés" value={status.packetsRelayed} color={Colors.green} />
+                    <StatBox icon={X} label="Drop" value={status.packetsDropped} color={Colors.red} />
                   </View>
                 </View>
               )}
 
-              {/* Configuration */}
               <Text style={styles.sectionTitle}>Configuration</Text>
               
               <Input
@@ -177,33 +217,6 @@ export default function RepeaterConfigModal({
                 />
               </View>
 
-              <Input
-                label="Code transport (zoning)"
-                value={config.transportCode}
-                onChangeText={(t: string) => setConfig({ ...config, transportCode: t })}
-                placeholder="ZONE_A"
-              />
-
-              {/* Toggle options */}
-              <Toggle
-                label="Forward direct only"
-                value={config.forwardDirectOnly || false}
-                onChange={(v) => setConfig({ ...config, forwardDirectOnly: v })}
-              />
-
-              <Toggle
-                label="Filter by path quality"
-                value={config.filterByPath || false}
-                onChange={(v) => setConfig({ ...config, filterByPath: v })}
-              />
-
-              <Toggle
-                label="Bridge mode"
-                value={config.bridgeMode || false}
-                onChange={(v) => setConfig({ ...config, bridgeMode: v })}
-              />
-
-              {/* Voisins */}
               <Text style={styles.sectionTitle}>Voisins ({neighbors.length})</Text>
               
               {neighbors.slice(0, 10).map((neighbor, idx) => (
@@ -220,37 +233,16 @@ export default function RepeaterConfigModal({
                       </Text>
                     </View>
                   </View>
-                  <Text style={styles.neighborMeta}>
-                    {neighbor.hops} hop{neighbor.hops > 1 ? 's' : ''} • {Math.floor((Date.now() - neighbor.lastSeen) / 1000)}s
-                  </Text>
                 </View>
               ))}
 
-              {/* Stats */}
-              {stats && (
-                <>
-                  <Text style={styles.sectionTitle}>Statistiques 24h</Text>
-                  <View style={styles.chartPlaceholder}>
-                    <BarChart3 size={40} color={Colors.textMuted} />
-                    <Text style={styles.chartText}>
-                      Total: {stats.totalRelayed} relayés, {stats.totalDropped} drop
-                    </Text>
-                  </View>
-                  
-                  <TouchableOpacity style={styles.resetBtn} onPress={handleResetStats}>
-                    <Text style={styles.resetText}>Reset stats</Text>
-                  </TouchableOpacity>
-                </>
-              )}
-
-              {/* Actions */}
               <View style={styles.actions}>
                 <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-                  <Settings2 size={18} color={Colors.black} />
+                  <RefreshCw size={18} color={Colors.black} />
                   <Text style={styles.saveText}>Sauvegarder</Text>
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.rebootBtn} onPress={() => rebootRepeater(deviceId)}>
+                <TouchableOpacity style={styles.rebootBtn} onPress={handleReboot}>
                   <RefreshCw size={18} color={Colors.cyan} />
                   <Text style={styles.rebootText}>Redémarrer</Text>
                 </TouchableOpacity>
@@ -263,17 +255,11 @@ export default function RepeaterConfigModal({
   );
 }
 
-function StatBox({ icon: Icon, label, value, color, suffix = '' }: { 
-  icon: any; 
-  label: string; 
-  value: number; 
-  color: string;
-  suffix?: string;
-}) {
+function StatBox({ icon: Icon, label, value, color }: { icon: any; label: string; value: number; color: string }) {
   return (
     <View style={styles.statBox}>
       <Icon size={20} color={color} />
-      <Text style={[styles.statValue, { color }]}>{value}{suffix}</Text>
+      <Text style={[styles.statValue, { color }]}>{value}</Text>
       <Text style={styles.statLabel}>{label}</Text>
     </View>
   );
@@ -285,17 +271,6 @@ function Input({ label, style, ...props }: { label: string; style?: any } & any)
       <Text style={styles.inputLabel}>{label}</Text>
       <TextInput style={styles.input} placeholderTextColor={Colors.textMuted} {...props} />
     </View>
-  );
-}
-
-function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <TouchableOpacity style={styles.toggle} onPress={() => onChange(!value)}>
-      <Text style={styles.toggleLabel}>{label}</Text>
-      <View style={[styles.toggleBox, value && styles.toggleBoxActive]}>
-        <View style={[styles.toggleDot, value && styles.toggleDotActive]} />
-      </View>
-    </TouchableOpacity>
   );
 }
 
@@ -327,6 +302,23 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: Colors.text,
+  },
+  offlineContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 16,
+  },
+  offlineText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  offlineSubtext: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    textAlign: 'center',
   },
   content: {
     maxHeight: 600,
@@ -400,39 +392,6 @@ const styles = StyleSheet.create({
   halfInput: {
     flex: 1,
   },
-  toggle: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: Colors.surface,
-    padding: 14,
-    borderRadius: 10,
-    marginBottom: 12,
-  },
-  toggleLabel: {
-    fontSize: 14,
-    color: Colors.text,
-  },
-  toggleBox: {
-    width: 48,
-    height: 26,
-    backgroundColor: Colors.surfaceHighlight,
-    borderRadius: 13,
-    padding: 2,
-  },
-  toggleBoxActive: {
-    backgroundColor: Colors.cyan,
-  },
-  toggleDot: {
-    width: 22,
-    height: 22,
-    backgroundColor: Colors.textMuted,
-    borderRadius: 11,
-  },
-  toggleDotActive: {
-    backgroundColor: Colors.background,
-    transform: [{ translateX: 22 }],
-  },
   neighborCard: {
     backgroundColor: Colors.surface,
     borderRadius: 10,
@@ -443,7 +402,6 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 4,
   },
   neighborId: {
     fontSize: 13,
@@ -458,30 +416,6 @@ const styles = StyleSheet.create({
   rssiText: {
     fontSize: 10,
     fontWeight: '700',
-  },
-  neighborMeta: {
-    fontSize: 11,
-    color: Colors.textMuted,
-  },
-  chartPlaceholder: {
-    backgroundColor: Colors.surface,
-    borderRadius: 12,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  chartText: {
-    fontSize: 14,
-    color: Colors.textMuted,
-    marginTop: 8,
-  },
-  resetBtn: {
-    alignSelf: 'center',
-    padding: 8,
-  },
-  resetText: {
-    fontSize: 13,
-    color: Colors.textMuted,
   },
   actions: {
     flexDirection: 'row',

@@ -1,20 +1,30 @@
 /**
- * Repeater Configuration
+ * Repeater Configuration - Version Protocol Binaire MeshCore
  * 
- * Configuration des repeaters MeshCore via USB ou LoRa remote
- * Un repeater étend la portée du réseau en relayant les messages
+ * Configuration des repeaters via protocol binaire meshcore.js officiel
  */
 
-import { UsbSerialManager } from 'react-native-usb-serialport-for-android';
+// Commandes Protocol Binaire MeshCore pour Repeater
+const REPEATER_CMDS = {
+  GET_INFO: 0x20,
+  SET_NAME: 0x21,
+  SET_CONFIG: 0x22,
+  GET_STATUS: 0x23,
+  GET_NEIGHBORS: 0x24,
+  GET_STATS: 0x25,
+  RESET_STATS: 0x26,
+  REBOOT: 0x27,
+  FACTORY_RESET: 0x28,
+} as const;
 
 export interface RepeaterConfig {
   name: string;
-  maxHops: number;           // Nombre max de sauts à relayer (1-10)
-  forwardDirectOnly: boolean; // Ne relayer que les messages directs
-  filterByPath: boolean;     // Filtrer par qualité de chemin
-  minRssi: number;           // RSSI minimum pour relayer (-120 à -30)
-  transportCode?: string;    // Code de transport pour zoning
-  bridgeMode: boolean;       // Mode pont entre zones
+  maxHops: number;
+  forwardDirectOnly: boolean;
+  filterByPath: boolean;
+  minRssi: number;
+  transportCode?: string;
+  bridgeMode: boolean;
 }
 
 export interface RepeaterStatus {
@@ -36,74 +46,38 @@ export interface RepeaterNeighbor {
 export interface RepeaterStats {
   totalRelayed: number;
   totalDropped: number;
-  byHour: number[];  // Packets relayés par heure (24h)
+  byHour: number[];
 }
 
-// Commandes AT pour configuration Repeater
-const AT_COMMANDS = {
-  GET_INFO: 'AT+INFO',
-  SET_NAME: 'AT+NAME=',
-  SET_MAX_HOPS: 'AT+MAXHOPS=',
-  SET_DIRECT_ONLY: 'AT+DIRECT=',
-  SET_FILTER_PATH: 'AT+FILTER=',
-  SET_MIN_RSSI: 'AT+MINRSSI=',
-  SET_TRANSPORT: 'AT+TRANSPORT=',
-  SET_BRIDGE: 'AT+BRIDGE=',
-  GET_STATUS: 'AT+STATUS',
-  GET_NEIGHBORS: 'AT+NEIGHBORS',
-  GET_STATS: 'AT+STATS',
-  RESET_STATS: 'AT+RESETSTATS',
-  REBOOT: 'AT+REBOOT',
-  FACTORY_RESET: 'AT+FACTORY',
-} as const;
+function encodeRepeaterCommand(cmd: number, data?: Uint8Array): Uint8Array {
+  const payload = new Uint8Array(data ? 1 + data.length : 1);
+  payload[0] = cmd;
+  if (data) payload.set(data, 1);
+  return payload;
+}
 
 /**
- * Configure un repeater via USB Serial
+ * Configure un repeater via protocol binaire meshcore.js
  */
 export async function configureRepeater(
-  deviceId: number,
+  sendFn: (data: Uint8Array) => Promise<void>,
   config: Partial<RepeaterConfig>
 ): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    
-    // Configurer le nom
     if (config.name) {
-      await sendCommand(serial, AT_COMMANDS.SET_NAME + config.name);
+      const nameData = new TextEncoder().encode(config.name);
+      await sendFn(encodeRepeaterCommand(REPEATER_CMDS.SET_NAME, nameData));
     }
     
-    // Configurer max hops
-    if (config.maxHops !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_MAX_HOPS + config.maxHops);
+    if (config.maxHops !== undefined || config.minRssi !== undefined) {
+      const configData = new Uint8Array(3);
+      configData[0] = config.maxHops || 5;
+      configData[1] = config.minRssi ? Math.abs(config.minRssi) : 100;
+      configData[2] = (config.forwardDirectOnly ? 1 : 0) | (config.filterByPath ? 2 : 0);
+      await sendFn(encodeRepeaterCommand(REPEATER_CMDS.SET_CONFIG, configData));
     }
     
-    // Configurer forward direct only
-    if (config.forwardDirectOnly !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_DIRECT_ONLY + (config.forwardDirectOnly ? '1' : '0'));
-    }
-    
-    // Configurer filter by path
-    if (config.filterByPath !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_FILTER_PATH + (config.filterByPath ? '1' : '0'));
-    }
-    
-    // Configurer min RSSI
-    if (config.minRssi !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_MIN_RSSI + config.minRssi);
-    }
-    
-    // Configurer transport code
-    if (config.transportCode) {
-      await sendCommand(serial, AT_COMMANDS.SET_TRANSPORT + config.transportCode);
-    }
-    
-    // Configurer bridge mode
-    if (config.bridgeMode !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_BRIDGE + (config.bridgeMode ? '1' : '0'));
-    }
-    
-    await serial.close();
-    console.log('[Repeater] Configuration applied');
+    console.log('[Repeater] Configuration envoyée via protocol binaire');
     return true;
   } catch (err) {
     console.error('[Repeater] Config error:', err);
@@ -114,15 +88,24 @@ export async function configureRepeater(
 /**
  * Récupère le statut d'un repeater
  */
-export async function getRepeaterStatus(deviceId: number): Promise<RepeaterStatus | null> {
+export async function getRepeaterStatus(
+  sendFn: (data: Uint8Array) => Promise<void>,
+  onResponse: (timeoutMs: number) => Promise<Uint8Array | null>
+): Promise<RepeaterStatus | null> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.GET_STATUS));
+    const response = await onResponse(5000);
+    if (!response || response.length < 14) return null;
     
-    const response = await sendCommand(serial, AT_COMMANDS.GET_STATUS);
-    await serial.close();
-    
-    const status = parseStatusResponse(response);
-    return status;
+    const view = new DataView(response.buffer, response.byteOffset, response.byteLength);
+    return {
+      online: response[0] === 1,
+      packetsRelayed: view.getUint32(1, false),
+      packetsDropped: view.getUint32(5, false),
+      averageRssi: -view.getUint8(9),
+      uptime: view.getUint32(10, false),
+      neighbors: [],
+    };
   } catch (err) {
     console.error('[Repeater] Status error:', err);
     return null;
@@ -132,33 +115,78 @@ export async function getRepeaterStatus(deviceId: number): Promise<RepeaterStatu
 /**
  * Récupère la liste des voisins d'un repeater
  */
-export async function getRepeaterNeighbors(deviceId: number): Promise<RepeaterNeighbor[]> {
+export async function getRepeaterNeighbors(
+  sendFn: (data: Uint8Array) => Promise<void>,
+  onResponse: (timeoutMs: number) => Promise<Uint8Array | null>
+): Promise<RepeaterNeighbor[]> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.GET_NEIGHBORS));
+    const response = await onResponse(5000);
+    if (!response) return [];
     
-    const response = await sendCommand(serial, AT_COMMANDS.GET_NEIGHBORS);
-    await serial.close();
-    
-    const neighbors = parseNeighborsResponse(response);
-    return neighbors;
+    try {
+      return JSON.parse(new TextDecoder().decode(response));
+    } catch {
+      return parseBinaryNeighbors(response);
+    }
   } catch (err) {
     console.error('[Repeater] Neighbors error:', err);
     return [];
   }
 }
 
+function parseBinaryNeighbors(data: Uint8Array): RepeaterNeighbor[] {
+  const neighbors: RepeaterNeighbor[] = [];
+  let offset = 0;
+  
+  while (offset < data.length) {
+    try {
+      const idLen = data[offset++];
+      const nodeId = new TextDecoder().decode(data.slice(offset, offset + idLen));
+      offset += idLen;
+      
+      const rssi = -data[offset++];
+      const view = new DataView(data.buffer, data.byteOffset + offset, 4);
+      const lastSeen = view.getUint32(0, false);
+      offset += 4;
+      const hops = data[offset++];
+      
+      neighbors.push({ nodeId, rssi, lastSeen, hops });
+    } catch {
+      break;
+    }
+  }
+  
+  return neighbors;
+}
+
 /**
  * Récupère les statistiques d'un repeater
  */
-export async function getRepeaterStats(deviceId: number): Promise<RepeaterStats | null> {
+export async function getRepeaterStats(
+  sendFn: (data: Uint8Array) => Promise<void>,
+  onResponse: (timeoutMs: number) => Promise<Uint8Array | null>
+): Promise<RepeaterStats | null> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.GET_STATS));
+    const response = await onResponse(5000);
+    if (!response) return null;
     
-    const response = await sendCommand(serial, AT_COMMANDS.GET_STATS);
-    await serial.close();
-    
-    const stats = parseStatsResponse(response);
-    return stats;
+    try {
+      const data = JSON.parse(new TextDecoder().decode(response));
+      return {
+        totalRelayed: data.totalRelayed || 0,
+        totalDropped: data.totalDropped || 0,
+        byHour: data.byHour || new Array(24).fill(0),
+      };
+    } catch {
+      const view = new DataView(response.buffer, response.byteOffset, response.byteLength);
+      return {
+        totalRelayed: view.getUint32(0, false),
+        totalDropped: view.getUint32(4, false),
+        byHour: new Array(24).fill(0),
+      };
+    }
   } catch (err) {
     console.error('[Repeater] Stats error:', err);
     return null;
@@ -168,11 +196,11 @@ export async function getRepeaterStats(deviceId: number): Promise<RepeaterStats 
 /**
  * Reset les statistiques d'un repeater
  */
-export async function resetRepeaterStats(deviceId: number): Promise<boolean> {
+export async function resetRepeaterStats(
+  sendFn: (data: Uint8Array) => Promise<void>
+): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    await sendCommand(serial, AT_COMMANDS.RESET_STATS);
-    await serial.close();
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.RESET_STATS));
     return true;
   } catch (err) {
     console.error('[Repeater] Reset stats error:', err);
@@ -183,11 +211,11 @@ export async function resetRepeaterStats(deviceId: number): Promise<boolean> {
 /**
  * Redémarre un repeater
  */
-export async function rebootRepeater(deviceId: number): Promise<boolean> {
+export async function rebootRepeater(
+  sendFn: (data: Uint8Array) => Promise<void>
+): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    await sendCommand(serial, AT_COMMANDS.REBOOT);
-    await serial.close();
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.REBOOT));
     return true;
   } catch (err) {
     console.error('[Repeater] Reboot error:', err);
@@ -198,91 +226,14 @@ export async function rebootRepeater(deviceId: number): Promise<boolean> {
 /**
  * Reset factory d'un repeater
  */
-export async function factoryResetRepeater(deviceId: number): Promise<boolean> {
+export async function factoryResetRepeater(
+  sendFn: (data: Uint8Array) => Promise<void>
+): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    await sendCommand(serial, AT_COMMANDS.FACTORY_RESET);
-    await serial.close();
+    await sendFn(encodeRepeaterCommand(REPEATER_CMDS.FACTORY_RESET));
     return true;
   } catch (err) {
     console.error('[Repeater] Factory reset error:', err);
     return false;
-  }
-}
-
-/**
- * Envoie une commande AT et attend la réponse
- */
-async function sendCommand(serial: any, command: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let response = '';
-    
-    const timeout = setTimeout(() => {
-      reject(new Error('Command timeout'));
-    }, 5000);
-    
-    serial.onReceived((event: any) => {
-      response += event.data;
-      if (response.includes('OK') || response.includes('ERROR')) {
-        clearTimeout(timeout);
-        resolve(response);
-      }
-    });
-    
-    serial.send(command + '\r\n');
-  });
-}
-
-function parseStatusResponse(response: string): RepeaterStatus {
-  const parts = response.split(',');
-  const online = parts[0]?.includes('online') || false;
-  const relayed = parseInt(parts[1]?.split(':')[1]) || 0;
-  const dropped = parseInt(parts[2]?.split(':')[1]) || 0;
-  const avgRssi = parseInt(parts[3]?.split(':')[1]) || 0;
-  const uptime = parseInt(parts[4]?.split(':')[1]) || 0;
-  
-  return {
-    online,
-    packetsRelayed: relayed,
-    packetsDropped: dropped,
-    averageRssi: avgRssi,
-    uptime,
-    neighbors: [],
-  };
-}
-
-function parseNeighborsResponse(response: string): RepeaterNeighbor[] {
-  try {
-    return JSON.parse(response);
-  } catch {
-    return response.split('\n')
-      .filter(line => line.trim() && line.includes('|'))
-      .map(line => {
-        const parts = line.split('|');
-        return {
-          nodeId: parts[0] || '',
-          rssi: parseInt(parts[1]) || -100,
-          lastSeen: parseInt(parts[2]) || Date.now(),
-          hops: parseInt(parts[3]) || 1,
-        };
-      });
-  }
-}
-
-function parseStatsResponse(response: string): RepeaterStats {
-  try {
-    const data = JSON.parse(response);
-    return {
-      totalRelayed: data.totalRelayed || 0,
-      totalDropped: data.totalDropped || 0,
-      byHour: data.byHour || new Array(24).fill(0),
-    };
-  } catch {
-    const parts = response.split(',');
-    return {
-      totalRelayed: parseInt(parts[0]?.split(':')[1]) || 0,
-      totalDropped: parseInt(parts[1]?.split(':')[1]) || 0,
-      byHour: new Array(24).fill(0),
-    };
   }
 }

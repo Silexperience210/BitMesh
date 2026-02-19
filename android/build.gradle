@@ -17,6 +17,10 @@ allprojects {
     google()
     mavenCentral()
     maven { url 'https://www.jitpack.io' }
+    // ✅ AJOUT: Maven Google pour cameraview
+    maven { url 'https://maven.google.com' }
+    // ✅ AJOUT: Jitpack pour dépendances manquantes
+    maven { url 'https://jitpack.io' }
   }
   
   // ✅ FORCER compileSdk 35 pour les librairies problématiques

@@ -13,12 +13,9 @@ import {
 import { 
   Server, 
   X, 
-  Settings, 
   Users, 
   MessageSquare, 
   RefreshCw,
-  Trash2,
-  Power,
   Info,
   Check
 } from 'lucide-react-native';
@@ -29,7 +26,6 @@ import {
   getRoomServerStatus,
   getRoomServerPosts,
   rebootRoomServer,
-  factoryResetRoomServer,
   type RoomServerConfig,
   type RoomServerStatus,
   type RoomServerPost,
@@ -38,14 +34,13 @@ import {
 interface RoomServerConfigModalProps {
   visible: boolean;
   onClose: () => void;
-  deviceId: number;
 }
 
 export default function RoomServerConfigModal({ 
   visible, 
-  onClose, 
-  deviceId 
+  onClose,
 }: RoomServerConfigModalProps) {
+  const { connected, deviceType, sendRawData } = useMeshCore();
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState<RoomServerStatus | null>(null);
   const [posts, setPosts] = useState<RoomServerPost[]>([]);
@@ -59,34 +54,64 @@ export default function RoomServerConfigModal({
   });
 
   useEffect(() => {
-    if (visible && deviceId) {
+    if (visible && connected && deviceType === 'roomserver') {
       loadStatus();
     }
-  }, [visible, deviceId]);
+  }, [visible, connected, deviceType]);
 
   const loadStatus = async () => {
+    if (!sendRawData) return;
     setLoading(true);
-    const s = await getRoomServerStatus(deviceId);
-    const p = await getRoomServerPosts(deviceId);
-    setStatus(s);
-    setPosts(p);
+    
+    try {
+      // Créer une fonction d'attente de réponse
+      const onResponse = async (): Promise<Uint8Array | null> => {
+        // TODO: Implémenter la réponse réelle depuis MeshCoreProvider
+        return null;
+      };
+      
+      const s = await getRoomServerStatus(sendRawData, onResponse);
+      const p = await getRoomServerPosts(sendRawData, onResponse);
+      setStatus(s);
+      setPosts(p);
+    } catch (err) {
+      console.error('[RoomServer] Load status error:', err);
+    }
+    
     setLoading(false);
   };
 
   const handleSave = async () => {
-    setLoading(true);
-    const success = await configureRoomServer(deviceId, config);
-    setLoading(false);
+    if (!sendRawData) {
+      Alert.alert('Erreur', 'Pas de connexion Room Server');
+      return;
+    }
     
-    if (success) {
-      Alert.alert('Succès', 'Configuration appliquée');
-      loadStatus();
-    } else {
+    setLoading(true);
+    
+    try {
+      const success = await configureRoomServer(sendRawData, config);
+      
+      if (success) {
+        Alert.alert('Succès', 'Configuration envoyée');
+        loadStatus();
+      } else {
+        Alert.alert('Erreur', 'Échec de la configuration');
+      }
+    } catch (err) {
+      console.error('[RoomServer] Save error:', err);
       Alert.alert('Erreur', 'Échec de la configuration');
     }
+    
+    setLoading(false);
   };
 
   const handleReboot = async () => {
+    if (!sendRawData) {
+      Alert.alert('Erreur', 'Pas de connexion');
+      return;
+    }
+    
     Alert.alert(
       'Redémarrer',
       'Redémarrer le Room Server ?',
@@ -97,7 +122,7 @@ export default function RoomServerConfigModal({
           style: 'destructive',
           onPress: async () => {
             setLoading(true);
-            await rebootRoomServer(deviceId);
+            await rebootRoomServer(sendRawData);
             setLoading(false);
           }
         },
@@ -105,11 +130,43 @@ export default function RoomServerConfigModal({
     );
   };
 
+  // Affichage si pas connecté ou pas un Room Server
+  if (!connected || deviceType !== 'roomserver') {
+    return (
+      <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+        <View style={styles.overlay}>
+          <View style={styles.container}>
+            <View style={styles.header}>
+              <View style={styles.headerLeft}>
+                <Server size={24} color={Colors.accent} />
+                <Text style={styles.title}>Room Server</Text>
+              </View>
+              <TouchableOpacity onPress={onClose}>
+                <X size={24} color={Colors.textMuted} />
+              </TouchableOpacity>
+            </View>
+            
+            <View style={styles.offlineContainer}>
+              <Info size={48} color={Colors.textMuted} />
+              <Text style={styles.offlineText}>
+                {deviceType !== 'roomserver' 
+                  ? 'Ce device n\'est pas un Room Server' 
+                  : 'Pas de connexion Room Server'}
+              </Text>
+              <Text style={styles.offlineSubtext}>
+                Connectez-vous via USB à un Room Server MeshCore
+              </Text>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    );
+  }
+
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={styles.overlay}>
         <View style={styles.container}>
-          {/* Header */}
           <View style={styles.header}>
             <View style={styles.headerLeft}>
               <Server size={24} color={Colors.accent} />
@@ -124,7 +181,6 @@ export default function RoomServerConfigModal({
             <ActivityIndicator size="large" color={Colors.accent} />
           ) : (
             <ScrollView style={styles.content}>
-              {/* Status */}
               {status && (
                 <View style={styles.statusCard}>
                   <View style={styles.statusRow}>
@@ -140,7 +196,6 @@ export default function RoomServerConfigModal({
                 </View>
               )}
 
-              {/* Configuration */}
               <Text style={styles.sectionTitle}>Configuration</Text>
               
               <Input
@@ -175,7 +230,6 @@ export default function RoomServerConfigModal({
                 />
               </View>
 
-              {/* Posts récents */}
               <Text style={styles.sectionTitle}>Posts récents ({posts.length})</Text>
               
               {posts.slice(0, 5).map((post) => (
@@ -185,7 +239,6 @@ export default function RoomServerConfigModal({
                 </View>
               ))}
 
-              {/* Actions */}
               <View style={styles.actions}>
                 <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
                   <Check size={18} color={Colors.black} />
@@ -215,9 +268,9 @@ function StatBox({ icon: Icon, label, value }: { icon: any; label: string; value
   );
 }
 
-function Input({ label, ...props }: { label: string } & any) {
+function Input({ label, style, ...props }: { label: string; style?: any } & any) {
   return (
-    <View style={styles.inputContainer}>
+    <View style={[styles.inputContainer, style]}>
       <Text style={styles.inputLabel}>{label}</Text>
       <TextInput style={styles.input} placeholderTextColor={Colors.textMuted} {...props} />
     </View>
@@ -252,6 +305,23 @@ const styles = StyleSheet.create({
     fontSize: 20,
     fontWeight: '700',
     color: Colors.text,
+  },
+  offlineContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+    gap: 16,
+  },
+  offlineText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: Colors.text,
+    textAlign: 'center',
+  },
+  offlineSubtext: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    textAlign: 'center',
   },
   content: {
     maxHeight: 600,

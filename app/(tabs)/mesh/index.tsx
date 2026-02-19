@@ -747,12 +747,10 @@ export default function MeshScreen() {
           <RoomServerConfigModal 
             visible={showRoomServerModal} 
             onClose={() => setShowRoomServerModal(false)} 
-            deviceId={selectedDeviceId}
           />
           <RepeaterConfigModal 
             visible={showRepeaterModal} 
             onClose={() => setShowRepeaterModal(false)} 
-            deviceId={selectedDeviceId}
           />
         </>
       )}

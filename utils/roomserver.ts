@@ -1,18 +1,28 @@
 /**
- * Room Server Configuration
+ * Room Server Configuration - Version Protocol Binaire MeshCore
  * 
- * Configuration et gestion des Room Servers MeshCore via USB ou LoRa remote
- * Un Room Server est un nœud BBS (Bulletin Board System) pour forums partagés
+ * Configuration des Room Servers via protocol binaire meshcore.js officiel
  */
 
-import { UsbSerialManager } from 'react-native-usb-serialport-for-android';
+// Commandes Protocol Binaire MeshCore pour Room Server
+const ROOM_SERVER_CMDS = {
+  GET_INFO: 0x10,
+  SET_NAME: 0x11,
+  SET_CONFIG: 0x12,
+  GET_STATUS: 0x13,
+  GET_POSTS: 0x14,
+  POST_MESSAGE: 0x15,
+  DELETE_POST: 0x16,
+  REBOOT: 0x17,
+  FACTORY_RESET: 0x18,
+} as const;
 
 export interface RoomServerConfig {
   name: string;
   maxPeers: number;
   welcomeMessage: string;
   requireAuth: boolean;
-  allowedPubkeys?: string[]; // ACL si auth requise
+  allowedPubkeys?: string[];
   maxMessageLength: number;
   retentionDays: number;
 }
@@ -33,52 +43,45 @@ export interface RoomServerPost {
   signature: string;
 }
 
-// Commandes AT pour configuration Room Server via USB
-const AT_COMMANDS = {
-  GET_INFO: 'AT+INFO',
-  SET_NAME: 'AT+NAME=',
-  SET_MAX_PEERS: 'AT+MAXPEERS=',
-  SET_WELCOME: 'AT+WELCOME=',
-  SET_AUTH: 'AT+AUTH=',
-  GET_STATUS: 'AT+STATUS',
-  GET_POSTS: 'AT+POSTS',
-  DELETE_POST: 'AT+DELPOST=',
-  REBOOT: 'AT+REBOOT',
-  FACTORY_RESET: 'AT+FACTORY',
-} as const;
+/**
+ * Encode une commande Room Server en paquet MeshCore binaire
+ */
+function encodeRoomServerCommand(cmd: number, data?: Uint8Array): Uint8Array {
+  const payload = new Uint8Array(data ? 1 + data.length : 1);
+  payload[0] = cmd;
+  if (data) payload.set(data, 1);
+  return payload;
+}
 
 /**
- * Configure un Room Server via USB Serial
+ * Configure un Room Server via protocol binaire meshcore.js
+ * 
+ * @param sendFn - Fonction d'envoi de données (ex: sendRawData from MeshCoreProvider)
+ * @param config - Configuration du Room Server
+ * @returns true si succès
  */
 export async function configureRoomServer(
-  deviceId: number,
+  sendFn: (data: Uint8Array) => Promise<void>,
   config: Partial<RoomServerConfig>
 ): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    
     // Configurer le nom
     if (config.name) {
-      await sendCommand(serial, AT_COMMANDS.SET_NAME + config.name);
+      const nameData = new TextEncoder().encode(config.name);
+      const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.SET_NAME, nameData);
+      await sendFn(payload);
     }
     
-    // Configurer max peers
-    if (config.maxPeers) {
-      await sendCommand(serial, AT_COMMANDS.SET_MAX_PEERS + config.maxPeers);
+    // Configurer max peers et options
+    if (config.maxPeers !== undefined || config.requireAuth !== undefined) {
+      const configData = new Uint8Array(2);
+      configData[0] = config.maxPeers || 20;
+      configData[1] = config.requireAuth ? 1 : 0;
+      const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.SET_CONFIG, configData);
+      await sendFn(payload);
     }
     
-    // Configurer message de bienvenue
-    if (config.welcomeMessage) {
-      await sendCommand(serial, AT_COMMANDS.SET_WELCOME + config.welcomeMessage);
-    }
-    
-    // Configurer authentification
-    if (config.requireAuth !== undefined) {
-      await sendCommand(serial, AT_COMMANDS.SET_AUTH + (config.requireAuth ? '1' : '0'));
-    }
-    
-    await serial.close();
-    console.log('[RoomServer] Configuration applied');
+    console.log('[RoomServer] Configuration envoyée via protocol binaire');
     return true;
   } catch (err) {
     console.error('[RoomServer] Config error:', err);
@@ -89,16 +92,25 @@ export async function configureRoomServer(
 /**
  * Récupère le statut d'un Room Server
  */
-export async function getRoomServerStatus(deviceId: number): Promise<RoomServerStatus | null> {
+export async function getRoomServerStatus(
+  sendFn: (data: Uint8Array) => Promise<void>,
+  onResponse: (timeoutMs: number) => Promise<Uint8Array | null>
+): Promise<RoomServerStatus | null> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
+    const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.GET_STATUS);
+    await sendFn(payload);
     
-    const response = await sendCommand(serial, AT_COMMANDS.GET_STATUS);
-    await serial.close();
+    const response = await onResponse(5000);
+    if (!response || response.length < 10) return null;
     
-    // Parser la réponse (format: STATUS:online,peers:5,messages:42,uptime:3600)
-    const status = parseStatusResponse(response);
-    return status;
+    const view = new DataView(response.buffer, response.byteOffset, response.byteLength);
+    return {
+      online: response[0] === 1,
+      connectedPeers: view.getUint16(1, false),
+      totalMessages: view.getUint32(3, false),
+      uptime: view.getUint32(7, false),
+      lastSeen: Date.now(),
+    };
   } catch (err) {
     console.error('[RoomServer] Status error:', err);
     return null;
@@ -108,91 +120,69 @@ export async function getRoomServerStatus(deviceId: number): Promise<RoomServerS
 /**
  * Récupère les posts d'un Room Server
  */
-export async function getRoomServerPosts(deviceId: number): Promise<RoomServerPost[]> {
+export async function getRoomServerPosts(
+  sendFn: (data: Uint8Array) => Promise<void>,
+  onResponse: (timeoutMs: number) => Promise<Uint8Array | null>
+): Promise<RoomServerPost[]> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
+    const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.GET_POSTS);
+    await sendFn(payload);
     
-    const response = await sendCommand(serial, AT_COMMANDS.GET_POSTS);
-    await serial.close();
+    const response = await onResponse(5000);
+    if (!response) return [];
     
-    // Parser les posts (format JSON ou ligne par ligne)
-    const posts = parsePostsResponse(response);
-    return posts;
+    try {
+      const text = new TextDecoder().decode(response);
+      return JSON.parse(text);
+    } catch {
+      return parseBinaryPosts(response);
+    }
   } catch (err) {
     console.error('[RoomServer] Posts error:', err);
     return [];
   }
 }
 
-/**
- * Envoie une commande AT et attend la réponse
- */
-async function sendCommand(serial: any, command: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    let response = '';
-    
-    const timeout = setTimeout(() => {
-      reject(new Error('Command timeout'));
-    }, 5000);
-    
-    serial.onReceived((event: any) => {
-      response += event.data;
-      if (response.includes('OK') || response.includes('ERROR')) {
-        clearTimeout(timeout);
-        resolve(response);
-      }
-    });
-    
-    serial.send(command + '\r\n');
-  });
-}
-
-function parseStatusResponse(response: string): RoomServerStatus {
-  // Parser la réponse AT
-  const parts = response.split(',');
-  const online = parts[0]?.includes('online') || false;
-  const peers = parseInt(parts[1]?.split(':')[1]) || 0;
-  const messages = parseInt(parts[2]?.split(':')[1]) || 0;
-  const uptime = parseInt(parts[3]?.split(':')[1]) || 0;
+function parseBinaryPosts(data: Uint8Array): RoomServerPost[] {
+  const posts: RoomServerPost[] = [];
+  let offset = 0;
   
-  return {
-    online,
-    connectedPeers: peers,
-    totalMessages: messages,
-    uptime,
-    lastSeen: Date.now(),
-  };
-}
-
-function parsePostsResponse(response: string): RoomServerPost[] {
-  try {
-    // Essayer de parser comme JSON
-    return JSON.parse(response);
-  } catch {
-    // Fallback: parser ligne par ligne
-    return response.split('\n')
-      .filter(line => line.trim())
-      .map(line => {
-        const parts = line.split('|');
-        return {
-          id: parts[0] || '',
-          author: parts[1] || '',
-          content: parts[2] || '',
-          timestamp: parseInt(parts[3]) || Date.now(),
-          signature: parts[4] || '',
-        };
-      });
+  while (offset < data.length) {
+    try {
+      const idLen = data[offset++];
+      const id = new TextDecoder().decode(data.slice(offset, offset + idLen));
+      offset += idLen;
+      
+      const authorLen = data[offset++];
+      const author = new TextDecoder().decode(data.slice(offset, offset + authorLen));
+      offset += authorLen;
+      
+      const contentLen = data[offset++];
+      const content = new TextDecoder().decode(data.slice(offset, offset + contentLen));
+      offset += contentLen;
+      
+      const view = new DataView(data.buffer, data.byteOffset + offset, 4);
+      const timestamp = view.getUint32(0, false);
+      offset += 4;
+      
+      posts.push({ id, author, content, timestamp, signature: '' });
+    } catch {
+      break;
+    }
   }
+  
+  return posts;
 }
 
 /**
  * Redémarre un Room Server
  */
-export async function rebootRoomServer(deviceId: number): Promise<boolean> {
+export async function rebootRoomServer(
+  sendFn: (data: Uint8Array) => Promise<void>
+): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    await sendCommand(serial, AT_COMMANDS.REBOOT);
-    await serial.close();
+    const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.REBOOT);
+    await sendFn(payload);
     return true;
   } catch (err) {
     console.error('[RoomServer] Reboot error:', err);
@@ -203,11 +193,12 @@ export async function rebootRoomServer(deviceId: number): Promise<boolean> {
 /**
  * Reset factory d'un Room Server
  */
-export async function factoryResetRoomServer(deviceId: number): Promise<boolean> {
+export async function factoryResetRoomServer(
+  sendFn: (data: Uint8Array) => Promise<void>
+): Promise<boolean> {
   try {
-    const serial = await (UsbSerialManager as any).open(deviceId);
-    await sendCommand(serial, AT_COMMANDS.FACTORY_RESET);
-    await serial.close();
+    const payload = encodeRoomServerCommand(ROOM_SERVER_CMDS.FACTORY_RESET);
+    await sendFn(payload);
     return true;
   } catch (err) {
     console.error('[RoomServer] Factory reset error:', err);
