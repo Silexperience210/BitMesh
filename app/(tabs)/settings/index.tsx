@@ -41,7 +41,9 @@ import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
 import Colors from '@/constants/colors';
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
+import { useBitcoin } from '@/providers/BitcoinProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
+import SeedQRScanner from '@/components/SeedQRScanner';
 import { useGateway } from '@/providers/GatewayProvider';
 import { type ConnectionMode } from '@/providers/AppSettingsProvider';
 import { testMempoolConnection } from '@/utils/mempool';
@@ -128,6 +130,7 @@ function SeedManagementCard() {
 
   const [showSeed, setShowSeed] = useState<boolean>(false);
   const [showImport, setShowImport] = useState<boolean>(false);
+  const [showSeedQRScanner, setShowSeedQRScanner] = useState<boolean>(false);
   const [importText, setImportText] = useState<string>('');
   const [copied, setCopied] = useState<boolean>(false);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -194,6 +197,13 @@ function SeedManagementCard() {
     setShowImport(false);
     setImportText('');
   }, [importText, importWallet]);
+
+  const handleSeedQRScanned = useCallback((mnemonic: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    importWallet(mnemonic);
+    setShowSeedQRScanner(false);
+    Alert.alert('Succès', 'Seed importée depuis SeedQR');
+  }, [importWallet]);
 
   const handleDelete = useCallback(() => {
     Alert.alert(
@@ -412,6 +422,17 @@ function SeedManagementCard() {
                 autoCorrect={false}
                 testID="import-seed-input"
               />
+              
+              {/* Bouton Scan SeedQR */}
+              <TouchableOpacity
+                style={styles.scanQRButton}
+                onPress={() => setShowSeedQRScanner(true)}
+                activeOpacity={0.7}
+              >
+                <QrCode size={18} color={Colors.background} />
+                <Text style={styles.scanQRButtonText}>Scan SeedQR</Text>
+              </TouchableOpacity>
+              
               <TouchableOpacity
                 style={styles.importButton}
                 onPress={handleImport}
@@ -1218,6 +1239,13 @@ export default function SettingsScreen() {
         MeshCore LoRa x Bitcoin{'\n'}
         Off-grid. Decentralized. Sovereign.
       </Text>
+
+      {/* SeedQR Scanner Modal */}
+      <SeedQRScanner
+        visible={showSeedQRScanner}
+        onClose={() => setShowSeedQRScanner(false)}
+        onSeedScanned={handleSeedQRScanned}
+      />
     </ScrollView>
   );
 }
@@ -1572,6 +1600,22 @@ const styles = StyleSheet.create({
     color: Colors.black,
     fontSize: 15,
     fontWeight: '700' as const,
+  },
+  scanQRButton: {
+    backgroundColor: Colors.blue,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 10,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 12,
+  },
+  scanQRButtonText: {
+    color: Colors.background,
+    fontSize: 15,
+    fontWeight: '600' as const,
   },
   endpointCard: {
     backgroundColor: Colors.surface,
