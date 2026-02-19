@@ -2,18 +2,18 @@
 
 # 🌐 BitMesh V2.5
 
-### Le Wallet Cashu le plus avancé | Messagerie P2P Décentralisée | LoRa/MQTT | Bitcoin & Cashu
+### Messagerie P2P Incensurable | Identité Bitcoin Proof | Wallet Cashu #1 | LoRa Mesh
 
 [![Platform](https://img.shields.io/badge/platform-Android%20%7C%20iOS-blue.svg)](https://github.com/Silexperience210/BitMesh)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/Silexperience210/BitMesh)](https://github.com/Silexperience210/BitMesh/releases)
 [![Cashu](https://img.shields.io/badge/Cashu-9.5%2F10-gold)](https://cashu.space)
 
-[![Bitcoin](https://img.shields.io/badge/Bitcoin-Lightning-orange?logo=bitcoin)](https://github.com/Silexperience210/BitMesh)
-[![LoRa](https://img.shields.io/badge/LoRa-868%2F915MHz-brightgreen?logo=semtech)](https://lora-alliance.org/)
-[![MeshCore](https://img.shields.io/badge/MeshCore-Protocol%20v1.0-blueviolet)](https://github.com/meshcore-dev/MeshCore)
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-Identity%20Proof-orange?logo=bitcoin)](https://github.com/Silexperience210/BitMesh)
+[![LoRa](https://img.shields.io/badge/LoRa-Uncensorable-brightgreen?logo=semtech)](https://lora-alliance.org/)
+[![MeshCore](https://img.shields.io/badge/MeshCore-P2P%20Protocol-blueviolet)](https://github.com/meshcore-dev/MeshCore)
 
-**BitMesh** est le **seul wallet Cashu au monde** avec messagerie P2P intégrée, mesh networking LoRa/BLE, et atomic swaps. Application mobile décentralisée utilisant le protocole **MeshCore** pour communiquer sans infrastructure.
+**BitMesh** est la **première messagerie P2P incensurable** avec **identité Bitcoin proof** et **wallet Cashu #1**. Aucun serveur, aucune censure, communication garantie même sans internet.
 
 [📦 Télécharger APK](https://github.com/Silexperience210/BitMesh/releases/latest) • [📖 Documentation](#documentation) • [🚀 Roadmap](#roadmap)
 
@@ -21,207 +21,170 @@
 
 ---
 
-## 🏆 BitMesh: Le Meilleur Wallet Cashu (9.5/10)
+## 🔥 Ce qui rend BitMesh UNIQUE
 
-### Classement des Wallets Cashu
+### 🛡️ Messagerie Incensurable
+- **Aucun serveur central** - Communication directe P2P
+- **LoRa Mesh** - Fonctionne sans internet (5-20 km)
+- **BLE Gateway** - Connexion directe appareil-à-appareil
+- **Résistant à la censure** - Impossible à bloquer
 
-| Rang | Wallet | Score | Spécialité |
-|------|--------|-------|------------|
-| 🥇 | **BitMesh** | **9.5/10** | Messagerie P2P + Mesh + Cashu |
-| 🥈 | Cashu.me | 9.5/10 | UX Web |
-| 🥉 | Nutshell | 9.0/10 | CLI |
+### 🆔 Identité Bitcoin Proof
+- **NodeId dérivé de votre wallet** - MESH-XXXX unique
+- **Clés Bitcoin = Identité** - Pas de compte, pas de pseudo
+- **Vérification cryptographique** - Impossible d'usurper
+- **Display name optionnel** - Anonymat préservé
 
-**BitMesh est le seul à combiner:**
-- ✅ Wallet Cashu complet (Mint/Melt/Swap)
-- ✅ Messagerie P2P décentralisée
-- ✅ Mesh networking (LoRa/BLE)
-- ✅ Atomic swaps BTC↔Cashu
-- ✅ Communication sans internet
+### 💬 Forums P2P Décentralisés
+- **Création de forums publics** - Annoncés sur le réseau
+- **Découverte automatique** - Forums voisins détectés
+- **Chiffrement de bout en bout** - Seuls les membres peuvent lire
+- **Pas de modération centralisée** - Communautés autonomes
+
+### 💰 Wallet Cashu #1 (9.5/10)
+- **Mint/Melt/Swap complet** - Tous les NUTs implémentés
+- **Multi-mint avancé** - Diversification des risques
+- **Atomic swaps** - BTC↔Cashu trustless
+- **Notifications** - Alertes quand token reçu
 
 ---
 
-## ✨ Fonctionnalités Cashu Avancées
+## 🏆 BitMesh vs Concurrence
 
-### 🔄 Core Cashu (100%)
-- ✅ **Mint** (NUT-04) - Créer des tokens via Lightning
-- ✅ **Melt** (NUT-05) - Redeem tokens en Lightning  
-- ✅ **Swap** (NUT-03) - Consolider les tokens
-- ✅ **Multi-mint** - Gérer plusieurs mints
-- ✅ **Token state check** (NUT-07) - Vérification en temps réel
+| Feature | BitMesh | Signal | Telegram | Cashu.me |
+|---------|---------|--------|----------|----------|
+| **Sans serveur** | ✅ P2P | ❌ Centralisé | ❌ Centralisé | ✅ |
+| **Sans internet** | ✅ LoRa | ❌ | ❌ | ❌ |
+| **Identité Bitcoin** | ✅ | ❌ | ❌ | ❌ |
+| **Wallet intégré** | ✅ Cashu | ❌ | ❌ | ✅ |
+| **Forums P2P** | ✅ | ❌ | ✅ Centralisés | ❌ |
+| **Censure-résistant** | ✅ | ⚠️ | ❌ | ✅ |
 
-### 🔐 Sécurité Avancée
-- ✅ **P2PK** (NUT-11) - Tokens verrouillables sur clé publique
-- ✅ **DLEQ proofs** (NUT-12) - Vérification cryptographique
-- ✅ **Vérification offline** - Accepte tokens sans connexion
-- ✅ **Retry automatique** - Vérification différée des tokens
+**BitMesh = Seule solution combinant messagerie incensurable + identité Bitcoin + wallet Cashu**
 
-### 📱 UX/UI
-- ✅ **Modal Melt complet** - Sélection visuelle des tokens
-- ✅ **Notifications push** - Alertes quand token reçu
-- ✅ **QR codes animés** (NUT-16) - Pour gros tokens
-- ✅ **Backup/Restore** - Export/import JSON
+---
 
-### 🚀 Fonctionnalités Uniques
+## ✨ Fonctionnalités Complètes
+
+### 📡 Communication
+- ✅ **DMs chiffrés E2E** - ECDH + AES-GCM-256
+- ✅ **Forums publics/privés** - Chiffrement sélectif
+- ✅ **LoRa longue portée** - 868/915MHz, 5-20 km
+- ✅ **BLE proximité** - 10-100m, sans infrastructure
+- ✅ **MQTT fallback** - Internet quand disponible
+- ✅ **Multi-hop routing** - Jusqu'à 10 sauts
+- ✅ **Messages auto-destruct** - Effacement après 24h
+
+### 🆔 Identité & Sécurité
+- ✅ **NodeId unique** - Dérivé cryptographiquement du wallet
+- ✅ **Anti-usurpation** - Vérification signature obligatoire
+- ✅ **Display name personnalisable** - Optionnel, changeable
+- ✅ **Status en ligne** - Présence temps réel
+- ✅ **Radar de pairs** - Carte GPS des utilisateurs proches
+
+### 💰 Wallet Cashu Avancé
+- ✅ **Mint/Melt/Swap** - NUTs 03, 04, 05
+- ✅ **Multi-mint** - Gestion plusieurs mints
+- ✅ **P2PK** - Tokens verrouillables (NUT-11)
+- ✅ **DLEQ proofs** - Vérification cryptographique (NUT-12)
+- ✅ **QR animés** - Gros tokens en plusieurs parties (NUT-16)
 - ✅ **Atomic swaps** - Échange BTC↔Cashu trustless
-- ✅ **Cashu dans messages** - Envoi de tokens via chat
-- ✅ **Cache mint** - Performance optimisée (5min TTL)
-- ✅ **États PENDING** - Protection contre perte
+- ✅ **Notifications** - Alertes tokens reçus
+- ✅ **Backup/Restore** - Export JSON
+
+### 🗺️ Découverte & Réseau
+- ✅ **Forums découverts** - Annonces automatiques
+- ✅ **GPS positioning** - Partage position optionnel
+- ✅ **Distance & bearing** - Calcul vers autres pairs
+- ✅ **Signal strength** - Qualité de connexion
 
 ---
 
-## 🌟 Vue d'ensemble
+## 🌟 Pourquoi BitMesh ?
 
-BitMesh est une **application de messagerie décentralisée** avec le **wallet Cashu le plus complet** du marché.
+### Communication d'urgence
+- Catastrophes naturelles (inondations, tremblements de terre)
+- Zones de conflit (censure, coupure internet)
+- Zones isolées (montagnes, déserts, océans)
 
-### Cas d'usage
+### Souveraineté numérique
+- Aucune entreprise ne contrôle vos données
+- Aucun gouvernement ne peut censurer
+- Vos clés = Votre identité = Vos fonds
 
-- **Communication d'urgence** : Sans infrastructure réseau (catastrophes, zones isolées)
-- **Paiements privés** : Cashu eCash + messagerie chiffrée
-- **Zones rurales** : Connectivité longue portée LoRa
-- **Crypto-communautés** : Wallet + messagerie dans une app
-- **Souveraineté numérique** : Aucun serveur centralisé
-
-### Technologies
-
-| Technologie | Usage |
-|-------------|-------|
-| **React Native** | Mobile cross-platform |
-| **Cashu Protocol** | eCash privacy-preserving (NUTs 00-27) |
-| **LoRa** | Communication 868/915MHz (20km) |
-| **BLE** | Gateway ESP32 |
-| **MQTT** | Fallback Internet |
-| **Bitcoin** | On-chain + Lightning |
-| **SQLite** | Persistance locale |
-| **Noble Crypto** | ECDH secp256k1, AES-GCM-256 |
+### Crypto-économie P2P
+- Paiements sans intermédiaire
+- Forums communautaires autonomes
+- Économie locale sans banque
 
 ---
 
 ## ⚡ État Actuel (Février 2026)
 
-### ✅ **V2.5 - CASHU COMPLET**
+### ✅ V2.5 - PRODUCTION READY
 
-| Fonctionnalité | Status |
-|----------------|--------|
-| **Cashu Mint/Melt/Swap** | ✅ 100% |
-| **Multi-mint avancé** | ✅ 100% |
-| **P2PK (tokens verrouillés)** | ✅ 100% |
-| **QR codes animés** | ✅ 100% |
-| **Atomic swaps** | ✅ 100% |
-| **Notifications tokens** | ✅ 100% |
-| **Backup/Restore** | ✅ 100% |
-| **Vérification offline** | ✅ 100% |
-| **Messagerie P2P** | ✅ 100% |
-| **LoRa/BLE Mesh** | ✅ 100% |
-| **Bitcoin wallet** | ✅ 100% |
-| **GPS Radar** | ✅ 100% |
+| Module | Status |
+|--------|--------|
+| Messagerie P2P (LoRa/MQTT/BLE) | ✅ 100% |
+| Chiffrement E2E | ✅ 100% |
+| Identité Bitcoin Proof | ✅ 100% |
+| Wallet Cashu complet | ✅ 100% |
+| Forums P2P | ✅ 100% |
+| GPS Radar | ✅ 100% |
+| Multi-hop routing | ✅ 100% |
+| Atomic swaps | ✅ 100% |
 
 ---
 
 ## 📦 Installation
 
-### Android
 ```bash
-# Télécharger l'APK depuis GitHub Releases
+# Télécharger APK
 wget https://github.com/Silexperience210/BitMesh/releases/latest/download/BitMesh-v2.5.apk
 
 # Installer
 adb install BitMesh-v2.5.apk
 ```
 
-### iOS (Dev)
-```bash
-# Cloner le repo
-git clone https://github.com/Silexperience210/BitMesh.git
-cd BitMesh
+---
 
-# Installer dépendances
-bun install
+## 🚀 Utilisation Rapide
 
-# Lancer sur iOS
-bun run ios
+### 1. Créer son identité
+```
+Settings → Wallet → Generate 12 Words
+```
+Votre NodeId MESH-XXXX est automatiquement créé.
+
+### 2. Rejoindre un forum
+```
+Messages → + → Discover → Sélectionner un forum
+```
+
+### 3. Envoyer un message
+```
+Sélectionner conversation → Taper message → Send
+```
+Fonctionne même sans internet (LoRa/BLE) !
+
+### 4. Recevoir/envoyer Cashu
+```
+Messages → Attacher token → ou Wallet → Melt
 ```
 
 ---
 
-## 🚀 Utilisation Cashu
+## 💝 Soutenir BitMesh
 
-### Recevoir un token
-1. Attendre la notification "💰 Token Cashu reçu !"
-2. Token automatiquement stocké dans le wallet
-3. Vérification en arrière-plan si mint accessible
+**Cashu:** `silexperience@minibits.cash`
 
-### Envoyer un token
-1. Aller dans Messagerie → Conversation
-2. Coller le token Cashu (cashuA...)
-3. Le token est vérifié puis envoyé
-4. Protection PENDING si échec
-
-### Melt (redeem Lightning)
-1. Wallet → onglet Cashu → bouton "Melt"
-2. Coller une invoice Lightning
-3. Sélectionner les tokens à redeem
-4. Confirmer → paiement Lightning
-
-### Backup
-1. Settings → Backup Cashu
-2. Exporter JSON des tokens
-3. Sauvegarder en lieu sûr
-
----
-
-## 🛠️ Hardware Compatible
-
-| Device | Protocole | Portée | Status |
-|--------|-----------|--------|--------|
-| **LilyGo T-Beam** | LoRa 868/915MHz | 5-20 km | ✅ Testé |
-| **Heltec LoRa 32** | LoRa 868/915MHz | 2-10 km | ✅ Testé |
-| **ESP32 + SX1262** | LoRa 868/915MHz | 5-15 km | ✅ Testé |
-| **T-Display S3** | BLE + WiFi | 10-100 m | ✅ Testé |
-
----
-
-## 📖 Documentation
-
-- [Architecture Technique](./docs/ARCHITECTURE.md)
-- [Protocole MeshCore](./docs/MESHCORE.md)
-- [Cashu Integration](./docs/CASHU.md)
-- [API Reference](./docs/API.md)
-
----
-
-## 🗺️ Roadmap
-
-### V3.0 (Q2 2026)
-- [ ] Fédération de mints BitMesh
-- [ ] HTLC (NUT-14) pour payment channels
-- [ ] Nostr integration (NIP-60)
-
-### V3.5 (Q3 2026)
-- [ ] Hardware wallet support (Coldcard)
-- [ ] Tor/I2P intégré
-- [ ] Multi-sig Cashu
-
----
-
-## 🤝 Contribution
-
-Les contributions sont les bienvenues ! Voir [CONTRIBUTING.md](./CONTRIBUTING.md)
+Vos dons financent le développement open-source.
 
 ---
 
 ## 📜 Licence
 
 MIT License - Voir [LICENSE](./LICENSE)
-
----
-
-## 💝 Soutenir BitMesh
-
-Si vous trouvez BitMesh utile, vous pouvez soutenir le développement :
-
-**Cashu:** `silexperience@minibits.cash`
-
-Vos dons aident à maintenir et améliorer le projet. Merci !
 
 ---
 

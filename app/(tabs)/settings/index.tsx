@@ -48,6 +48,7 @@ import SeedQRScanner from '@/components/SeedQRScanner';
 import { useGateway } from '@/providers/GatewayProvider';
 import { type ConnectionMode } from '@/providers/AppSettingsProvider';
 import { testMempoolConnection } from '@/utils/mempool';
+import { UpdateChecker } from '@/components/UpdateChecker';
 import { testMintConnection, formatMintUrl } from '@/utils/cashu';
 import { testMqttConnection } from '@/utils/mqtt';
 import { mockGatewayRelayLog, mockGatewayStats, type GatewayRelayLogEntry } from '@/mocks/data';
@@ -1244,6 +1245,13 @@ export default function SettingsScreen() {
         </View>
       </View>
 
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>Système</Text>
+        <View style={styles.card}>
+          <UpdateChecker />
+        </View>
+      </View>
+
       <Text style={styles.footer}>
         MeshCore LoRa x Bitcoin{'\n'}
         Off-grid. Decentralized. Sovereign.
@@ -1277,6 +1285,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  card: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 16,
   },
   profileAvatar: {
     width: 52,
