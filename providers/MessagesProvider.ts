@@ -26,6 +26,7 @@ import {
   decryptForum,
   type EncryptedPayload,
 } from '@/utils/encryption';
+import { isChunkPacket } from '@/utils/meshcore-protocol';
 import {
   type StoredMessage,
   type StoredConversation,
@@ -164,7 +165,6 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
 
       // ✅ Gérer les chunks (messages longs)
-      const { isChunkPacket } = require('@/utils/meshcore-protocol');
       if (isChunkPacket(packet)) {
         const result = chunkManagerRef.current.handleIncomingChunk(packet);
         

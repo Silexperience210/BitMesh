@@ -143,6 +143,8 @@ export function createTransaction(
   };
 }
 
+import * as secp256k1 from 'secp256k1';
+
 /**
  * Signe une transaction P2WPKH avec le mnemonic
  * Version pour adresses SegWit natives (bc1...)
@@ -154,9 +156,6 @@ export async function signTransaction(
   utxos: MempoolUtxo[]
 ): Promise<string> {
   try {
-    // Importer secp256k1 (JavaScript pur, pas de WASM)
-    const secp256k1 = require('secp256k1');
-    
     // Reconstruire le PSBT
     const psbt = bitcoin.Psbt.fromHex(psbtHex, { network: NETWORK });
     

@@ -328,6 +328,8 @@ export function createTextMessageSync(
 }
 createTextMessageSync.counter = 0;
 
+import { decompressFromLora } from './compression';
+
 /**
  * Extraire le texte d'un paquet MeshCore
  * Gère la décompression automatique
@@ -335,7 +337,6 @@ createTextMessageSync.counter = 0;
 export function extractTextFromPacket(packet: MeshCorePacket): string {
   // Vérifier si compressé
   if (packet.flags & MeshCoreFlags.COMPRESSED) {
-    const { decompressFromLora } = require('./compression');
     return decompressFromLora(packet.payload);
   }
   
