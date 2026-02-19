@@ -17,7 +17,7 @@ import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
 import { BleProvider } from "@/providers/BleProvider";
 import { useAppInitialization } from "@/hooks/useAppInitialization";
-import { OnboardingModal } from "@/components/OnboardingModal";
+import { WelcomeModal } from "@/components/WelcomeModal";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -96,7 +96,7 @@ function AppContent() {
   return (
     <>
       <RootLayoutNav />
-      <OnboardingModal visible={showOnboarding} onClose={handleOnboardingClose} />
+      <WelcomeModal visible={showOnboarding} onClose={handleOnboardingClose} />
     </>
   );
 }
