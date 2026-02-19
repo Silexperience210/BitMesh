@@ -10,6 +10,8 @@ jobs:
     name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    permissions:
+      contents: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -56,19 +58,26 @@ jobs:
           ./gradlew assembleDebug --no-daemon --stacktrace
         timeout-minutes: 40
 
-      - name: Upload APK
+      - name: Check APK exists
+        run: |
+          ls -la android/app/build/outputs/apk/debug/
+          cp android/app/build/outputs/apk/debug/app-debug.apk BitMesh-v${{ github.run_number }}.apk
+
+      - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
-        if: success()
         with:
           name: BitMesh-APK
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: BitMesh-v${{ github.run_number }}.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
-        if: success()
         with:
           tag_name: v${{ github.run_number }}
           name: "BitMesh v${{ github.run_number }}"
-          files: android/app/build/outputs/apk/debug/app-debug.apk
+          body: |
+            ## BitMesh APK
+            
+            Build automatique du ${{ github.sha }}
+          files: BitMesh-v${{ github.run_number }}.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
