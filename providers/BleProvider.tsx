@@ -26,7 +26,7 @@ interface BleContextValue extends BleState {
   scanForGateways: () => Promise<void>;
   connectToGateway: (deviceId: string) => Promise<void>;
   disconnectGateway: () => Promise<void>;
-  sendPacket: (packet: MeshCorePacket) => Promise<void>;
+  sendPacket: (packet: MeshCorePacket, timeoutMs?: number) => Promise<void>;
   onPacket: (handler: (packet: MeshCorePacket) => void) => void;
 }
 
@@ -229,10 +229,10 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Envoie un paquet MeshCore via BLE → LoRa
+   * Envoie un paquet MeshCore via BLE → LoRa avec timeout
    * Si déconnecté, ajoute à la file d'attente persistante
    */
-  const sendPacket = async (packet: MeshCorePacket) => {
+  const sendPacket = async (packet: MeshCorePacket, timeoutMs = 10000) => {
     if (!clientRef.current || !state.connected) {
       // Si déconnecté, ajouter à la file persistante
       const msgId = `pending-${Date.now()}`;
@@ -242,7 +242,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      await clientRef.current.sendPacket(packet);
+      // Timeout pour éviter le blocage
+      await Promise.race([
+        clientRef.current.sendPacket(packet),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('BLE timeout')), timeoutMs)
+        )
+      ]);
     } catch (error) {
       // En cas d'erreur, mettre en file d'attente pour retry
       const msgId = `retry-${Date.now()}`;

@@ -5,13 +5,61 @@
 import * as SQLite from 'expo-sqlite';
 
 let db: SQLite.SQLiteDatabase | null = null;
+let initAttempts = 0;
+const MAX_INIT_ATTEMPTS = 3;
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!db) {
-    db = await SQLite.openDatabaseAsync('bitmesh.db');
-    await initDatabase();
+    try {
+      db = await SQLite.openDatabaseAsync('bitmesh.db');
+      await initDatabase();
+    } catch (error) {
+      console.error('[Database] Erreur ouverture:', error);
+      initAttempts++;
+      
+      if (initAttempts >= MAX_INIT_ATTEMPTS) {
+        console.error('[Database] Trop de tentatives, reset de la base...');
+        await resetDatabase();
+        initAttempts = 0;
+      } else {
+        throw error;
+      }
+    }
   }
   return db;
+}
+
+/**
+ * Reset la base de données en cas de corruption
+ */
+export async function resetDatabase(): Promise<void> {
+  try {
+    if (db) {
+      await db.closeAsync();
+      db = null;
+    }
+    
+    // Supprimer et recréer
+    console.log('[Database] Reset de la base...');
+    db = await SQLite.openDatabaseAsync('bitmesh.db');
+    
+    // Drop all tables
+    await db.execAsync(`
+      DROP TABLE IF EXISTS conversations;
+      DROP TABLE IF EXISTS messages;
+      DROP TABLE IF EXISTS pending_messages;
+      DROP TABLE IF EXISTS key_store;
+      DROP TABLE IF EXISTS message_counters;
+      DROP TABLE IF EXISTS app_state;
+    `);
+    
+    // Recréer
+    await initDatabase();
+    console.log('[Database] Base reset et recréée');
+  } catch (error) {
+    console.error('[Database] Erreur reset:', error);
+    throw error;
+  }
 }
 
 async function initDatabase(): Promise<void> {
