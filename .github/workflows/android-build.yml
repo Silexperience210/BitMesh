@@ -1,4 +1,4 @@
-name: Android Build (Prebuilt)
+name: Android Build
 
 on:
   push:
@@ -9,7 +9,7 @@ jobs:
   build:
     name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: write
     steps:
@@ -39,7 +39,9 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install SDK components
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+        run: |
+          sdkmanager "platforms;android-34"
+          sdkmanager "build-tools;34.0.0"
 
       - name: Cache Gradle
         uses: actions/cache@v4
@@ -48,36 +50,26 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
           key: gradle-${{ runner.os }}-${{ hashFiles('android/**/*.gradle*', 'android/**/gradle-wrapper.properties') }}
-          restore-keys: |
-            gradle-${{ runner.os }}-
+          restore-keys: gradle-${{ runner.os }}-
 
       - name: Build Debug APK
         run: |
           cd android
           chmod +x gradlew
           ./gradlew assembleDebug --no-daemon --stacktrace
-        timeout-minutes: 40
+        timeout-minutes: 50
 
-      - name: Check APK exists
-        run: |
-          ls -la android/app/build/outputs/apk/debug/
-          cp android/app/build/outputs/apk/debug/app-debug.apk BitMesh-v${{ github.run_number }}.apk
-
-      - name: Upload APK to Artifacts
+      - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: BitMesh-APK
-          path: BitMesh-v${{ github.run_number }}.apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ github.run_number }}
           name: "BitMesh v${{ github.run_number }}"
-          body: |
-            ## BitMesh APK
-            
-            Build automatique du ${{ github.sha }}
-          files: BitMesh-v${{ github.run_number }}.apk
+          files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
