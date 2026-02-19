@@ -14,6 +14,7 @@ import {
   type MempoolUtxo,
   type MempoolFeeEstimates,
 } from '@/utils/mempool';
+import { createTransaction, estimateFee, validateAddress } from '@/utils/bitcoin-tx';
 
 export interface BitcoinTransaction {
   txid: string;
@@ -34,11 +35,12 @@ export interface BitcoinState {
   lastSync: number | null;
   error: string | null;
   refreshBalance: () => Promise<void>;
-  sendBitcoin: (toAddress: string, amountSats: number, feeRate: number) => Promise<{ txid: string }>;
+  sendBitcoin: (toAddress: string, amountSats: number, feeRate: number) => Promise<{ txid: string; hex: string }>;
+  estimateSendFee: (amountSats: number, feeRate: number) => number;
 }
 
 export const [BitcoinContext, useBitcoin] = createContextHook((): BitcoinState => {
-  const { walletInfo, receiveAddresses, isInitialized } = useWalletSeed();
+  const { walletInfo, receiveAddresses, isInitialized, mnemonic } = useWalletSeed();
   
   const [balance, setBalance] = useState(0);
   const [unconfirmedBalance, setUnconfirmedBalance] = useState(0);
@@ -64,12 +66,10 @@ export const [BitcoinContext, useBitcoin] = createContextHook((): BitcoinState =
     setError(null);
 
     try {
-      // Utiliser la première adresse pour le solde (simplifié)
       const primaryAddress = receiveAddresses[0];
       
       console.log('[Bitcoin] Sync adresse:', primaryAddress);
 
-      // Récupérer solde et UTXOs en parallèle
       const [balanceData, utxosData, feesData] = await Promise.all([
         getAddressBalance(primaryAddress),
         getAddressUtxos(primaryAddress),
@@ -92,72 +92,99 @@ export const [BitcoinContext, useBitcoin] = createContextHook((): BitcoinState =
   }, [isInitialized, receiveAddresses]);
 
   /**
-   * Charge l'historique des transactions
+   * Estime les frais pour un envoi
    */
-  const loadTransactions = useCallback(async () => {
-    if (!isInitialized || !receiveAddresses.length) return;
-
-    try {
-      const primaryAddress = receiveAddresses[0];
-      const txs = await getAddressTransactions(primaryAddress, 20);
+  const estimateSendFee = useCallback((amountSats: number, feeRate: number): number => {
+    // Sélectionner les UTXOs nécessaires
+    let totalNeeded = amountSats;
+    let numInputs = 0;
+    let selectedValue = 0;
+    
+    for (const utxo of utxos.filter(u => u.status.confirmed).sort((a, b) => b.value - a.value)) {
+      selectedValue += utxo.value;
+      numInputs++;
       
-      // Transformer en format interne
-      const formatted: BitcoinTransaction[] = txs.map((tx: any) => {
-        const isIncoming = tx.vout.some((vout: any) => 
-          vout.scriptpubkey_address === primaryAddress
-        );
-        
-        const amount = isIncoming
-          ? tx.vout
-              .filter((vout: any) => vout.scriptpubkey_address === primaryAddress)
-              .reduce((sum: number, vout: any) => sum + vout.value, 0)
-          : tx.vin
-              .filter((vin: any) => vin.prevout?.scriptpubkey_address === primaryAddress)
-              .reduce((sum: number, vin: any) => sum + vin.prevout.value, 0);
-
-        return {
-          txid: tx.txid,
-          amount,
-          type: isIncoming ? 'incoming' : 'outgoing',
-          confirmed: tx.status?.confirmed ?? false,
-          timestamp: tx.status?.block_time,
-          fee: tx.fee,
-        };
-      });
-
-      setTransactions(formatted);
-    } catch (err) {
-      console.error('[Bitcoin] Erreur chargement transactions:', err);
+      const fee = estimateFee(numInputs, 2, feeRate);
+      if (selectedValue >= amountSats + fee) {
+        return fee;
+      }
     }
-  }, [isInitialized, receiveAddresses]);
+    
+    return estimateFee(1, 2, feeRate); // Estimation par défaut
+  }, [utxos]);
 
   /**
-   * Envoie des bitcoins (simplifié - nécessite une lib de signature)
-   * Pour l'instant, cette fonction est un placeholder
+   * Envoie des bitcoins
+   * Retourne la transaction hex (à signer manuellement pour l'instant)
    */
   const sendBitcoin = useCallback(async (
     toAddress: string,
     amountSats: number,
     feeRate: number
-  ): Promise<{ txid: string }> => {
-    throw new Error('Envoi Bitcoin non encore implémenté. Utilisez Cashu pour l\'instant.');
-    
-    // TODO: Implémenter avec une lib comme bitcoinjs-lib ou @bitcoinerlab/secp256k1
-    // 1. Sélectionner les UTXOs
-    // 2. Créer la transaction
-    // 3. Signer avec la clé privée dérivée du mnemonic
-    // 4. Broadcast via mempool.space
-  }, []);
+  ): Promise<{ txid: string; hex: string }> => {
+    if (!isInitialized || !receiveAddresses.length || !mnemonic) {
+      throw new Error('Wallet non initialisé');
+    }
 
-  // Sync au montage et quand le wallet change
+    if (!validateAddress(toAddress)) {
+      throw new Error('Adresse invalide');
+    }
+
+    if (amountSats <= 0) {
+      throw new Error('Montant invalide');
+    }
+
+    if (amountSats > balance) {
+      throw new Error('Solde insuffisant');
+    }
+
+    const primaryAddress = receiveAddresses[0];
+    
+    console.log('[Bitcoin] Création transaction:', {
+      to: toAddress,
+      amount: amountSats,
+      feeRate,
+    });
+
+    try {
+      // Créer la transaction
+      const unsignedTx = createTransaction(
+        utxos,
+        toAddress,
+        amountSats,
+        primaryAddress, // Change revient à nous
+        feeRate
+      );
+
+      console.log('[Bitcoin] Transaction créée:', unsignedTx.txid);
+      console.log('[Bitcoin] Frais:', unsignedTx.fee);
+      
+      // Pour l'instant, on retourne l'hex non signé
+      // L'utilisateur doit signer avec un wallet externe
+      return {
+        txid: unsignedTx.txid,
+        hex: unsignedTx.hex,
+      };
+      
+      // TODO: Implémenter la signature complète
+      // const signedHex = await signTransaction(unsignedTx.hex, mnemonic, utxos);
+      // const { txid } = await broadcastTransaction(signedHex);
+      // return { txid, hex: signedHex };
+      
+    } catch (error) {
+      console.error('[Bitcoin] Erreur création transaction:', error);
+      throw error;
+    }
+  }, [isInitialized, receiveAddresses, mnemonic, balance, utxos]);
+
+  // Sync au montage
   useEffect(() => {
     if (isInitialized) {
       refreshBalance();
-      loadTransactions();
     }
-  }, [isInitialized, refreshBalance, loadTransactions]);
+  }, [isInitialized, refreshBalance]);
 
-  // Sync périodique (toutes les 2 minutes)
+  // Sync périodique
   useEffect(() => {
     if (isInitialized) {
       syncIntervalRef.current = setInterval(() => {
@@ -183,5 +210,6 @@ export const [BitcoinContext, useBitcoin] = createContextHook((): BitcoinState =
     error,
     refreshBalance,
     sendBitcoin,
+    estimateSendFee,
   };
 });
