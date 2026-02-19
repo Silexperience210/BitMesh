@@ -159,6 +159,25 @@ async function initDatabase(): Promise<void> {
     );
   `);
 
+  // Table: cashu_tokens (wallet Cashu)
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS cashu_tokens (
+      id TEXT PRIMARY KEY,
+      mintUrl TEXT NOT NULL,
+      amount INTEGER NOT NULL,
+      token TEXT NOT NULL,
+      proofs TEXT NOT NULL,
+      keysetId TEXT,
+      receivedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+      spent INTEGER NOT NULL DEFAULT 0,
+      spentAt INTEGER,
+      source TEXT,
+      memo TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_cashu_spent ON cashu_tokens(spent) WHERE spent = 0;
+    CREATE INDEX IF NOT EXISTS idx_cashu_mint ON cashu_tokens(mintUrl);
+  `);
+
   console.log('[Database] Tables initialisées');
 }
 
@@ -382,6 +401,90 @@ export async function cleanupOldMessages(): Promise<number> {
     console.log(`[Database] ${deletedCount} messages effacés (> ${MESSAGE_RETENTION_HOURS}h)`);
   }
   return deletedCount;
+}
+
+// --- Cashu Tokens (Wallet) ---
+
+export interface DBCashuToken {
+  id: string;
+  mintUrl: string;
+  amount: number;
+  token: string;
+  proofs: string;
+  keysetId?: string;
+  receivedAt: number;
+  spent: boolean;
+  spentAt?: number;
+  source?: string;
+  memo?: string;
+}
+
+export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    INSERT OR REPLACE INTO cashu_tokens 
+    (id, mintUrl, amount, token, proofs, keysetId, receivedAt, spent, source, memo)
+    VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?)
+  `, [
+    token.id,
+    token.mintUrl,
+    token.amount,
+    token.token,
+    token.proofs,
+    token.keysetId || null,
+    token.spent ? 1 : 0,
+    token.source || null,
+    token.memo || null,
+  ]);
+}
+
+export async function getUnspentCashuTokens(): Promise<DBCashuToken[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(`
+    SELECT * FROM cashu_tokens WHERE spent = 0 ORDER BY receivedAt DESC
+  `);
+  return rows.map(row => ({
+    ...row,
+    spent: Boolean(row.spent),
+  }));
+}
+
+export async function markCashuTokenSpent(id: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    UPDATE cashu_tokens 
+    SET spent = 1, spentAt = strftime('%s', 'now') * 1000
+    WHERE id = ?
+  `, [id]);
+}
+
+export async function getCashuTokenById(id: string): Promise<DBCashuToken | null> {
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<any>(`
+    SELECT * FROM cashu_tokens WHERE id = ?
+  `, [id]);
+  if (!row) return null;
+  return { ...row, spent: Boolean(row.spent) };
+}
+
+export async function getCashuBalance(): Promise<{ total: number; byMint: Record<string, number> }> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<{ mintUrl: string; amount: number }>(`
+    SELECT mintUrl, SUM(amount) as amount 
+    FROM cashu_tokens 
+    WHERE spent = 0 
+    GROUP BY mintUrl
+  `);
+  
+  let total = 0;
+  const byMint: Record<string, number> = {};
+  
+  for (const row of rows) {
+    total += row.amount;
+    byMint[row.mintUrl] = row.amount;
+  }
+  
+  return { total, byMint };
 }
 
 // --- User Profile (display name personnalisable) ---

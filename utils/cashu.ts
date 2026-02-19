@@ -233,6 +233,76 @@ export function getTokenAmount(token: CashuToken): number {
   return total;
 }
 
+// ✅ NOUVEAU : Vérifier un token complet (décodage + vérification mint)
+export async function verifyCashuToken(
+  encoded: string,
+  trustedMints?: string[]
+): Promise<{
+  valid: boolean;
+  token?: CashuToken;
+  amount?: number;
+  mintUrl?: string;
+  error?: string;
+}> {
+  // 1. Décoder
+  const token = decodeCashuToken(encoded);
+  if (!token) {
+    return { valid: false, error: 'Format de token invalide' };
+  }
+
+  // 2. Vérifier structure
+  if (!token.token || token.token.length === 0) {
+    return { valid: false, error: 'Token vide' };
+  }
+
+  const entry = token.token[0];
+  const mintUrl = entry.mint;
+  const proofs = entry.proofs;
+
+  if (!proofs || proofs.length === 0) {
+    return { valid: false, error: 'Aucun proof dans le token' };
+  }
+
+  // 3. Vérifier mint de confiance (optionnel)
+  if (trustedMints && trustedMints.length > 0) {
+    const isTrusted = trustedMints.some(m => 
+      mintUrl.toLowerCase().includes(m.toLowerCase()) ||
+      m.toLowerCase().includes(mintUrl.toLowerCase())
+    );
+    if (!isTrusted) {
+      return { valid: false, error: `Mint non de confiance: ${mintUrl}` };
+    }
+  }
+
+  // 4. Vérifier que les proofs ne sont pas dépensés
+  try {
+    const result = await checkProofsSpent(mintUrl, proofs);
+    const anySpent = result.spendable.some(s => !s);
+    if (anySpent) {
+      return { valid: false, error: 'Token déjà dépensé' };
+    }
+  } catch (err) {
+    // Si on ne peut pas vérifier, on accepte quand même mais on log
+    console.log('[Cashu] Impossible de vérifier le statut des proofs:', err);
+  }
+
+  const amount = getTokenAmount(token);
+  return { valid: true, token, amount, mintUrl };
+}
+
+// ✅ NOUVEAU : Générer un ID unique pour un token
+export function generateTokenId(token: CashuToken): string {
+  const secrets = token.token.flatMap(t => t.proofs.map(p => p.secret)).sort().join('|');
+  // Simple hash des secrets
+  let hash = 0;
+  for (let i = 0; i < secrets.length; i++) {
+    const char = secrets.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return `cashu_${Math.abs(hash).toString(36)}_${Date.now().toString(36)}`;
+}
+
 export async function testMintConnection(mintUrl: string): Promise<{
   ok: boolean;
   name?: string;

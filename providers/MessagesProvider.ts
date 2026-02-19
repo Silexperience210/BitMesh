@@ -39,7 +39,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
-import { cleanupOldMessages, getUserProfile, setUserProfile } from '@/utils/database';
+import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity, verifyNodeId } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -62,6 +62,8 @@ import {
   extractPosition,
   compressWithFallback,
 } from '@/utils/meshcore-protocol';
+// Import Cashu validation
+import { verifyCashuToken, decodeCashuToken, getTokenAmount, generateTokenId } from '@/utils/cashu';
 import { getAckService } from '@/services/AckService';
 import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/services/ChunkManager';
 
@@ -575,7 +577,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   }, [identity]);
 
   // Handler pour un message DM entrant
-  const handleIncomingDM = useCallback((topic: string, payloadStr: string) => {
+  const handleIncomingDM = useCallback(async (topic: string, payloadStr: string) => {
     if (!identity) return;
     try {
       const wire = JSON.parse(payloadStr) as WireMessage;
@@ -597,6 +599,43 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       
       const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
 
+      // ✅ NOUVEAU : Validation et stockage des tokens Cashu
+      let cashuAmount: number | undefined;
+      let cashuTokenStr: string | undefined;
+      
+      if (wire.type === 'cashu') {
+        try {
+          const verification = await verifyCashuToken(plaintext);
+          if (verification.valid && verification.token) {
+            cashuAmount = verification.amount;
+            cashuTokenStr = plaintext;
+            
+            // Stocker dans le wallet Cashu
+            const tokenId = generateTokenId(verification.token);
+            await saveCashuToken({
+              id: tokenId,
+              mintUrl: verification.mintUrl || 'unknown',
+              amount: verification.amount || 0,
+              token: plaintext,
+              proofs: JSON.stringify(verification.token.token[0].proofs),
+              source: fromNodeIdValue,
+              memo: `Reçu de ${fromNodeIdValue}`,
+              spent: false,
+            });
+            console.log('[Cashu] Token validé et stocké:', tokenId, verification.amount, 'sats');
+          } else {
+            console.log('[Cashu] Token invalide reçu:', verification.error);
+            // On garde le message mais on marque comme invalide
+            cashuAmount = 0;
+            cashuTokenStr = plaintext;
+          }
+        } catch (err) {
+          console.log('[Cashu] Erreur validation token:', err);
+          cashuAmount = parseCashuAmount(plaintext);
+          cashuTokenStr = plaintext;
+        }
+      }
+
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: fromNodeIdValue,
@@ -607,8 +646,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         timestamp: wire.ts,
         isMine: false,
         status: 'delivered',
-        cashuAmount: wire.type === 'cashu' ? parseCashuAmount(plaintext) : undefined,
-        cashuToken: wire.type === 'cashu' ? plaintext : undefined,
+        cashuAmount,
+        cashuToken: cashuTokenStr,
       };
 
       saveMessage(msg);

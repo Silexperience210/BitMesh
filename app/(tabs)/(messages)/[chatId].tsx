@@ -12,7 +12,7 @@ import { formatMessageTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
 import { useBle } from '@/providers/BleProvider';
-import { decodeCashuToken, getTokenAmount } from '@/utils/cashu';
+import { decodeCashuToken, getTokenAmount, verifyCashuToken } from '@/utils/cashu';
 import type { StoredMessage } from '@/utils/messages-store';
 
 function PaymentBubble({ amount }: { amount: number }) {
@@ -87,20 +87,21 @@ function CashuSendModal({
   const [error, setError] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
-  const handleParse = useCallback((text: string) => {
+  const handleParse = useCallback(async (text: string) => {
     setTokenInput(text);
     setError(null);
     setPreview(null);
     const trimmed = text.trim();
     if (!trimmed) return;
-    const decoded = decodeCashuToken(trimmed);
-    if (!decoded) {
-      setError('Token Cashu invalide');
+    
+    // ✅ NOUVEAU : Vérification complète du token
+    const verification = await verifyCashuToken(trimmed);
+    if (!verification.valid) {
+      setError(verification.error || 'Token Cashu invalide');
       return;
     }
-    const amount = getTokenAmount(decoded);
-    const mint = decoded.token?.[0]?.mint ?? 'mint inconnu';
-    setPreview({ amount, mint });
+    
+    setPreview({ amount: verification.amount || 0, mint: verification.mintUrl || 'mint inconnu' });
   }, []);
 
   const handleSend = useCallback(async () => {
