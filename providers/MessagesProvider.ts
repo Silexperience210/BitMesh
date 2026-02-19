@@ -59,6 +59,7 @@ import {
   extractPubkeyFromAnnounce,
 } from '@/utils/meshcore-protocol';
 import { getAckService } from '@/services/AckService';
+import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/services/ChunkManager';
 
 // Format du message sur le réseau MQTT
 interface WireMessage {
@@ -111,6 +112,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const mqttRef = useRef<MeshMqttClient | null>(null);
   const meshRouterRef = useRef<MeshRouter | null>(null);
   const ackServiceRef = useRef(getAckService());
+  const chunkManagerRef = useRef(getChunkManager());
   const joinedForums = useRef<Set<string>>(new Set());
   // ✅ NOUVEAU : Forums découverts
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
@@ -155,6 +157,21 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const myNodeIdUint64 = nodeIdToUint64(identity.nodeId);
       if (packet.toNodeId !== myNodeIdUint64 && packet.toNodeId !== 0n) {
         console.log('[MeshCore] Paquet ignoré (pas pour nous)');
+        return;
+      }
+
+      // ✅ Gérer les chunks (messages longs)
+      const { isChunkPacket } = require('@/utils/meshcore-protocol');
+      if (isChunkPacket(packet)) {
+        const result = chunkManagerRef.current.handleIncomingChunk(packet);
+        
+        if (result.complete && result.message) {
+          // Message complet reconstitué
+          console.log('[MeshCore] Message chunké reconstitué:', result.message.length, 'caractères');
+          // TODO: Traiter le message reconstitué comme un TEXT normal
+        } else if (result.progress) {
+          console.log('[MeshCore] Chunk reçu:', result.progress, '%');
+        }
         return;
       }
 
@@ -821,30 +838,81 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       throw new Error('Non connecté');
     }
 
-    const id = identity; // capture stable
+    // ✅ Validation taille message
+    const validation = validateMessageSize(text);
+    if (!validation.valid) {
+      console.warn(`[Messages] Message trop long: ${validation.size}/${validation.max} bytes`);
+      // Le chunking sera géré automatiquement ci-dessous
+    }
+
+    const id = identity;
     const isForum = convId.startsWith('forum:');
     const msgId = generateMsgId();
     const ts = Date.now();
 
+    // ✅ Utiliser chunking si message trop long (uniquement DM, pas forum)
+    if (!isForum && chunkManagerRef.current.needsChunking(text)) {
+      console.log('[Messages] Utilisation du chunking pour message long');
+      const result = await chunkManagerRef.current.sendMessageWithChunking(
+        text,
+        id.nodeId,
+        convId,
+        async (packet) => {
+          if (ble.connected) {
+            await ble.sendPacket(packet);
+          } else {
+            throw new Error('BLE non connecté');
+          }
+        },
+        true // encrypted
+      );
+      
+      if (!result.success) {
+        throw new Error(`Chunking échoué: ${result.error}`);
+      }
+      
+      console.log(`[Messages] Message envoyé en ${result.chunksSent} chunks`);
+      
+      // Sauvegarder localement
+      const msg: StoredMessage = {
+        id: msgId,
+        conversationId: convId,
+        from: id.nodeId,
+        fromPubkey: id.pubkeyHex,
+        text,
+        type,
+        timestamp: ts,
+        isMine: true,
+        status: 'sent',
+      };
+      await saveMessage(msg);
+      await updateConversationLastMessage(convId, text.slice(0, 50), ts, false);
+      
+      setMessagesByConv(prev => ({
+        ...prev,
+        [convId]: [...(prev[convId] ?? []), msg],
+      }));
+      
+      return;
+    }
+
     if (isForum) {
-      const channelName = convId.slice(6); // enlever "forum:"
+      const channelName = convId.slice(6);
       const enc = encryptForum(text, channelName);
       const topic = TOPICS.forum(channelName);
       publishAndStore(msgId, convId, text, enc, topic, ts, type, id);
       return;
     }
 
-    // DM: récupérer pubkey du pair depuis nos conversations
+    // DM normal (sans chunking)
     const conv = conversations.find(c => c.id === convId);
     if (!conv?.peerPubkey) {
-      // Tenter de récupérer la pubkey du pair via MQTT (retained message)
       return new Promise((resolve, reject) => {
         fetchPeerPubkey(mqttRef.current!, convId, (pubkeyHex) => {
           if (!pubkeyHex) {
             reject(new Error('Pair hors ligne — clé publique introuvable'));
             return;
           }
-          // Persister la pubkey dans AsyncStorage pour les envois futurs hors ligne
           setConversations(prev => {
             const updated = prev.map(c =>
               c.id === convId ? { ...c, peerPubkey: pubkeyHex } : c
@@ -862,7 +930,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
     const enc = encryptDM(text, id.privkeyBytes, conv.peerPubkey);
     publishAndStore(msgId, convId, text, enc, TOPICS.dm(convId), ts, type, id);
-  }, [identity, conversations, publishAndStore]);
+  }, [identity, conversations, publishAndStore, ble.connected]);
 
   // Envoyer un Cashu token
   const sendCashu = useCallback(async (
