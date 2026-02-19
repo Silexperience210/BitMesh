@@ -49,7 +49,7 @@ import {
   type MeshCorePacket,
   MeshCoreMessageType,
   MeshCoreFlags,
-  createTextMessage,
+  createTextMessageSync,
   extractTextFromPacket,
   uint64ToNodeId,
   nodeIdToUint64,
@@ -58,6 +58,7 @@ import {
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
 } from '@/utils/meshcore-protocol';
+import { getAckService } from '@/services/AckService';
 
 // Format du message sur le réseau MQTT
 interface WireMessage {
@@ -109,6 +110,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const mqttRef = useRef<MeshMqttClient | null>(null);
   const meshRouterRef = useRef<MeshRouter | null>(null);
+  const ackServiceRef = useRef(getAckService());
   const joinedForums = useRef<Set<string>>(new Set());
   // ✅ NOUVEAU : Forums découverts
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
@@ -730,16 +732,19 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const encryptedPayload = encodeEncryptedPayload(enc);
 
         // Créer paquet MeshCore TEXT binaire avec payload chiffré
+        // Utiliser un ID unique basé sur timestamp + compteur
+        const messageId = (Date.now() % 0xFFFFFFFF);
+        
         const packet: MeshCorePacket = {
           version: 0x01,
           type: MeshCoreMessageType.TEXT,
-          flags: MeshCoreFlags.ENCRYPTED, // ✅ Marquer comme chiffré
+          flags: MeshCoreFlags.ENCRYPTED,
           ttl: 10,
-          messageId: Math.floor(Math.random() * 0xFFFFFFFF),
+          messageId,
           fromNodeId: nodeIdToUint64(id.nodeId),
           toNodeId: nodeIdToUint64(convId),
           timestamp: Math.floor(Date.now() / 1000),
-          payload: encryptedPayload, // ✅ Payload chiffré (nonce + ciphertext)
+          payload: encryptedPayload,
         };
 
         await ble.sendPacket(packet);

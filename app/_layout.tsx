@@ -5,12 +5,14 @@ import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { ActivityIndicator, View, Text } from "react-native";
 import Colors from "@/constants/colors";
 import { WalletSeedContext } from "@/providers/WalletSeedProvider";
 import { AppSettingsContext } from "@/providers/AppSettingsProvider";
 import { GatewayContext } from "@/providers/GatewayProvider";
 import { MessagesContext } from "@/providers/MessagesProvider";
 import { BleProvider } from "@/providers/BleProvider";
+import { useAppInitialization } from "@/hooks/useAppInitialization";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -33,30 +35,52 @@ function RootLayoutNav() {
   );
 }
 
-export default function RootLayout() {
-  const [isReady, setIsReady] = useState(false);
+function AppContent() {
+  const { isReady, isMigrating, error } = useAppInitialization();
+  const [onboardingDone, setOnboardingDone] = useState<boolean | null>(null);
 
   useEffect(() => {
-    async function prepare() {
+    async function checkOnboarding() {
       try {
-        const onboardingDone = await AsyncStorage.getItem(ONBOARDING_KEY);
-        // Si l'onboarding n'a jamais été fait, on affiche l'onboarding
-        // Sinon on va directement aux tabs
-        await SplashScreen.hideAsync();
-        setIsReady(true);
+        const done = await AsyncStorage.getItem(ONBOARDING_KEY);
+        setOnboardingDone(done === 'true');
       } catch (e) {
         console.warn('Error checking onboarding status:', e);
-        await SplashScreen.hideAsync();
-        setIsReady(true);
+        setOnboardingDone(false);
       }
     }
-    prepare();
+    checkOnboarding();
   }, []);
 
-  if (!isReady) {
-    return null;
+  useEffect(() => {
+    if (isReady && onboardingDone !== null) {
+      SplashScreen.hideAsync();
+    }
+  }, [isReady, onboardingDone]);
+
+  // Écran de chargement pendant l'initialisation
+  if (!isReady || onboardingDone === null) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background }}>
+        <ActivityIndicator size="large" color={Colors.tint} />
+        {isMigrating && (
+          <Text style={{ marginTop: 16, color: Colors.text }}>
+            Migration des données...
+          </Text>
+        )}
+        {error && (
+          <Text style={{ marginTop: 16, color: 'red' }}>
+            Erreur: {error}
+          </Text>
+        )}
+      </View>
+    );
   }
 
+  return <RootLayoutNav />;
+}
+
+export default function RootLayout() {
   return (
     <QueryClientProvider client={queryClient}>
       <AppSettingsContext>
@@ -64,9 +88,9 @@ export default function RootLayout() {
           <BleProvider>
             <GatewayContext>
               <MessagesContext>
-                <GestureHandlerRootView>
+                <GestureHandlerRootView style={{ flex: 1 }}>
                   <StatusBar style="light" />
-                  <RootLayoutNav />
+                  <AppContent />
                 </GestureHandlerRootView>
               </MessagesContext>
             </GatewayContext>
