@@ -33,7 +33,7 @@ interface OldMessage {
   type: 'text' | 'cashu' | 'btc_tx' | 'lora';
   timestamp: number;
   isMine: boolean;
-  status: 'sent' | 'delivered' | 'pending' | 'failed';
+  status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
   cashuAmount?: number;
   cashuToken?: string;
   btcAmount?: number;

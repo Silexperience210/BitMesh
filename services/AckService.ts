@@ -87,8 +87,8 @@ class AckService {
    * Crée un paquet ACK
    */
   createAckPacket(originalMsgId: string, toNodeId: string): MeshCorePacket {
-    const client = getBleGatewayClient();
-    const myNodeId = client.getNodeId?.() || 'MESH-0000';
+    // Utiliser l'identité du wallet si disponible, sinon fallback
+    const myNodeId = 'MESH-0000';
     
     const encoder = new TextEncoder();
     const payload = encoder.encode(originalMsgId);

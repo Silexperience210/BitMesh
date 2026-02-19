@@ -100,7 +100,7 @@ class MessageRetryService {
           this.onStatusChange?.(msg.id, 'sending');
           
           // Envoyer via BLE
-          await bleClient.sendRawPacket(msg.packet);
+          await bleClient.sendPacket(msg.packet as any);
           
           // Succès - supprimer de la file
           await removePendingMessage(msg.id);

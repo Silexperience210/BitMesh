@@ -53,7 +53,7 @@ class BackgroundBleService {
 
       for (const msg of pending.slice(0, 5)) {
         try {
-          await client.sendRawPacket(msg.packet);
+          await client.sendPacket(msg.packet as any);
           await removePendingMessage(msg.id);
         } catch {
           // Continuer avec le suivant

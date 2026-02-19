@@ -502,7 +502,7 @@ function CashuKeysetsList({
 }
 
 function TransactionItem({ tx, btcPrice, currency }: { tx: FormattedTransaction; btcPrice: number; currency: string }) {
-  const isSent = tx.type === 'sent';
+  const isSent = tx.type === 'outgoing';
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   const handlePressIn = useCallback(() => {
@@ -545,7 +545,7 @@ function TransactionItem({ tx, btcPrice, currency }: { tx: FormattedTransaction;
           </Text>
           <Text style={styles.txMemo}>
             {tx.confirmed ? (txDate ? txDate.toLocaleDateString() : 'Confirmed') : 'Unconfirmed'}
-            {tx.fee > 0 ? ` · ${tx.fee} sat fee` : ''}
+            {tx.fee && tx.fee > 0 ? ` · ${tx.fee} sat fee` : ''}
           </Text>
         </View>
         <View style={styles.txAmountCol}>
@@ -598,7 +598,7 @@ export default function WalletScreen() {
     queryFn: async () => {
       if (!walletInfo?.firstReceiveAddress) return [];
       console.log('[Wallet] Fetching BTC transactions from', mempoolUrl);
-      const raw = await fetchAddressTransactions(mempoolUrl, walletInfo.firstReceiveAddress);
+      const raw = await fetchAddressTransactions(walletInfo.firstReceiveAddress, 50, mempoolUrl);
       return formatTransactions(raw, allAddresses);
     },
     enabled: isInitialized && !!walletInfo?.firstReceiveAddress,

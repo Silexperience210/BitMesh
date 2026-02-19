@@ -26,7 +26,7 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
       }
     }
   }
-  return db;
+  return db!;
 }
 
 /**

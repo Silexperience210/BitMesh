@@ -1133,7 +1133,15 @@ export default function SettingsScreen() {
   const [autoRelay, setAutoRelay] = React.useState<boolean>(true);
   const [notifications, setNotifications] = React.useState<boolean>(true);
   const [btEnabled, setBtEnabled] = React.useState<boolean>(false);
-  const { isInitialized } = useWalletSeed();
+  const [showSeedQRScanner, setShowSeedQRScanner] = React.useState<boolean>(false);
+  const { isInitialized, importWallet } = useWalletSeed();
+
+  const handleSeedQRScanned = useCallback((mnemonic: string) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    importWallet(mnemonic);
+    setShowSeedQRScanner(false);
+    Alert.alert('Succès', 'Seed importée depuis SeedQR');
+  }, [importWallet]);
 
   const handleToggle = useCallback((setter: (v: boolean) => void) => {
     return (val: boolean) => {

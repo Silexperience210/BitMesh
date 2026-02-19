@@ -31,9 +31,10 @@ export interface MempoolFeeEstimates {
 /**
  * Teste la connexion à mempool.space
  */
-export async function testMempoolConnection(): Promise<{ success: boolean; error?: string }> {
+export async function testMempoolConnection(url?: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const response = await fetch(`${MEMPOOL_API_BASE}/blocks/tip/height`, {
+    const baseUrl = url || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/blocks/tip/height`, {
       method: 'GET',
       headers: { 'Accept': 'text/plain' },
     });
@@ -54,9 +55,10 @@ export async function testMempoolConnection(): Promise<{ success: boolean; error
 /**
  * Récupère les UTXOs d'une adresse Bitcoin
  */
-export async function getAddressUtxos(address: string): Promise<MempoolUtxo[]> {
+export async function getAddressUtxos(address: string, url?: string): Promise<MempoolUtxo[]> {
   try {
-    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}/utxo`);
+    const baseUrl = url || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/address/${address}/utxo`);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -74,9 +76,10 @@ export async function getAddressUtxos(address: string): Promise<MempoolUtxo[]> {
 /**
  * Récupère le solde confirmé d'une adresse
  */
-export async function getAddressBalance(address: string): Promise<{ confirmed: number; unconfirmed: number; total: number }> {
+export async function getAddressBalance(address: string, url?: string): Promise<{ confirmed: number; unconfirmed: number; total: number }> {
   try {
-    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}`);
+    const baseUrl = url || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/address/${address}`);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -96,9 +99,10 @@ export async function getAddressBalance(address: string): Promise<{ confirmed: n
 /**
  * Récupère les estimations de frais actuels
  */
-export async function getFeeEstimates(): Promise<MempoolFeeEstimates> {
+export async function getFeeEstimates(url?: string): Promise<MempoolFeeEstimates> {
   try {
-    const response = await fetch(`${MEMPOOL_API_BASE}/v1/fees/recommended`);
+    const baseUrl = url || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/v1/fees/recommended`);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -122,11 +126,12 @@ export async function getFeeEstimates(): Promise<MempoolFeeEstimates> {
  * Broadcast une transaction raw hex sur le réseau Bitcoin
  * C'est la fonction clé pour envoyer des bitcoins
  */
-export async function broadcastTransaction(txHex: string): Promise<{ txid: string }> {
+export async function broadcastTransaction(txHex: string, url?: string): Promise<{ txid: string }> {
   try {
     console.log('[Mempool] Broadcast transaction...');
+    const baseUrl = url || MEMPOOL_API_BASE;
     
-    const response = await fetch(`${MEMPOOL_API_BASE}/tx`, {
+    const response = await fetch(`${baseUrl}/tx`, {
       method: 'POST',
       headers: {
         'Content-Type': 'text/plain',
@@ -170,9 +175,10 @@ export async function getTransactionStatus(txid: string): Promise<MempoolTxStatu
 /**
  * Récupère l'historique des transactions d'une adresse
  */
-export async function getAddressTransactions(address: string, limit: number = 50): Promise<any[]> {
+export async function getAddressTransactions(address: string, limit: number = 50, url?: string): Promise<any[]> {
   try {
-    const response = await fetch(`${MEMPOOL_API_BASE}/address/${address}/txs`);
+    const baseUrl = url || MEMPOOL_API_BASE;
+    const response = await fetch(`${baseUrl}/address/${address}/txs`);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
@@ -190,7 +196,7 @@ export async function getAddressTransactions(address: string, limit: number = 50
 export const fetchAddressBalance = getAddressBalance;
 export const fetchAddressTransactions = getAddressTransactions;
 export const fetchFeeEstimates = getFeeEstimates;
-export const fetchBtcPrice = async (mempoolUrl: string, currency: string): Promise<number> => {
+export const fetchBtcPrice = async (mempoolUrl?: string, currency?: string): Promise<number> => {
   // TODO: Implémenter récupération prix BTC
   return currency === 'USD' ? 65000 : 60000;
 };

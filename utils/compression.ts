@@ -156,7 +156,7 @@ export function decompressFromLora(data: Uint8Array): string {
  * Vérifie si les données sont compressées Smaz
  */
 export function isCompressed(data: Uint8Array): boolean {
-  return data.length >= 2 && data[0] === 0x01 && (data[1] & 0x01);
+  return data.length >= 2 && data[0] === 0x01 && (data[1] & 0x01) !== 0;
 }
 
 /**

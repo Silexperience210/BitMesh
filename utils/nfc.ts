@@ -97,7 +97,8 @@ export async function readTransactionFromNFC(): Promise<{
     
     // Décoder le premier record
     const record = ndefRecords[0];
-    const decoded = Ndef.text.decodePayload(record.payload);
+    const payload = new Uint8Array(record.payload as number[]);
+    const decoded = Ndef.text.decodePayload(payload);
     
     // Parser la transaction
     const txRecord = parseNDEFTransaction(decoded);

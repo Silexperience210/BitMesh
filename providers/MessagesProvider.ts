@@ -66,7 +66,7 @@ import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/ser
 interface WireMessage {
   v: number;
   id: string;
-  from: string;
+  from?: string;
   fromNodeId: string;
   fromPubkey: string;
   to: string;          // nodeId destinataire ou "forum:channelName"
@@ -361,6 +361,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
         // ✅ Traiter l'annonce de clé publique
+        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         const pubkeyHex = extractPubkeyFromAnnounce(packet);
         if (!pubkeyHex) {
           console.error('[MeshCore] KEY_ANNOUNCE invalide');
@@ -531,11 +532,13 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       if (wire.from === identity.nodeId) return; // ignorer nos propres messages
 
       const plaintext = decryptDM(wire.enc, identity.privkeyBytes, wire.fromPubkey);
+      
+      const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
 
       const msg: StoredMessage = {
         id: wire.id,
-        conversationId: wire.from,
-        fromNodeId: wire.from,
+        conversationId: fromNodeIdValue,
+        fromNodeId: fromNodeIdValue,
         fromPubkey: wire.fromPubkey,
         text: plaintext,
         type: wire.type,
@@ -547,20 +550,20 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       };
 
       saveMessage(msg);
-      updateConversationLastMessage(wire.from, plaintext.slice(0, 50), wire.ts, true);
+      updateConversationLastMessage(fromNodeIdValue, plaintext.slice(0, 50), wire.ts, true);
 
       setMessagesByConv(prev => ({
         ...prev,
-        [wire.from]: [...(prev[wire.from] ?? []), msg],
+        [fromNodeIdValue]: [...(prev[fromNodeIdValue] ?? []), msg],
       }));
 
       // Créer la conversation si elle n'existe pas encore
       setConversations(prev => {
-        const exists = prev.find(c => c.id === wire.from);
+        const exists = prev.find(c => c.id === fromNodeIdValue);
         if (!exists) {
           const newConv: StoredConversation = {
-            id: wire.from,
-            name: wire.from,
+            id: fromNodeIdValue,
+            name: fromNodeIdValue,
             isForum: false,
             peerPubkey: wire.fromPubkey,
             lastMessage: plaintext.slice(0, 50),
@@ -572,7 +575,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           return [newConv, ...prev];
         }
         return prev.map(c => {
-          if (c.id !== wire.from) return c;
+          if (c.id !== fromNodeIdValue) return c;
           const updated = { ...c, lastMessage: plaintext.slice(0, 50), lastMessageTime: wire.ts, unreadCount: c.unreadCount + 1, peerPubkey: wire.fromPubkey, online: true };
           // Persister la pubkey du pair pour les envois futurs
           if (!c.peerPubkey) saveConversation(updated);
@@ -607,12 +610,14 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
       if (action === 'deliver') {
         // Message pour nous → déchiffrer et afficher
-        const plaintext = decryptDM(meshMsg.enc, identity.privkeyBytes, meshMsg.fromPubkey || '');
+        const plaintext = decryptDM(meshMsg.enc as any, identity.privkeyBytes, meshMsg.fromPubkey || '');
+        
+        const fromNodeIdValue = meshMsg.from || 'unknown';
 
         const msg: StoredMessage = {
           id: meshMsg.msgId,
-          conversationId: meshMsg.from,
-          fromNodeId: meshMsg.from,
+          conversationId: fromNodeIdValue,
+          fromNodeId: fromNodeIdValue,
           fromPubkey: meshMsg.fromPubkey,
           text: plaintext,
           type: meshMsg.type,
@@ -624,20 +629,20 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         };
 
         saveMessage(msg);
-        updateConversationLastMessage(meshMsg.from, plaintext.slice(0, 50), meshMsg.ts, true);
+        updateConversationLastMessage(fromNodeIdValue, plaintext.slice(0, 50), meshMsg.ts, true);
 
         setMessagesByConv(prev => ({
           ...prev,
-          [meshMsg.from]: [...(prev[meshMsg.from] ?? []), msg],
+          [fromNodeIdValue]: [...(prev[fromNodeIdValue] ?? []), msg],
         }));
 
         // Créer conversation si nécessaire
         setConversations(prev => {
-          const exists = prev.find(c => c.id === meshMsg.from);
+          const exists = prev.find(c => c.id === fromNodeIdValue);
           if (!exists) {
             const newConv: StoredConversation = {
-              id: meshMsg.from,
-              name: meshMsg.from,
+              id: fromNodeIdValue,
+              name: fromNodeIdValue,
               isForum: false,
               peerPubkey: meshMsg.fromPubkey,
               lastMessage: plaintext.slice(0, 50),
@@ -649,7 +654,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             return [newConv, ...prev];
           }
           return prev.map(c => {
-            if (c.id !== meshMsg.from) return c;
+            if (c.id !== fromNodeIdValue) return c;
             return {
               ...c,
               lastMessage: plaintext.slice(0, 50),
@@ -734,10 +739,12 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       // Si le message vient de nous-mêmes, publishAndStore l'a déjà sauvegardé → ignorer l'écho
       if (isMine) return;
 
+      const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
+
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: convId,
-        fromNodeId: wire.from,
+        fromNodeId: fromNodeIdValue,
         fromPubkey: wire.fromPubkey,
         text: plaintext,
         type: wire.type,
@@ -873,7 +880,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         console.error('[MeshCore] Erreur envoi BLE, fallback MQTT:', err);
         // Fallback MQTT si BLE échoue
         if (mqttRef.current && meshRouterRef.current) {
-          const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type);
+          const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type as 'text' | 'cashu' | 'btc_tx');
           publishMesh(mqttRef.current, TOPICS.route(convId), JSON.stringify(meshMsg), 0);
         }
       }
@@ -881,7 +888,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       // Transport MQTT classique (forums, ou pas de BLE)
       if (isDM && meshRouterRef.current) {
         // DM via MQTT multi-hop routing
-        const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type);
+        const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type as 'text' | 'cashu' | 'btc_tx');
         publishMesh(mqttRef.current, TOPICS.route(convId), JSON.stringify(meshMsg), 0);
         console.log(`[MeshRouter] Message MQTT envoyé → ${convId} (TTL=${meshMsg.ttl})`);
       } else {

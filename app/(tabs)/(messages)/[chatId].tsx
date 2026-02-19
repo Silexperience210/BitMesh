@@ -63,7 +63,7 @@ function MessageBubble({ message }: { message: StoredMessage }) {
           </Text>
           {isMe && (
             <Text style={[styles.messageStatus, message.status === 'delivered' && styles.statusDelivered, message.status === 'failed' && styles.statusFailed]}>
-              {message.status === 'delivered' ? '✓✓' : message.status === 'sent' ? '✓' : message.status === 'pending' ? '◎' : '✗'}
+              {message.status === 'delivered' ? '✓✓' : message.status === 'sent' ? '✓' : message.status === 'sending' ? '◎' : '✗'}
             </Text>
           )}
         </View>
