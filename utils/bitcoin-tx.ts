@@ -1,21 +1,12 @@
 /**
  * Bitcoin transactions - Création et signature de transactions Bitcoin
- * Utilise bitcoinjs-lib pour la construction et la signature
+ * Utilise bitcoinjs-lib pour la construction et secp256k1 pour la signature
+ * Compatible React Native (pas de WASM)
  */
 import * as bitcoin from 'bitcoinjs-lib';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeed } from '@/utils/bitcoin';
 import type { MempoolUtxo } from './mempool';
-
-// Lazy initialization of ecc library
-let eccInitialized = false;
-function initEcc() {
-  if (!eccInitialized) {
-    const ecc = require('tiny-secp256k1');
-    bitcoin.initEccLib(ecc);
-    eccInitialized = true;
-  }
-}
 
 const NETWORK = bitcoin.networks.bitcoin; // Mainnet
 const DUST_LIMIT = 546; // sats - minimum pour une sortie
@@ -97,8 +88,6 @@ export function createTransaction(
   changeAddress: string,
   feeRate: number
 ): UnsignedTransaction {
-  initEcc(); // Initialize ECC library
-  
   // Sélectionner les UTXOs
   const { selected, total, fee } = selectUtxos(utxos, amountSats, feeRate);
   
@@ -157,6 +146,7 @@ export function createTransaction(
 /**
  * Signe une transaction P2WPKH avec le mnemonic
  * Version pour adresses SegWit natives (bc1...)
+ * Utilise secp256k1 (JavaScript pur, compatible React Native)
  */
 export async function signTransaction(
   psbtHex: string,
@@ -164,7 +154,8 @@ export async function signTransaction(
   utxos: MempoolUtxo[]
 ): Promise<string> {
   try {
-    initEcc(); // Initialize ECC library
+    // Importer secp256k1 (JavaScript pur, pas de WASM)
+    const secp256k1 = require('secp256k1');
     
     // Reconstruire le PSBT
     const psbt = bitcoin.Psbt.fromHex(psbtHex, { network: NETWORK });
@@ -176,15 +167,6 @@ export async function signTransaction(
     
     // Pour chaque input, trouver la clé privée et signer
     for (let i = 0; i < psbt.inputCount; i++) {
-      const input = psbt.data.inputs[i];
-      
-      // Trouver l'UTXO correspondant
-      const utxo = utxos[i]; // Supposons que l'ordre est le même
-      
-      if (!utxo) {
-        throw new Error(`UTXO non trouvé pour l'input ${i}`);
-      }
-      
       // Dériver la clé privée pour cet UTXO (index 0 pour l'instant)
       const childKey = accountKey.deriveChild(0).deriveChild(i);
       
@@ -196,10 +178,9 @@ export async function signTransaction(
       const signer = {
         publicKey: Buffer.from(childKey.publicKey!),
         sign: (hash: Buffer) => {
-          // Utiliser tiny-secp256k1 pour signer
-          const eccLib = require('tiny-secp256k1');
-          const sig = eccLib.sign(hash, childKey.privateKey!);
-          return Buffer.from(sig);
+          // Utiliser secp256k1 (JavaScript pur) pour signer
+          const sig = secp256k1.ecdsaSign(hash, childKey.privateKey!);
+          return Buffer.from(sig.signature);
         }
       };
       
