@@ -361,14 +361,12 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       } else if (packet.type === MeshCoreMessageType.KEY_ANNOUNCE) {
         // ✅ Traiter l'annonce de clé publique
-        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         const pubkeyHex = extractPubkeyFromAnnounce(packet);
         if (!pubkeyHex) {
           console.error('[MeshCore] KEY_ANNOUNCE invalide');
           return;
         }
 
-        const fromNodeId = uint64ToNodeId(packet.fromNodeId);
         console.log('[MeshCore] Clé publique reçue depuis', fromNodeId, ':', pubkeyHex.slice(0, 16) + '...');
 
         // Sauvegarder la pubkey dans la conversation

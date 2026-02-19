@@ -748,3 +748,6 @@ export function extractChunkInfo(payload: Uint8Array): { messageId: number; chun
   
   return { messageId, chunkIndex, totalChunks, data };
 }
+
+// Re-export pour compatibilité
+export { compressWithFallback, decompress, isCompressed } from "./compression";
