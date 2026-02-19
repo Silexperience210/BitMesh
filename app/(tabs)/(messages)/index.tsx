@@ -102,11 +102,12 @@ function ConvItem({ conv, onPress }: { conv: StoredConversation; onPress: () => 
 }
 
 // Modal pour nouvelle conversation ou rejoindre un forum
-function NewChatModal({ visible, onClose, onDM, onForum }: {
+function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
   visible: boolean;
   onClose: () => void;
   onDM: (nodeId: string, name: string) => void;
   onForum: (channelName: string) => void;
+  mqttState: 'disconnected' | 'connecting' | 'connected' | 'error';
 }) {
   const { discoveredForums, announceForumPublic, joinForum: joinForumContext } = useMessages();
   const [tab, setTab] = useState<'dm' | 'forum' | 'discover'>('dm');
@@ -416,6 +417,7 @@ export default function MessagesScreen() {
         onClose={() => setModalVisible(false)}
         onDM={handleDM}
         onForum={handleForum}
+        mqttState={mqttState}
       />
     </View>
   );
