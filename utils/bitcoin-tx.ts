@@ -5,11 +5,17 @@
 import * as bitcoin from 'bitcoinjs-lib';
 import { HDKey } from '@scure/bip32';
 import { mnemonicToSeed } from '@/utils/bitcoin';
-import * as ecc from 'tiny-secp256k1';
 import type { MempoolUtxo } from './mempool';
 
-// Initialiser bitcoinjs-lib avec ecc
-bitcoin.initEccLib(ecc);
+// Lazy initialization of ecc library
+let eccInitialized = false;
+function initEcc() {
+  if (!eccInitialized) {
+    const ecc = require('tiny-secp256k1');
+    bitcoin.initEccLib(ecc);
+    eccInitialized = true;
+  }
+}
 
 const NETWORK = bitcoin.networks.bitcoin; // Mainnet
 const DUST_LIMIT = 546; // sats - minimum pour une sortie
@@ -91,6 +97,8 @@ export function createTransaction(
   changeAddress: string,
   feeRate: number
 ): UnsignedTransaction {
+  initEcc(); // Initialize ECC library
+  
   // Sélectionner les UTXOs
   const { selected, total, fee } = selectUtxos(utxos, amountSats, feeRate);
   
@@ -156,6 +164,8 @@ export async function signTransaction(
   utxos: MempoolUtxo[]
 ): Promise<string> {
   try {
+    initEcc(); // Initialize ECC library
+    
     // Reconstruire le PSBT
     const psbt = bitcoin.Psbt.fromHex(psbtHex, { network: NETWORK });
     
@@ -187,7 +197,8 @@ export async function signTransaction(
         publicKey: Buffer.from(childKey.publicKey!),
         sign: (hash: Buffer) => {
           // Utiliser tiny-secp256k1 pour signer
-          const sig = ecc.sign(hash, childKey.privateKey!);
+          const eccLib = require('tiny-secp256k1');
+          const sig = eccLib.sign(hash, childKey.privateKey!);
           return Buffer.from(sig);
         }
       };
