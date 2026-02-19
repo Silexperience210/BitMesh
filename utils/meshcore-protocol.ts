@@ -21,6 +21,36 @@ export enum MeshCoreMessageType {
   PING = 0x05,           // Ping/keepalive
   ROUTE_REQUEST = 0x06,  // Demande de route
   ROUTE_REPLY = 0x07,    // Réponse de route
+  CHUNK_START = 0x08,    // Premier chunk d'un message batch
+  CHUNK_MIDDLE = 0x09,   // Chunk intermédiaire
+  CHUNK_END = 0x0A,      // Dernier chunk
+}
+
+// Limite LoRa (taille max payload après header)
+export const LORA_MAX_PAYLOAD = 200; // bytes
+export const LORA_MAX_TEXT_CHARS = 200; // caractères
+
+/**
+ * Vérifie si un texte dépasse la limite LoRa
+ */
+export function validateMessageSize(text: string): { valid: boolean; size: number; max: number } {
+  const encoder = new TextEncoder();
+  const size = encoder.encode(text).length;
+  return {
+    valid: size <= LORA_MAX_PAYLOAD,
+    size,
+    max: LORA_MAX_PAYLOAD,
+  };
+}
+
+/**
+ * Interface pour un chunk de message
+ */
+export interface MessageChunk {
+  chunkIndex: number;
+  totalChunks: number;
+  messageId: number;
+  data: Uint8Array;
 }
 
 // Flags de message
@@ -512,4 +542,152 @@ export function extractPosition(packet: MeshCorePacket): { lat: number; lng: num
     lng: view.getFloat32(4, false),
     alt: view.getInt16(8, false),
   };
+}
+
+// ============================================================================
+// CHUNKING / BATCH MESSAGING
+// Pour envoyer des messages longs en plusieurs paquets LoRa
+// ============================================================================
+
+const CHUNK_HEADER_SIZE = 6; // bytes: [msgId(2) | chunkIdx(1) | totalChunks(1) | ...]
+const CHUNK_MAX_PAYLOAD = LORA_MAX_PAYLOAD - CHUNK_HEADER_SIZE - 10; // Marge pour chiffrement
+
+/**
+ * Découpe un message long en chunks pour envoi LoRa
+ * Retourne null si le message tient dans un seul paquet
+ */
+export function chunkMessage(
+  text: string,
+  messageId: number
+): MessageChunk[] | null {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(text);
+  
+  // Si ça tient dans un seul paquet, pas besoin de chunking
+  if (data.length <= LORA_MAX_PAYLOAD) {
+    return null;
+  }
+  
+  const chunks: MessageChunk[] = [];
+  const totalChunks = Math.ceil(data.length / CHUNK_MAX_PAYLOAD);
+  
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * CHUNK_MAX_PAYLOAD;
+    const end = Math.min(start + CHUNK_MAX_PAYLOAD, data.length);
+    const chunkData = data.slice(start, end);
+    
+    // Header du chunk: [msgId(2 bytes) | chunkIdx(1) | totalChunks(1)]
+    const header = new Uint8Array(4);
+    const headerView = new DataView(header.buffer);
+    headerView.setUint16(0, messageId % 65536, false); // 2 bytes
+    header[2] = i; // chunkIndex
+    header[3] = totalChunks; // totalChunks
+    
+    // Combiner header + data
+    const fullChunk = new Uint8Array(header.length + chunkData.length);
+    fullChunk.set(header, 0);
+    fullChunk.set(chunkData, header.length);
+    
+    chunks.push({
+      chunkIndex: i,
+      totalChunks,
+      messageId,
+      data: fullChunk,
+    });
+  }
+  
+  return chunks;
+}
+
+/**
+ * Crée un paquet MeshCore pour un chunk spécifique
+ */
+export function createChunkPacket(
+  fromNodeId: string,
+  toNodeId: string,
+  chunk: MessageChunk,
+  encrypted: boolean = false
+): MeshCorePacket {
+  let chunkType: MeshCoreMessageType;
+  
+  if (chunk.chunkIndex === 0) {
+    chunkType = MeshCoreMessageType.CHUNK_START;
+  } else if (chunk.chunkIndex === chunk.totalChunks - 1) {
+    chunkType = MeshCoreMessageType.CHUNK_END;
+  } else {
+    chunkType = MeshCoreMessageType.CHUNK_MIDDLE;
+  }
+  
+  return {
+    version: 0x01,
+    type: chunkType,
+    flags: encrypted ? MeshCoreFlags.ENCRYPTED : 0,
+    ttl: 10,
+    messageId: chunk.messageId,
+    fromNodeId: nodeIdToUint64(fromNodeId),
+    toNodeId: nodeIdToUint64(toNodeId),
+    timestamp: Math.floor(Date.now() / 1000),
+    payload: chunk.data,
+  };
+}
+
+/**
+ * Reconstitue un message à partir de chunks reçus
+ * Retourne null si incomplet
+ */
+export function reassembleChunks(
+  chunks: Map<number, Uint8Array>,
+  totalChunks: number
+): string | null {
+  if (chunks.size !== totalChunks) {
+    return null; // Pas tous les chunks
+  }
+  
+  // Vérifier qu'on a tous les indices
+  for (let i = 0; i < totalChunks; i++) {
+    if (!chunks.has(i)) return null;
+  }
+  
+  // Reconstituer
+  const parts: Uint8Array[] = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const chunk = chunks.get(i)!;
+    // Skip header (4 bytes)
+    parts.push(chunk.slice(4));
+  }
+  
+  // Concaténer
+  const totalLength = parts.reduce((sum, p) => sum + p.length, 0);
+  const fullData = new Uint8Array(totalLength);
+  let offset = 0;
+  for (const part of parts) {
+    fullData.set(part, offset);
+    offset += part.length;
+  }
+  
+  return new TextDecoder().decode(fullData);
+}
+
+/**
+ * Vérifie si un paquet est un chunk (et non un message complet)
+ */
+export function isChunkPacket(packet: MeshCorePacket): boolean {
+  return packet.type === MeshCoreMessageType.CHUNK_START ||
+         packet.type === MeshCoreMessageType.CHUNK_MIDDLE ||
+         packet.type === MeshCoreMessageType.CHUNK_END;
+}
+
+/**
+ * Extrait les infos d'un chunk depuis son payload
+ */
+export function extractChunkInfo(payload: Uint8Array): { messageId: number; chunkIndex: number; totalChunks: number; data: Uint8Array } | null {
+  if (payload.length < 4) return null;
+  
+  const view = new DataView(payload.buffer, payload.byteOffset);
+  const messageId = view.getUint16(0, false);
+  const chunkIndex = payload[2];
+  const totalChunks = payload[3];
+  const data = payload.slice(4);
+  
+  return { messageId, chunkIndex, totalChunks, data };
 }
