@@ -215,6 +215,16 @@ MIT License - Voir [LICENSE](./LICENSE)
 
 ---
 
+## 💝 Soutenir BitMesh
+
+Si vous trouvez BitMesh utile, vous pouvez soutenir le développement :
+
+**Cashu:** `silexperience@minibits.cash`
+
+Vos dons aident à maintenir et améliorer le projet. Merci !
+
+---
+
 <div align="center">
 
 **Fait avec ❤️ par la communauté BitMesh**
