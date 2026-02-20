@@ -40,6 +40,7 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
+import Constants from 'expo-constants';
 import Colors from '@/constants/colors';
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
 import { useBitcoin } from '@/providers/BitcoinProvider';
@@ -1280,7 +1281,7 @@ export default function SettingsScreen() {
           <SettingRow
             icon={<Info size={18} color={Colors.textSecondary} />}
             label="About MeshCore"
-            value="v1.0.0"
+            value={`v${Constants.expoConfig?.version ?? '1.0.1'}`}
           />
         </View>
       </View>

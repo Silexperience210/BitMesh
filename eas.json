@@ -10,11 +10,13 @@
     "preview": {
       "distribution": "internal",
       "credentialsSource": "local",
+      "channel": "preview",
       "android": {
         "buildType": "apk"
       }
     },
     "production": {
+      "channel": "production",
       "android": {
         "buildType": "app-bundle"
       }

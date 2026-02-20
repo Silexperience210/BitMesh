@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,10 @@ import {
 } from 'react-native';
 import { Download, CheckCircle, AlertCircle } from 'lucide-react-native';
 import * as Updates from 'expo-updates';
+import Constants from 'expo-constants';
 import Colors from '@/constants/colors';
+
+const APP_VERSION = Constants.expoConfig?.version ?? '1.0.1';
 
 export function UpdateChecker() {
   const [checking, setChecking] = useState(false);
@@ -63,7 +66,10 @@ export function UpdateChecker() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Mises à jour</Text>
+      <View style={styles.versionRow}>
+        <Text style={styles.title}>Mises à jour</Text>
+        <Text style={styles.version}>v{APP_VERSION}</Text>
+      </View>
       
       {updateAvailable ? (
         <View style={styles.updateAvailable}>
@@ -102,11 +108,22 @@ const styles = StyleSheet.create({
     padding: 16,
     marginVertical: 8,
   },
+  versionRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
   title: {
     color: Colors.text,
     fontSize: 16,
     fontWeight: '700',
-    marginBottom: 12,
+  },
+  version: {
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontFamily: 'monospace',
+    fontWeight: '600',
   },
   upToDate: {
     flexDirection: 'row',
