@@ -47,6 +47,8 @@ import { useAppSettings } from '@/providers/AppSettingsProvider';
 import SeedQRScanner from '@/components/SeedQRScanner';
 import { useGateway } from '@/providers/GatewayProvider';
 import { type ConnectionMode } from '@/providers/AppSettingsProvider';
+import { useMessages } from '@/providers/MessagesProvider';
+import { useBle } from '@/providers/BleProvider';
 import { testMempoolConnection } from '@/utils/mempool';
 import { BROKER_OPTIONS } from '@/utils/mqtt-client';
 import { UpdateChecker } from '@/components/UpdateChecker';
@@ -1160,11 +1162,14 @@ function NetworkSettingsCard() {
 }
 
 export default function SettingsScreen() {
-  const [autoRelay, setAutoRelay] = React.useState<boolean>(true);
-  const [notifications, setNotifications] = React.useState<boolean>(true);
-  const [btEnabled, setBtEnabled] = React.useState<boolean>(false);
   const [showSeedQRScanner, setShowSeedQRScanner] = React.useState<boolean>(false);
   const { isInitialized, importWallet } = useWalletSeed();
+  const { settings, updateSettings } = useAppSettings();
+  const { identity } = useMessages();
+  const { connected: btEnabled } = useBle();
+
+  const autoRelay = settings.autoRelay;
+  const notifications = settings.notifications;
 
   const handleSeedQRScanned = useCallback((mnemonic: string) => {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -1173,12 +1178,12 @@ export default function SettingsScreen() {
     Alert.alert('Succès', 'Seed importée depuis SeedQR');
   }, [importWallet]);
 
-  const handleToggle = useCallback((setter: (v: boolean) => void) => {
+  const handleToggle = useCallback((key: 'autoRelay' | 'notifications') => {
     return (val: boolean) => {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      setter(val);
+      updateSettings({ [key]: val });
     };
-  }, []);
+  }, [updateSettings]);
 
   const showAlert = useCallback((title: string, message: string) => {
     Alert.alert(title, message);
@@ -1192,11 +1197,17 @@ export default function SettingsScreen() {
     >
       <View style={styles.profileCard}>
         <View style={styles.profileAvatar}>
-          <Text style={styles.profileAvatarText}>M</Text>
+          <Text style={styles.profileAvatarText}>
+            {identity?.displayName ? identity.displayName[0].toUpperCase() : 'M'}
+          </Text>
         </View>
-        <View>
-          <Text style={styles.profileName}>My Node</Text>
-          <Text style={styles.profileNodeId}>MESH-LOCAL-9X2F</Text>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.profileName}>
+            {identity?.displayName || 'Mon Node'}
+          </Text>
+          <Text style={styles.profileNodeId} numberOfLines={1}>
+            {identity?.nodeId || 'Non configuré'}
+          </Text>
         </View>
       </View>
 
@@ -1221,13 +1232,13 @@ export default function SettingsScreen() {
             icon={<Radio size={18} color={Colors.green} />}
             label="Auto Relay"
             value={autoRelay}
-            onToggle={handleToggle(setAutoRelay)}
+            onToggle={handleToggle('autoRelay')}
           />
           <SettingToggle
             icon={<Bluetooth size={18} color={Colors.blue} />}
             label="Bluetooth Serial"
             value={btEnabled}
-            onToggle={handleToggle(setBtEnabled)}
+            onToggle={() => {}}
           />
         </View>
       </View>
@@ -1259,7 +1270,7 @@ export default function SettingsScreen() {
             icon={<Bell size={18} color={Colors.textSecondary} />}
             label="Notifications"
             value={notifications}
-            onToggle={handleToggle(setNotifications)}
+            onToggle={handleToggle('notifications')}
           />
           <SettingRow
             icon={<HardDrive size={18} color={Colors.textSecondary} />}

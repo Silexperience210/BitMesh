@@ -9,10 +9,13 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice } from '@/utils/ble-gateway';
 import { type MeshCorePacket } from '@/utils/meshcore-protocol';
 import { getMessageRetryService } from '@/services/MessageRetryService';
 import { getBackgroundBleService } from '@/services/BackgroundBleService';
+
+const BLE_LAST_DEVICE_KEY = 'ble_last_device_id';
 
 interface BleState {
   connected: boolean;
@@ -66,6 +69,21 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         clientRef.current = client;
 
         console.log('[BleProvider] BLE initialized');
+
+        // Auto-reconnect au dernier appareil connu
+        try {
+          const lastDeviceId = await AsyncStorage.getItem(BLE_LAST_DEVICE_KEY);
+          if (lastDeviceId) {
+            console.log('[BleProvider] Auto-reconnect à:', lastDeviceId);
+            await client.connect(lastDeviceId);
+            const device = client.getConnectedDevice();
+            setState((prev) => ({ ...prev, connected: true, device }));
+            console.log('[BleProvider] Auto-reconnect réussi:', device?.name);
+          }
+        } catch (reconnectErr) {
+          // Silencieux — l'appareil n'est peut-être pas à portée
+          console.log('[BleProvider] Auto-reconnect échoué (appareil hors portée)');
+        }
       } catch (error: any) {
         console.error('[BleProvider] Initialization error:', error);
         setState((prev) => ({
@@ -192,6 +210,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         device,
       }));
 
+      // Persister l'ID pour auto-reconnect au prochain démarrage
+      await AsyncStorage.setItem(BLE_LAST_DEVICE_KEY, deviceId);
+
       console.log(`[BleProvider] Connected to ${device?.name}`);
     } catch (error: any) {
       console.error('[BleProvider] Connection error:', error);
@@ -211,6 +232,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await clientRef.current.disconnect();
+
+      // Effacer l'ID persisté (déconnexion volontaire = pas de reconnect)
+      await AsyncStorage.removeItem(BLE_LAST_DEVICE_KEY);
 
       setState((prev) => ({
         ...prev,

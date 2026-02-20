@@ -467,20 +467,27 @@ export default function MessagesScreen() {
         </Text>
       </View>
 
-      {contacts.length > 0 && (
-        <View style={styles.contactsStrip}>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contactsScroll}>
-            {contacts.map((c) => (
+      <View style={styles.contactsStrip}>
+        <View style={styles.contactsHeader}>
+          <Text style={styles.contactsTitle}>Contacts</Text>
+        </View>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contactsScroll}>
+          {contacts.length === 0 ? (
+            <View style={styles.contactsEmpty}>
+              <Text style={styles.contactsEmptyText}>Aucun contact — ajoutez via l'onglet Réseau</Text>
+            </View>
+          ) : (
+            contacts.map((c) => (
               <TouchableOpacity key={c.nodeId} style={styles.contactChip} onPress={() => handleDMContact(c)} activeOpacity={0.7}>
                 <View style={[styles.contactAvatar, c.isFavorite && styles.contactAvatarFav]}>
                   <Text style={styles.contactAvatarText}>{c.displayName.charAt(0).toUpperCase()}</Text>
                 </View>
                 <Text style={styles.contactName} numberOfLines={1}>{c.displayName}</Text>
               </TouchableOpacity>
-            ))}
-          </ScrollView>
-        </View>
-      )}
+            ))
+          )}
+        </ScrollView>
+      </View>
 
       <FlatList
         data={conversations.filter((conv, index, self) =>
@@ -581,7 +588,31 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surface,
     borderBottomWidth: 0.5,
     borderBottomColor: Colors.border,
-    paddingVertical: 10,
+    paddingBottom: 10,
+    paddingTop: 8,
+  },
+  contactsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 14,
+    marginBottom: 8,
+  },
+  contactsTitle: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  contactsEmpty: {
+    paddingHorizontal: 14,
+    paddingVertical: 4,
+    justifyContent: 'center',
+  },
+  contactsEmptyText: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    fontStyle: 'italic',
   },
   contactsScroll: {
     paddingHorizontal: 12,

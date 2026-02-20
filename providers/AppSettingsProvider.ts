@@ -19,6 +19,8 @@ export interface AppSettings {
   bitcoinNetwork: 'mainnet' | 'testnet';
   fiatCurrency: string;
   autoSyncInterval: number;
+  autoRelay: boolean;
+  notifications: boolean;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -33,6 +35,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   bitcoinNetwork: 'mainnet',
   fiatCurrency: 'EUR',
   autoSyncInterval: 30000,
+  autoRelay: true,
+  notifications: true,
 };
 
 export const [AppSettingsContext, useAppSettings] = createContextHook(() => {

@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useRef, useEffect } from 'react';
+import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput,
-  TouchableOpacity, KeyboardAvoidingView, Platform,
+  TouchableOpacity, Pressable, KeyboardAvoidingView, Platform,
   ActivityIndicator, Modal, Alert,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
@@ -100,8 +100,9 @@ function AudioBubble({ audioData, audioDuration, isMe }: { audioData?: string; a
   );
 }
 
-function MessageBubble({ message, onLongPress }: { message: StoredMessage; onLongPress?: () => void }) {
+function MessageBubble({ message, displayName, onLongPress }: { message: StoredMessage; displayName?: string; onLongPress?: () => void }) {
   const isMe = message.isMine;
+  const senderName = displayName ?? message.fromNodeId;
 
   return (
     <TouchableOpacity
@@ -111,7 +112,7 @@ function MessageBubble({ message, onLongPress }: { message: StoredMessage; onLon
       activeOpacity={1}
     >
       {!isMe && (
-        <Text style={styles.senderLabel}>{message.fromNodeId}</Text>
+        <Text style={styles.senderLabel}>{senderName}</Text>
       )}
       <View style={[
         styles.messageBubble,
@@ -284,7 +285,7 @@ export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
-  const { conversations, messagesByConv, sendMessage, sendAudio, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage } = useMessages();
+  const { conversations, messagesByConv, sendMessage, sendAudio, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage, contacts } = useMessages();
   const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
@@ -301,6 +302,15 @@ export default function ChatScreen() {
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isForum = convId.startsWith('forum:');
+
+  // Map nodeId → displayName depuis les contacts
+  const contactNameMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const c of contacts) {
+      map[c.nodeId] = c.displayName;
+    }
+    return map;
+  }, [contacts]);
 
   // Charger les messages au montage
   useEffect(() => {
@@ -395,9 +405,13 @@ export default function ChatScreen() {
 
   const renderMessage = useCallback(
     ({ item }: { item: StoredMessage }) => (
-      <MessageBubble message={item} onLongPress={() => handleLongPressMessage(item)} />
+      <MessageBubble
+        message={item}
+        displayName={contactNameMap[item.fromNodeId]}
+        onLongPress={() => handleLongPressMessage(item)}
+      />
     ),
-    [handleLongPressMessage]
+    [handleLongPressMessage, contactNameMap]
   );
 
   const convName = conv?.name ?? convId;
@@ -429,8 +443,8 @@ export default function ChatScreen() {
       />
       <KeyboardAvoidingView
         style={styles.container}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+        behavior="padding"
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 24}
       >
         <View style={styles.meshInfo}>
           {settings.connectionMode === 'internet' ? <Globe size={12} color={Colors.blue} />
@@ -468,47 +482,49 @@ export default function ChatScreen() {
           }
         />
 
+        {/* Indicateur d'enregistrement au-dessus de la barre — layout stable */}
+        {isRecording && (
+          <View style={styles.recordingOverlay}>
+            <View style={styles.recordingDot} />
+            <Text style={styles.recordingText}>
+              Enregistrement... {formatDuration(recordingDuration)}
+            </Text>
+            <TouchableOpacity onPress={() => handleMicPressOut(false)} style={styles.recordingCancelBtn} activeOpacity={0.7}>
+              <X size={14} color={Colors.red} />
+              <Text style={styles.recordingCancelText}>Annuler</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+
         <View style={styles.inputContainer}>
-          {isRecording ? (
-            <View style={styles.recordingBar}>
-              <View style={styles.recordingDot} />
-              <Text style={styles.recordingText}>Enregistrement... {formatDuration(recordingDuration)}</Text>
-            </View>
-          ) : (
-            <TouchableOpacity
-              style={styles.cashuSendButton}
-              activeOpacity={0.7}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                setShowCashuModal(true);
-              }}
-            >
-              <CircleDollarSign size={20} color={Colors.cyan} />
-            </TouchableOpacity>
-          )}
+          {/* Bouton Cashu — toujours présent, pas de switch de layout */}
+          <TouchableOpacity
+            style={styles.cashuSendButton}
+            activeOpacity={0.7}
+            onPress={() => {
+              if (isRecording) return;
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setShowCashuModal(true);
+            }}
+          >
+            <CircleDollarSign size={20} color={isRecording ? Colors.textMuted : Colors.cyan} />
+          </TouchableOpacity>
 
-          {isRecording ? (
-            <TouchableOpacity
-              style={[styles.sendButton, styles.sendButtonActive]}
-              onPress={() => handleMicPressOut(false)}
-              activeOpacity={0.7}
-            >
-              <X size={18} color={Colors.black} />
-            </TouchableOpacity>
-          ) : (
-            <TextInput
-              style={styles.textInput}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder={isForum ? 'Message au forum...' : 'Message chiffré E2E...'}
-              placeholderTextColor={Colors.textMuted}
-              multiline
-              maxLength={500}
-              onSubmitEditing={handleSend}
-            />
-          )}
+          {/* TextInput — toujours présent */}
+          <TextInput
+            style={styles.textInput}
+            value={inputText}
+            onChangeText={setInputText}
+            placeholder={isRecording ? '' : isForum ? 'Message au forum...' : 'Message chiffré E2E...'}
+            placeholderTextColor={Colors.textMuted}
+            multiline
+            maxLength={500}
+            editable={!isRecording}
+            onSubmitEditing={handleSend}
+          />
 
-          {inputText.trim() ? (
+          {/* Bouton Send ou Mic — seul switch autorisé */}
+          {inputText.trim() && !isRecording ? (
             <TouchableOpacity
               style={[styles.sendButton, !isSending && styles.sendButtonActive]}
               onPress={handleSend}
@@ -520,14 +536,13 @@ export default function ChatScreen() {
                 : <Send size={18} color={Colors.black} />}
             </TouchableOpacity>
           ) : (
-            <TouchableOpacity
+            <Pressable
               style={[styles.sendButton, isRecording ? styles.micButtonRecording : styles.micButton]}
               onPressIn={handleMicPressIn}
               onPressOut={() => handleMicPressOut(true)}
-              activeOpacity={0.7}
             >
-              <Mic size={18} color={isRecording ? Colors.black : Colors.textMuted} />
-            </TouchableOpacity>
+              <Mic size={18} color={isRecording ? Colors.white : Colors.textMuted} />
+            </Pressable>
           )}
         </View>
       </KeyboardAvoidingView>
@@ -606,17 +621,16 @@ const styles = StyleSheet.create({
   sendButtonActive: { backgroundColor: Colors.accent },
   micButton: {},
   micButtonRecording: { backgroundColor: Colors.red },
-  recordingBar: {
-    flex: 1,
+  // Overlay enregistrement (au-dessus de l'input, sans changer sa structure)
+  recordingOverlay: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
     backgroundColor: Colors.redDim,
-    borderRadius: 20,
-    paddingHorizontal: 14,
+    paddingHorizontal: 16,
     paddingVertical: 10,
-    borderWidth: 0.5,
-    borderColor: Colors.red + '60',
+    borderTopWidth: 0.5,
+    borderTopColor: Colors.red + '40',
   },
   recordingDot: {
     width: 8,
@@ -625,10 +639,25 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.red,
   },
   recordingText: {
+    flex: 1,
     color: Colors.red,
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '600',
     fontFamily: 'monospace',
+  },
+  recordingCancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 10,
+    backgroundColor: Colors.surface,
+  },
+  recordingCancelText: {
+    color: Colors.red,
+    fontSize: 12,
+    fontWeight: '600',
   },
   // Audio bubble
   audioBubble: {
