@@ -531,13 +531,17 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
     (async () => {
+      console.log('[Radar] Demande permission GPS...');
       const { status } = await Location.requestForegroundPermissionsAsync();
+      console.log('[Radar] Permission GPS:', status);
       if (status !== 'granted') {
         console.log('[Radar] Permission GPS refusée');
         return;
       }
       // Position initiale
+      console.log('[Radar] Récupération position initiale...');
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      console.log('[Radar] Position obtenue:', loc.coords.latitude, loc.coords.longitude);
       const pos = { lat: loc.coords.latitude, lng: loc.coords.longitude };
       setMyLocation(pos);
       myLocationRef.current = pos;
