@@ -56,17 +56,23 @@ import {
   fetchMintKeysets,
   requestMintQuote,
   testMintConnection,
-  swapTokens,  // ✅ NOUVEAU
-  meltTokens,  // ✅ NOUVEAU
+  swapTokens,
+  meltTokens,
+  verifyCashuToken,
+  encodeCashuToken,
+  generateTokenId,
+  decodeCashuToken,
   type CashuMintInfo,
   type CashuKeysetInfo,
   type CashuMintQuote,
-  type CashuProof,  // ✅ NOUVEAU
+  type CashuProof,
 } from '@/utils/cashu';
 import { formatSats } from '@/utils/helpers';
-import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, type DBCashuToken } from '@/utils/database';  // ✅ NOUVEAU: markCashuTokenSpent
+import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, saveCashuToken, type DBCashuToken } from '@/utils/database';
 import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
 import NFCModal from '@/components/NFCModal';
+import QRCode from 'react-native-qrcode-svg';
+import { writeCashuTokenToNFC, readCashuTokenFromNFC, isNFCAvailable } from '@/utils/nfc';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -293,11 +299,30 @@ function CashuBalanceCard({
   const [mintQuote, setMintQuote] = useState<CashuMintQuote | null>(null);
   const [quoteLoading, setQuoteLoading] = useState<boolean>(false);
   
-  // ✅ NOUVEAU : États pour Swap et Melt
+  // États pour Melt
   const [showMeltModal, setShowMeltModal] = useState<boolean>(false);
   const [meltInvoice, setMeltInvoice] = useState<string>('');
   const [meltLoading, setMeltLoading] = useState<boolean>(false);
   const [selectedTokens, setSelectedTokens] = useState<string[]>([]);
+
+  // États pour Receive (coller un token cashuA)
+  const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [receiveInput, setReceiveInput] = useState<string>('');
+  const [receiveLoading, setReceiveLoading] = useState<boolean>(false);
+
+  // États pour Send offline (générer un token à partager)
+  const [showSendModal, setShowSendModal] = useState<boolean>(false);
+  const [sendSelectedTokens, setSendSelectedTokens] = useState<string[]>([]);
+  const [sendLoading, setSendLoading] = useState<boolean>(false);
+  const [generatedSendToken, setGeneratedSendToken] = useState<string | null>(null);
+
+  // État NFC
+  const [nfcAvailable, setNfcAvailable] = useState<boolean>(false);
+  const [nfcLoading, setNfcLoading] = useState<boolean>(false);
+
+  useEffect(() => {
+    isNFCAvailable().then(setNfcAvailable).catch(() => setNfcAvailable(false));
+  }, []);
   
   // ✅ NOUVEAU : Récupérer le solde Cashu depuis la DB
   const [cashuBalance, setCashuBalance] = useState<{ total: number; byMint: Record<string, number> }>({ total: 0, byMint: {} });
@@ -411,33 +436,237 @@ function CashuBalanceCard({
     }
   }, [meltInvoice, selectedTokens, tokens, mintUrl]);
 
-  // ✅ NOUVEAU : Fonction SWAP (consolider les tokens)
+  // Receive : coller un token cashuA et le sauvegarder dans le wallet
+  const handleReceiveToken = useCallback(async () => {
+    const tokenStr = receiveInput.trim();
+    if (!tokenStr.startsWith('cashuA')) {
+      Alert.alert('Format invalide', 'Le token doit commencer par "cashuA"');
+      return;
+    }
+    setReceiveLoading(true);
+    try {
+      const verification = await verifyCashuToken(tokenStr);
+      if (!verification.valid && !verification.unverified) {
+        Alert.alert('Token invalide', verification.error ?? 'Token refusé par le mint');
+        return;
+      }
+      if (!verification.token) {
+        Alert.alert('Erreur', 'Impossible de décoder le token');
+        return;
+      }
+      const tokenId = generateTokenId(verification.token);
+      const entry = verification.token.token[0];
+      await saveCashuToken({
+        id: tokenId,
+        mintUrl: verification.mintUrl ?? entry.mint ?? 'unknown',
+        amount: verification.amount ?? 0,
+        token: tokenStr,
+        proofs: JSON.stringify(entry.proofs),
+        state: verification.unverified ? 'unverified' : 'unspent',
+        source: 'manual',
+        memo: 'Importé manuellement',
+        unverified: verification.unverified ?? false,
+        retryCount: 0,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('Reçu !', `${verification.amount ?? 0} sats ajoutés au wallet`);
+      setShowReceiveModal(false);
+      setReceiveInput('');
+      // Rafraîchir la liste
+      const unspent = await getUnspentCashuTokens();
+      setTokens(unspent);
+      const balance = await getCashuBalance();
+      setCashuBalance(balance);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+      Alert.alert('Erreur', msg);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setReceiveLoading(false);
+    }
+  }, [receiveInput]);
+
+  // Send offline : générer un token cashuA à copier/partager
+  const handleSendOffline = useCallback(async () => {
+    if (sendSelectedTokens.length === 0) {
+      Alert.alert('Sélection vide', 'Sélectionne au moins un token à envoyer');
+      return;
+    }
+    setSendLoading(true);
+    try {
+      const selected = tokens.filter(t => sendSelectedTokens.includes(t.id));
+      const proofs: CashuProof[] = selected.flatMap(t => JSON.parse(t.proofs) as CashuProof[]);
+      const mintUrl = selected[0].mintUrl;
+      // Encoder les proofs en token cashuA
+      const cashuToken = {
+        token: [{ mint: mintUrl, proofs }],
+        memo: 'BitMesh offline transfer',
+      };
+      const encoded = encodeCashuToken(cashuToken);
+      // Marquer les tokens comme dépensés AVANT de les partager
+      for (const tokenId of sendSelectedTokens) {
+        await markCashuTokenSpent(tokenId);
+      }
+      setGeneratedSendToken(encoded);
+      // Rafraîchir le solde
+      const unspent = await getUnspentCashuTokens();
+      setTokens(unspent);
+      const balance = await getCashuBalance();
+      setCashuBalance(balance);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur inconnue';
+      Alert.alert('Erreur', msg);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setSendLoading(false);
+    }
+  }, [sendSelectedTokens, tokens]);
+
+  // NFC Send : écrire le token généré sur une carte NFC
+  const handleNfcSend = useCallback(async () => {
+    if (!generatedSendToken) return;
+    const amount = tokens
+      .filter(t => sendSelectedTokens.includes(t.id))
+      .reduce((s, t) => s + t.amount, 0);
+    setNfcLoading(true);
+    try {
+      const result = await writeCashuTokenToNFC({ token: generatedSendToken, amount, memo: 'BitMesh' });
+      if (result.success) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Alert.alert('NFC', 'Token écrit sur la carte NFC avec succès');
+      } else {
+        Alert.alert('Erreur NFC', result.error ?? 'Écriture échouée');
+      }
+    } catch (err) {
+      Alert.alert('Erreur NFC', err instanceof Error ? err.message : 'Erreur inconnue');
+    } finally {
+      setNfcLoading(false);
+    }
+  }, [generatedSendToken, tokens, sendSelectedTokens]);
+
+  // NFC Receive : lire un token depuis une carte NFC et l'importer
+  const handleNfcReceive = useCallback(async () => {
+    setNfcLoading(true);
+    try {
+      const result = await readCashuTokenFromNFC();
+      if (!result.success || !result.record) {
+        Alert.alert('Erreur NFC', result.error ?? 'Lecture échouée');
+        return;
+      }
+      const { token: tokenStr, amount } = result.record;
+      const verification = await verifyCashuToken(tokenStr);
+      if (!verification.valid && !verification.unverified) {
+        Alert.alert('Token invalide', verification.error ?? 'Token refusé');
+        return;
+      }
+      if (!verification.token) return;
+      const tokenId = generateTokenId(verification.token);
+      const entry = verification.token.token[0];
+      await saveCashuToken({
+        id: tokenId,
+        mintUrl: verification.mintUrl ?? entry.mint ?? 'unknown',
+        amount: verification.amount ?? amount,
+        token: tokenStr,
+        proofs: JSON.stringify(entry.proofs),
+        state: verification.unverified ? 'unverified' : 'unspent',
+        source: 'nfc',
+        memo: 'Reçu par NFC',
+        unverified: verification.unverified ?? false,
+        retryCount: 0,
+      });
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      Alert.alert('NFC', `${verification.amount ?? amount} sats reçus via NFC`);
+      const unspent = await getUnspentCashuTokens();
+      setTokens(unspent);
+      const balance = await getCashuBalance();
+      setCashuBalance(balance);
+      setShowReceiveModal(false);
+    } catch (err) {
+      Alert.alert('Erreur NFC', err instanceof Error ? err.message : 'Erreur inconnue');
+    } finally {
+      setNfcLoading(false);
+    }
+  }, []);
+
+  // Consolidation offline : regroupe tous les proofs d'un même mint en un seul token cashuA.
+  // Opération 100% locale, sans appel au mint.
   const handleSwap = useCallback(async () => {
-    if (tokens.length < 2) {
+    const unspentTokens = tokens.filter(t => t.state === 'unspent');
+    if (unspentTokens.length < 2) {
       Alert.alert('Info', 'Need at least 2 tokens to consolidate');
       return;
     }
-    
+
+    // Grouper par mint
+    const byMint: Record<string, typeof unspentTokens> = {};
+    for (const t of unspentTokens) {
+      if (!byMint[t.mintUrl]) byMint[t.mintUrl] = [];
+      byMint[t.mintUrl].push(t);
+    }
+
+    const mintGroups = Object.entries(byMint).filter(([, ts]) => ts.length >= 2);
+    if (mintGroups.length === 0) {
+      Alert.alert('Info', 'All tokens are already from different mints');
+      return;
+    }
+
+    const [mintUrl, group] = mintGroups[0];
+    const totalAmount = group.reduce((s, t) => s + t.amount, 0);
+
     Alert.alert(
       'Consolidate Tokens',
-      `Merge ${tokens.length} tokens into one?`,
+      `Pack ${group.length} tokens (${totalAmount} sats) from ${mintUrl.replace('https://', '')} into one?`,
       [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Consolidate',
           onPress: async () => {
             try {
-              // Note: Le swap complet nécessite la génération de blinded messages
-              // qui est complexe. Pour l'instant, on affiche juste une info.
-              Alert.alert(
-                'Coming Soon',
-                'Full token consolidation will be available in the next update.'
-              );
+              // Réunir tous les proofs dans un seul token
+              const allProofs: CashuProof[] = group.flatMap(t => JSON.parse(t.proofs) as CashuProof[]);
+              const consolidated = encodeCashuToken({
+                token: [{ mint: mintUrl, proofs: allProofs }],
+                memo: `Consolidated ${group.length} tokens`,
+              });
+
+              // Marquer les anciens comme spent
+              for (const t of group) {
+                await markCashuTokenSpent(t.id);
+              }
+
+              // Sauvegarder le nouveau token consolidé
+              const newToken = decodeCashuToken(consolidated);
+              if (newToken) {
+                const tokenId = generateTokenId(newToken);
+                await saveCashuToken({
+                  id: tokenId,
+                  mintUrl,
+                  amount: totalAmount,
+                  token: consolidated,
+                  proofs: JSON.stringify(allProofs),
+                  state: 'unspent',
+                  source: 'consolidation',
+                  memo: `Consolidated ${group.length} tokens`,
+                  unverified: false,
+                  retryCount: 0,
+                });
+              }
+
+              // Rafraîchir
+              const unspent = await getUnspentCashuTokens();
+              setTokens(unspent);
+              const balance = await getCashuBalance();
+              setCashuBalance(balance);
+
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert('Done', `${group.length} tokens consolidated into 1 (${totalAmount} sats)`);
             } catch (err) {
-              console.log('Swap error:', err);
+              const msg = err instanceof Error ? err.message : 'Unknown error';
+              Alert.alert('Error', msg);
             }
-          }
-        }
+          },
+        },
       ]
     );
   }, [tokens]);
@@ -503,12 +732,27 @@ function CashuBalanceCard({
           activeOpacity={0.7}
           onPress={() => {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            Alert.alert('Send Token', 'Paste or scan a Cashu token to send via LoRa mesh');
+            setGeneratedSendToken(null);
+            setSendSelectedTokens([]);
+            setShowSendModal(true);
           }}
           testID="send-cashu-button"
         >
           <ArrowUpRight size={18} color={Colors.cyan} />
           <Text style={styles.cashuActionTextAlt}>Send</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.cashuActionButtonAlt}
+          activeOpacity={0.7}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setReceiveInput('');
+            setShowReceiveModal(true);
+          }}
+          testID="receive-cashu-button"
+        >
+          <ArrowDownLeft size={18} color={Colors.cyan} />
+          <Text style={styles.cashuActionTextAlt}>Receive</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.cashuActionButtonAlt}
@@ -521,6 +765,18 @@ function CashuBalanceCard({
         >
           <Zap size={18} color={Colors.cyan} />
           <Text style={styles.cashuActionTextAlt}>Melt</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.cashuActionButtonAlt}
+          activeOpacity={0.7}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            handleSwap();
+          }}
+          testID="consolidate-cashu-button"
+        >
+          <ArrowRightLeft size={18} color={Colors.cyan} />
+          <Text style={styles.cashuActionTextAlt}>Pack</Text>
         </TouchableOpacity>
       </View>
 
@@ -663,6 +919,199 @@ function CashuBalanceCard({
               )}
             </TouchableOpacity>
           </View>
+        </View>
+      )}
+
+      {/* Modal RECEIVE : coller un token cashuA */}
+      {showReceiveModal && (
+        <View style={styles.meltModalContainer}>
+          <Text style={styles.meltModalTitle}>Receive eCash Token</Text>
+          <Text style={styles.meltModalDesc}>
+            Paste a cashuA token received from another user
+          </Text>
+          <TextInput
+            style={[styles.meltInput, { height: 80 }]}
+            placeholder="cashuAeyJ0b2tlbiI6..."
+            placeholderTextColor={Colors.textMuted}
+            value={receiveInput}
+            onChangeText={setReceiveInput}
+            multiline
+            numberOfLines={4}
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          {nfcAvailable && (
+            <TouchableOpacity
+              style={[styles.meltConfirmBtn, { marginTop: 8 }, nfcLoading && styles.meltConfirmBtnDisabled]}
+              onPress={handleNfcReceive}
+              disabled={nfcLoading}
+            >
+              {nfcLoading ? (
+                <ActivityIndicator color={Colors.black} size="small" />
+              ) : (
+                <>
+                  <QrCode size={14} color={Colors.black} />
+                  <Text style={[styles.meltConfirmText, { marginLeft: 6 }]}>Receive via NFC</Text>
+                </>
+              )}
+            </TouchableOpacity>
+          )}
+          <View style={styles.meltActions}>
+            <TouchableOpacity
+              style={styles.meltCancelBtn}
+              onPress={() => { setShowReceiveModal(false); setReceiveInput(''); }}
+            >
+              <Text style={styles.meltCancelText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[
+                styles.meltConfirmBtn,
+                (receiveLoading || !receiveInput.trim()) && styles.meltConfirmBtnDisabled,
+              ]}
+              onPress={handleReceiveToken}
+              disabled={receiveLoading || !receiveInput.trim()}
+            >
+              {receiveLoading ? (
+                <ActivityIndicator color={Colors.black} size="small" />
+              ) : (
+                <Text style={styles.meltConfirmText}>Import Token</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
+      {/* Modal SEND : générer un token cashuA à partager */}
+      {showSendModal && (
+        <View style={styles.meltModalContainer}>
+          {generatedSendToken ? (
+            <>
+              <Text style={styles.meltModalTitle}>Token Ready to Share</Text>
+              <Text style={styles.meltModalDesc}>
+                Scan the QR code or copy the token string
+              </Text>
+              <View style={styles.sendQrContainer}>
+                <QRCode
+                  value={generatedSendToken}
+                  size={180}
+                  color={Colors.white}
+                  backgroundColor={Colors.surface}
+                />
+              </View>
+              <View style={styles.invoiceContainer}>
+                <Text style={styles.invoiceText} numberOfLines={3} selectable>
+                  {generatedSendToken}
+                </Text>
+                <TouchableOpacity
+                  style={styles.copyInvoiceBtn}
+                  onPress={() => {
+                    Clipboard.setStringAsync(generatedSendToken).catch(() => {});
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    Alert.alert('Copié', 'Token copié dans le presse-papiers');
+                  }}
+                >
+                  <Copy size={14} color={Colors.cyan} />
+                  <Text style={styles.copyInvoiceText}>Copy Token</Text>
+                </TouchableOpacity>
+              </View>
+              {nfcAvailable && (
+                <TouchableOpacity
+                  style={[styles.meltConfirmBtn, { marginTop: 8 }, nfcLoading && styles.meltConfirmBtnDisabled]}
+                  onPress={handleNfcSend}
+                  disabled={nfcLoading}
+                >
+                  {nfcLoading ? (
+                    <ActivityIndicator color={Colors.black} size="small" />
+                  ) : (
+                    <>
+                      <QrCode size={14} color={Colors.black} />
+                      <Text style={[styles.meltConfirmText, { marginLeft: 6 }]}>Send via NFC</Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              )}
+              <TouchableOpacity
+                style={[styles.meltCancelBtn, { marginTop: 8 }]}
+                onPress={() => {
+                  setShowSendModal(false);
+                  setGeneratedSendToken(null);
+                  setSendSelectedTokens([]);
+                }}
+              >
+                <Text style={styles.meltCancelText}>Close</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.meltModalTitle}>Send eCash (Offline)</Text>
+              <Text style={styles.meltModalDesc}>
+                Select tokens to pack into a shareable token string
+              </Text>
+              <Text style={styles.meltTokenLabel}>
+                Select tokens ({sendSelectedTokens.length} selected — {
+                  tokens
+                    .filter(t => sendSelectedTokens.includes(t.id))
+                    .reduce((s, t) => s + t.amount, 0)
+                } sats):
+              </Text>
+              <ScrollView style={styles.tokenList}>
+                {tokens.filter(t => t.state === 'unspent').map((token) => (
+                  <TouchableOpacity
+                    key={token.id}
+                    style={[
+                      styles.tokenItem,
+                      sendSelectedTokens.includes(token.id) && styles.tokenItemSelected,
+                    ]}
+                    onPress={() => {
+                      setSendSelectedTokens(prev =>
+                        prev.includes(token.id)
+                          ? prev.filter(id => id !== token.id)
+                          : [...prev, token.id]
+                      );
+                    }}
+                  >
+                    <View style={styles.tokenCheckbox}>
+                      {sendSelectedTokens.includes(token.id) && (
+                        <View style={styles.tokenCheckboxChecked} />
+                      )}
+                    </View>
+                    <View style={styles.tokenInfo}>
+                      <Text style={styles.tokenAmount}>{token.amount} sats</Text>
+                      <Text style={styles.tokenMint} numberOfLines={1}>
+                        {token.mintUrl.replace('https://', '')}
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </ScrollView>
+              <View style={styles.meltActions}>
+                <TouchableOpacity
+                  style={styles.meltCancelBtn}
+                  onPress={() => { setShowSendModal(false); setSendSelectedTokens([]); }}
+                >
+                  <Text style={styles.meltCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.meltConfirmBtn,
+                    (sendLoading || sendSelectedTokens.length === 0) && styles.meltConfirmBtnDisabled,
+                  ]}
+                  onPress={handleSendOffline}
+                  disabled={sendLoading || sendSelectedTokens.length === 0}
+                >
+                  {sendLoading ? (
+                    <ActivityIndicator color={Colors.black} size="small" />
+                  ) : (
+                    <Text style={styles.meltConfirmText}>
+                      Generate Token ({
+                        tokens.filter(t => sendSelectedTokens.includes(t.id)).reduce((s, t) => s + t.amount, 0)
+                      } sats)
+                    </Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </>
+          )}
         </View>
       )}
     </View>
@@ -1028,17 +1477,6 @@ export default function WalletScreen() {
             >
               <RefreshCw size={16} color={Colors.cyan} />
               <Text style={styles.cashuQuickActionText}>Check Mint</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              style={styles.cashuQuickAction}
-              activeOpacity={0.7}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                Alert.alert('Swap', 'Cross-mint swaps coming soon');
-              }}
-            >
-              <ArrowRightLeft size={16} color={Colors.cyan} />
-              <Text style={styles.cashuQuickActionText}>Swap</Text>
             </TouchableOpacity>
           </View>
 
@@ -1714,6 +2152,14 @@ const styles = StyleSheet.create({
     color: Colors.black,
     fontSize: 14,
     fontWeight: '700' as const,
+  },
+  sendQrContainer: {
+    alignItems: 'center' as const,
+    marginVertical: 16,
+    padding: 12,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    alignSelf: 'center' as const,
   },
   invoiceContainer: {
     marginTop: 12,

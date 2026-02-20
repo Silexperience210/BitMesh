@@ -2,7 +2,7 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import {
   View, Text, StyleSheet, FlatList, TextInput,
   TouchableOpacity, KeyboardAvoidingView, Platform,
-  ActivityIndicator, Modal,
+  ActivityIndicator, Modal, Alert,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
 import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin } from 'lucide-react-native';
@@ -35,11 +35,16 @@ function CashuBubble({ amount }: { amount: number }) {
   );
 }
 
-function MessageBubble({ message }: { message: StoredMessage }) {
+function MessageBubble({ message, onLongPress }: { message: StoredMessage; onLongPress?: () => void }) {
   const isMe = message.isMine;
 
   return (
-    <View style={[styles.messageBubbleContainer, isMe ? styles.bubbleRight : styles.bubbleLeft]}>
+    <TouchableOpacity
+      style={[styles.messageBubbleContainer, isMe ? styles.bubbleRight : styles.bubbleLeft]}
+      onLongPress={onLongPress}
+      delayLongPress={500}
+      activeOpacity={1}
+    >
       {!isMe && (
         <Text style={styles.senderLabel}>{message.fromNodeId}</Text>
       )}
@@ -69,7 +74,7 @@ function MessageBubble({ message }: { message: StoredMessage }) {
           )}
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -212,7 +217,7 @@ export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
-  const { conversations, messagesByConv, sendMessage, sendCashu, loadConversationMessages, markRead, mqttState } = useMessages();
+  const { conversations, messagesByConv, sendMessage, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage } = useMessages();
   const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
@@ -255,9 +260,27 @@ export default function ChatScreen() {
     }
   }, [inputText, isSending, convId, sendMessage]);
 
+  const handleLongPressMessage = useCallback((item: StoredMessage) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Alert.alert(
+      'Supprimer ce message ?',
+      item.isMine ? 'Le message sera supprimé localement.' : 'Le message sera supprimé de cet appareil uniquement.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Supprimer',
+          style: 'destructive',
+          onPress: () => deleteMessage(item.id, convId),
+        },
+      ]
+    );
+  }, [convId, deleteMessage]);
+
   const renderMessage = useCallback(
-    ({ item }: { item: StoredMessage }) => <MessageBubble message={item} />,
-    []
+    ({ item }: { item: StoredMessage }) => (
+      <MessageBubble message={item} onLongPress={() => handleLongPressMessage(item)} />
+    ),
+    [handleLongPressMessage]
   );
 
   const convName = conv?.name ?? convId;

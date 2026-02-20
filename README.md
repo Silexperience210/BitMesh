@@ -43,7 +43,6 @@
 
 ### 💰 Wallet Cashu #1 (9.5/10)
 - **Mint/Melt/Swap complet** - Tous les NUTs implémentés
-- **Multi-mint avancé** - Diversification des risques
 - **Atomic swaps** - BTC↔Cashu trustless
 - **Notifications** - Alertes quand token reçu
 
@@ -84,7 +83,6 @@
 
 ### 💰 Wallet Cashu Avancé
 - ✅ **Mint/Melt/Swap** - NUTs 03, 04, 05
-- ✅ **Multi-mint** - Gestion plusieurs mints
 - ✅ **P2PK** - Tokens verrouillables (NUT-11)
 - ✅ **DLEQ proofs** - Vérification cryptographique (NUT-12)
 - ✅ **QR animés** - Gros tokens en plusieurs parties (NUT-16)

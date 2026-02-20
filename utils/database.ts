@@ -602,6 +602,21 @@ export async function incrementRetryCount(id: string, error?: string): Promise<v
   `, toSQLiteParams([error || null, id]));
 }
 
+// --- Suppression manuelle ---
+
+export async function deleteMessageDB(msgId: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM messages WHERE id = ?', toSQLiteParams([msgId]));
+  console.log('[DB] Message supprimé:', msgId);
+}
+
+export async function deleteConversationDB(convId: string): Promise<void> {
+  const database = await getDatabase();
+  // ON DELETE CASCADE supprime automatiquement tous les messages associés
+  await database.runAsync('DELETE FROM conversations WHERE id = ?', toSQLiteParams([convId]));
+  console.log('[DB] Conversation supprimée:', convId);
+}
+
 // --- Auto-cleanup (messages > 24h) ---
 
 const MESSAGE_RETENTION_HOURS = 24;

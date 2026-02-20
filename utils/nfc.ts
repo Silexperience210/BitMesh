@@ -155,6 +155,86 @@ export function parseNDEFTransaction(data: string): NFCTransactionRecord | null 
   }
 }
 
+// --- Cashu NFC ---
+
+export interface NFCashuRecord {
+  token: string;   // cashuA... string complet
+  amount: number;
+  memo?: string;
+}
+
+/**
+ * Écrit un token Cashu sur une carte NFC
+ */
+export async function writeCashuTokenToNFC(
+  record: NFCashuRecord
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    const payload = JSON.stringify({
+      t: 'bitmesh-cashu',
+      tok: record.token,
+      amt: record.amount,
+      m: record.memo || '',
+    });
+    const bytes = Ndef.encodeMessage([Ndef.textRecord(payload)]);
+
+    if (!bytes) {
+      throw new Error('Échec encodage NDEF');
+    }
+
+    await NfcManager.requestTechnology(NfcTech.Ndef);
+    await NfcManager.ndefHandler.writeNdefMessage(bytes);
+    await NfcManager.cancelTechnologyRequest();
+
+    console.log('[NFC] Token Cashu écrit:', record.amount, 'sats');
+    return { success: true };
+  } catch (error) {
+    console.error('[NFC] Erreur écriture Cashu:', error);
+    await NfcManager.cancelTechnologyRequest().catch(() => {});
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * Lit un token Cashu depuis une carte NFC
+ */
+export async function readCashuTokenFromNFC(): Promise<{
+  success: boolean;
+  record?: NFCashuRecord;
+  error?: string;
+}> {
+  try {
+    await NfcManager.requestTechnology(NfcTech.Ndef);
+    const tag = await NfcManager.getTag();
+    const ndefRecords = tag?.ndefMessage;
+
+    if (!ndefRecords || ndefRecords.length === 0) {
+      throw new Error('Aucun enregistrement NDEF trouvé');
+    }
+
+    const record = ndefRecords[0];
+    const payload = new Uint8Array(record.payload as number[]);
+    const decoded = Ndef.text.decodePayload(payload);
+
+    const parsed = JSON.parse(decoded);
+    if (parsed.t !== 'bitmesh-cashu') {
+      throw new Error('Ce tag NFC ne contient pas un token Cashu BitMesh');
+    }
+
+    await NfcManager.cancelTechnologyRequest();
+
+    console.log('[NFC] Token Cashu lu:', parsed.amt, 'sats');
+    return {
+      success: true,
+      record: { token: parsed.tok, amount: parsed.amt, memo: parsed.m },
+    };
+  } catch (error) {
+    console.error('[NFC] Erreur lecture Cashu:', error);
+    await NfcManager.cancelTechnologyRequest().catch(() => {});
+    return { success: false, error: String(error) };
+  }
+}
+
 /**
  * Arrête le NFC manager
  */

@@ -41,7 +41,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
-import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken, getUnverifiedCashuTokens, markCashuTokenVerified, incrementRetryCount } from '@/utils/database';
+import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken, getUnverifiedCashuTokens, markCashuTokenVerified, incrementRetryCount, deleteMessageDB, deleteConversationDB } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity, verifyNodeId } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -101,10 +101,10 @@ export interface MessagesState {
   joinForum: (channelName: string, description?: string) => Promise<void>;
   leaveForum: (channelName: string) => void;
   markRead: (convId: string) => Promise<void>;
-  // ✅ NOUVEAU : Annoncer un forum public (retourne false si non connecté)
   announceForumPublic: (channelName: string, description: string) => boolean;
-  // ✅ NOUVEAU : Mettre à jour le display name
   setDisplayName: (name: string) => Promise<void>;
+  deleteMessage: (msgId: string, convId: string) => Promise<void>;
+  deleteConversation: (convId: string) => Promise<void>;
 }
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
@@ -1444,6 +1444,34 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, []);
 
+  // Supprimer un message localement
+  const deleteMessage = useCallback(async (msgId: string, convId: string): Promise<void> => {
+    try {
+      await deleteMessageDB(msgId);
+      setMessagesByConv(prev => ({
+        ...prev,
+        [convId]: (prev[convId] ?? []).filter(m => m.id !== msgId),
+      }));
+    } catch (err) {
+      console.error('[Messages] Erreur deleteMessage:', err);
+    }
+  }, []);
+
+  // Supprimer une conversation et tous ses messages (cascade DB)
+  const deleteConversation = useCallback(async (convId: string): Promise<void> => {
+    try {
+      await deleteConversationDB(convId);
+      setConversations(prev => prev.filter(c => c.id !== convId));
+      setMessagesByConv(prev => {
+        const next = { ...prev };
+        delete next[convId];
+        return next;
+      });
+    } catch (err) {
+      console.error('[Messages] Erreur deleteConversation:', err);
+    }
+  }, []);
+
   return {
     identity,
     mqttState,
@@ -1451,7 +1479,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     messagesByConv,
     radarPeers,
     myLocation,
-    discoveredForums, // ✅ NOUVEAU
+    discoveredForums,
     connect,
     disconnect,
     sendMessage,
@@ -1461,8 +1489,10 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     joinForum,
     leaveForum,
     markRead,
-    announceForumPublic, // ✅ NOUVEAU
-    setDisplayName, // ✅ NOUVEAU
+    announceForumPublic,
+    setDisplayName,
+    deleteMessage,
+    deleteConversation,
   };
 });
 

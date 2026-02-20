@@ -37,7 +37,7 @@ function SignalDots({ strength }: { strength: number }) {
   );
 }
 
-function ConvItem({ conv, onPress }: { conv: StoredConversation; onPress: () => void }) {
+function ConvItem({ conv, onPress, onLongPress }: { conv: StoredConversation; onPress: () => void; onLongPress: () => void }) {
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => Animated.spring(scaleAnim, { toValue: 0.97, useNativeDriver: true }).start();
@@ -51,6 +51,8 @@ function ConvItem({ conv, onPress }: { conv: StoredConversation; onPress: () => 
       <TouchableOpacity
         style={styles.chatItem}
         onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={500}
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
         activeOpacity={1}
@@ -392,7 +394,7 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
 export default function MessagesScreen() {
   const router = useRouter();
   const { settings, isInternetMode, isLoRaMode } = useAppSettings();
-  const { conversations, mqttState, identity, startConversation, joinForum } = useMessages();
+  const { conversations, mqttState, identity, startConversation, joinForum, deleteConversation } = useMessages();
   const [modalVisible, setModalVisible] = useState(false);
 
   const modeLabel = settings.connectionMode === 'internet' ? 'Internet Mode'
@@ -405,14 +407,30 @@ export default function MessagesScreen() {
   const mqttDot = mqttState === 'connected' ? Colors.green
     : mqttState === 'connecting' ? Colors.yellow : Colors.red;
 
+  const handleLongPressConv = useCallback((item: StoredConversation) => {
+    Alert.alert(
+      item.isForum ? `Quitter #${item.name} ?` : `Supprimer la conversation avec ${item.name} ?`,
+      'Tous les messages seront supprimés de cet appareil.',
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: item.isForum ? 'Quitter' : 'Supprimer',
+          style: 'destructive',
+          onPress: () => deleteConversation(item.id),
+        },
+      ]
+    );
+  }, [deleteConversation]);
+
   const renderConv = useCallback(
     ({ item }: { item: StoredConversation }) => (
       <ConvItem
         conv={item}
         onPress={() => router.push(`/(messages)/${encodeURIComponent(item.id)}` as never)}
+        onLongPress={() => handleLongPressConv(item)}
       />
     ),
-    [router]
+    [router, handleLongPressConv]
   );
 
   const handleDM = async (nodeId: string, name: string) => {

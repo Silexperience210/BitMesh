@@ -25,7 +25,8 @@ export const TOPICS = {
   loraInbound: 'meshcore/lora/inbound',
   loraOutbound: 'meshcore/lora/outbound',
   gatewayAnnounce: 'meshcore/gateway/announce',
-  forumsAnnounce: 'meshcore/forums/announce', // ✅ NOUVEAU : Découverte de forums
+  forumsAnnounce: 'meshcore/forums/announce', // ✅ NOUVEAU : Découverte de forums (wildcard sub)
+  forumAnnounce: (channelName: string) => `meshcore/forums/announce/${channelName}`, // Retained par forum
 } as const;
 
 export interface MeshMqttClient {
@@ -349,15 +350,18 @@ export function announceForumChannel(
     isPublic,
   };
 
+  // ✅ FIX : Topic par forum + retain:true + qos:1 pour que les nouveaux clients
+  // reçoivent l'annonce même s'ils se connectent APRÈS la création du forum.
+  const topic = TOPICS.forumAnnounce(channelName);
   instance.client.publish(
-    TOPICS.forumsAnnounce,
+    topic,
     JSON.stringify(announcement),
-    { qos: 0, retain: false }, // QoS 0 pour performance, pas de retain
+    { qos: 1, retain: true },
     (err) => {
       if (err) {
         console.log('[MQTT] Erreur annonce forum:', err);
       } else {
-        console.log('[MQTT] Forum annoncé:', channelName);
+        console.log('[MQTT] Forum annoncé (retained):', channelName);
       }
     }
   );
@@ -370,8 +374,10 @@ export function subscribeForumAnnouncements(
 ): void {
   const wrappedHandler: MessageHandler = (_topic, payload) => {
     try {
+      // Ignorer les messages vides (suppression retained)
+      if (!payload || payload.trim() === '') return;
       const announcement = JSON.parse(payload) as ForumAnnouncement;
-      // Ignorer nos propres annonces
+      // Ignorer nos propres annonces (nos forums sont déjà dans conversations)
       if (announcement.creatorNodeId !== instance.nodeId) {
         handler(announcement);
       }
@@ -380,12 +386,15 @@ export function subscribeForumAnnouncements(
     }
   };
 
-  subscribeMesh(instance, TOPICS.forumsAnnounce, wrappedHandler, 0);
-  console.log('[MQTT] Abonné aux annonces de forums');
+  // ✅ FIX : Wildcard "+" pour recevoir TOUS les forums retained sur leurs topics individuels
+  const wildcardTopic = `${TOPICS.forumsAnnounce}/+`;
+  subscribePattern(instance, wildcardTopic, wrappedHandler, 1);
+  console.log('[MQTT] Abonné aux annonces de forums (wildcard):', wildcardTopic);
 }
 
 // ✅ NOUVEAU : Se désabonner des annonces de forums
 export function unsubscribeForumAnnouncements(instance: MeshMqttClient): void {
-  unsubscribeMesh(instance, TOPICS.forumsAnnounce);
+  const wildcardTopic = `${TOPICS.forumsAnnounce}/+`;
+  unsubscribeMesh(instance, wildcardTopic);
   console.log('[MQTT] Désabonné des annonces de forums');
 }

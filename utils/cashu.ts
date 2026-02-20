@@ -427,34 +427,6 @@ export async function swapTokens(
   return data as SwapResponse;
 }
 
-// ✅ NOUVEAU : Multi-mint swap - Échanger des tokens d'un mint vers un autre
-export async function swapBetweenMints(
-  fromMint: string,
-  toMint: string,
-  proofs: CashuProof[],
-  amount: number
-): Promise<{ success: boolean; newToken?: CashuToken; error?: string }> {
-  console.log(`[Cashu] Multi-mint swap: ${fromMint} -> ${toMint}, ${amount} sats`);
-  
-  try {
-    // Étape 1: Melt les tokens sur le mint source (obtenir un invoice)
-    // Note: Dans la vraie implémentation, il faudrait créer un invoice
-    // et le payer via le mint destination. Simplifié ici.
-    
-    // Étape 2: Mint de nouveaux tokens sur le mint destination
-    // Note: Cette opération nécessite une vraie transaction Lightning
-    
-    console.log('[Cashu] Multi-mint swap requires Lightning transaction');
-    return { 
-      success: false, 
-      error: 'Multi-mint swap requires Lightning. Use melt then mint.' 
-    };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unknown error';
-    return { success: false, error: msg };
-  }
-}
-
 // ✅ NOUVEAU : MELT (NUT-05) - Redeem tokens via Lightning
 export async function meltTokens(
   mintUrl: string,
