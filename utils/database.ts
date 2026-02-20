@@ -439,7 +439,7 @@ export async function loadMessagesDB(convId: string, limit: number = 200): Promi
       WHERE conversationId = ?
       ORDER BY timestamp DESC
       LIMIT ?
-    `, [convId, limit]);
+    `, toSQLiteParams([convId, limit]));
     return rows.reverse().map(row => ({
       ...row,
       isMine: Boolean(row.isMine),
@@ -577,7 +577,7 @@ export async function incrementRetryCount(id: string, error?: string): Promise<v
         nextRetryAt = strftime('%s', 'now') * 1000 + (1000 * (retries + 1) * (retries + 1)),
         error = ?
     WHERE id = ?
-  `, [error || null, id]);
+  `, toSQLiteParams([error || null, id]));
 }
 
 // --- Auto-cleanup (messages > 24h) ---
@@ -591,7 +591,7 @@ export async function cleanupOldMessages(): Promise<number> {
     
     const result = await database.runAsync(`
       DELETE FROM messages WHERE timestamp < ?
-    `, [cutoffTime]);
+    `, toSQLiteParams([cutoffTime]));
     
     const deletedCount = result.changes || 0;
     if (deletedCount > 0) {
@@ -737,7 +737,7 @@ export async function getCashuTokenById(id: string): Promise<DBCashuToken | null
     const database = await getDatabase();
     const row = await database.getFirstAsync<any>(`
       SELECT * FROM cashu_tokens WHERE id = ?
-    `, [id]);
+    `, toSQLiteParams([id]));
     if (!row) return null;
     return { ...row, spent: Boolean(row.spent) };
   } catch (err) {
@@ -793,7 +793,7 @@ export async function getTokensByMint(mintUrl: string): Promise<DBCashuToken[]> 
       SELECT * FROM cashu_tokens 
       WHERE mintUrl = ? AND state IN ('unspent', 'unverified')
       ORDER BY amount DESC
-    `, [mintUrl]);
+    `, toSQLiteParams([mintUrl]));
     return rows.map(row => ({
       ...row,
       state: row.state || 'unspent',
@@ -834,7 +834,7 @@ export async function importCashuTokens(tokens: DBCashuToken[]): Promise<number>
         INSERT OR IGNORE INTO cashu_tokens 
         (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
+      `, toSQLiteParams([
         token.id,
         token.mintUrl,
         token.amount,
@@ -849,7 +849,7 @@ export async function importCashuTokens(tokens: DBCashuToken[]): Promise<number>
         token.unverified ? 1 : 0,
         token.retryCount || 0,
         token.lastCheckAt || null,
-      ]);
+      ]));
       imported++;
     } catch (err) {
       console.log('[Database] Erreur import token:', token.id, err);
@@ -914,12 +914,12 @@ export async function setUserProfile(profile: Partial<UserProfile>): Promise<voi
             avatarEmoji = COALESCE(?, avatarEmoji),
             updatedAt = strftime('%s', 'now') * 1000
         WHERE id = 1
-      `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+      `, toSQLiteParams([profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]));
     } else {
       await database.runAsync(`
         INSERT INTO user_profile (id, displayName, statusMessage, avatarEmoji)
         VALUES (1, ?, ?, ?)
-      `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+      `, toSQLiteParams([profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]));
     }
     console.log('[DB] User profile updated');
   } catch (err) {
@@ -939,7 +939,7 @@ export async function savePubkey(nodeId: string, pubkeyHex: string): Promise<voi
       ON CONFLICT(nodeId) DO UPDATE SET
         pubkeyHex = excluded.pubkeyHex,
         lastSeen = excluded.lastSeen
-    `, [nodeId, pubkeyHex]);
+    `, toSQLiteParams([nodeId, pubkeyHex]));
     console.log('[DB] Pubkey saved:', nodeId);
   } catch (err) {
     console.error('[DB] Erreur savePubkey:', err);
@@ -952,7 +952,7 @@ export async function getPubkey(nodeId: string): Promise<string | null> {
     const database = await getDatabase();
     const row = await database.getFirstAsync<{ pubkeyHex: string }>(`
       SELECT pubkeyHex FROM key_store WHERE nodeId = ?
-    `, [nodeId]);
+    `, toSQLiteParams([nodeId]));
     return row?.pubkeyHex || null;
   } catch (err) {
     console.error('[DB] Erreur getPubkey:', err);
