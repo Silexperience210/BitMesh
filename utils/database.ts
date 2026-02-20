@@ -282,7 +282,7 @@ async function initDatabase(): Promise<void> {
   await db.runAsync(
     `INSERT OR IGNORE INTO submeshes (id, name, color, is_default, auto_join, require_invite, max_hops)
      VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ['0x0000', 'Réseau Principal', '#22D3EE', 1, 1, 0, 10]
+    toSQLiteParams(['0x0000', 'Réseau Principal', '#22D3EE', 1, 1, 0, 10])
   );
 }
 
@@ -377,8 +377,8 @@ export async function updateConversationLastMessageDB(
 ): Promise<void> {
   try {
     const database = await getDatabase();
-    // ✅ CONVERSION explicite
-    const params = [String(lastMessage), Math.floor(Number(ts)), String(convId)];
+    // ✅ CONVERSION explicite avec toSQLiteParams
+    const params = toSQLiteParams([String(lastMessage), Math.floor(Number(ts)), String(convId)]);
     
     if (incrementUnread) {
       await database.runAsync(`
@@ -472,11 +472,14 @@ export async function saveMessageDB(msg: DBMessage): Promise<void> {
       msg.compressed ? 1 : 0,
     ];
     
+    // ✅ CONVERSION avec toSQLiteParams
+    const sqliteParams = toSQLiteParams(params);
+    
     await database.runAsync(`
       INSERT OR REPLACE INTO messages 
       (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, params);
+    `, sqliteParams);
     
     console.log('[DB] Message sauvegardé:', msg.id);
   } catch (err) {
@@ -491,9 +494,10 @@ export async function updateMessageStatusDB(
 ): Promise<void> {
   try {
     const database = await getDatabase();
+    // ✅ CONVERSION avec toSQLiteParams
     await database.runAsync(`
       UPDATE messages SET status = ? WHERE id = ?
-    `, [status, msgId]);
+    `, toSQLiteParams([status, msgId]));
     console.log('[DB] Message status updated:', msgId, status);
   } catch (err) {
     console.error('[DB] Erreur updateMessageStatusDB:', err);
@@ -519,13 +523,14 @@ export async function queuePendingMessage(
 ): Promise<void> {
   try {
     const database = await getDatabase();
+    // ✅ CONVERSION avec toSQLiteParams
     await database.runAsync(`
       INSERT INTO pending_messages (id, packet, retries, maxRetries, nextRetryAt)
       VALUES (?, ?, 0, ?, strftime('%s', 'now') * 1000)
       ON CONFLICT(id) DO UPDATE SET
         retries = retries + 1,
         nextRetryAt = strftime('%s', 'now') * 1000 + (1000 * (retries + 1) * (retries + 1))
-    `, [id, uint8ArrayToBase64(packet), maxRetries]);
+    `, toSQLiteParams([id, uint8ArrayToBase64(packet), maxRetries]));
     console.log('[DB] Pending message queued:', id);
   } catch (err) {
     console.error('[DB] Erreur queuePendingMessage:', err);
@@ -537,11 +542,12 @@ export async function getPendingMessages(): Promise<PendingMessage[]> {
   try {
     const database = await getDatabase();
     const now = Date.now();
+    // ✅ CONVERSION avec toSQLiteParams
     const rows = await database.getAllAsync<any>(`
       SELECT * FROM pending_messages 
       WHERE retries < maxRetries AND nextRetryAt <= ?
       ORDER BY nextRetryAt ASC
-    `, [now]);
+    `, toSQLiteParams([now]));
     return rows.map(row => ({
       ...row,
       packet: base64ToUint8Array(row.packet),
