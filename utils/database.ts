@@ -163,7 +163,7 @@ async function initDatabase(): Promise<void> {
   await db.execAsync(`
     CREATE TABLE IF NOT EXISTS pending_messages (
       id TEXT PRIMARY KEY,
-      packet BLOB NOT NULL,
+      packet TEXT NOT NULL,
       retries INTEGER NOT NULL DEFAULT 0,
       maxRetries INTEGER NOT NULL DEFAULT 3,
       nextRetryAt INTEGER NOT NULL,
@@ -1140,7 +1140,7 @@ export async function enqueueMqttMessage(
     const database = await getDatabase();
     const result = await database.runAsync(
       `INSERT INTO mqtt_queue (topic, payload, qos, max_retries, next_retry_at) VALUES (?, ?, ?, ?, ?)`,
-      [topic, payload, qos, maxRetries, Date.now()]
+      toSQLiteParams([topic, payload, qos, maxRetries, Date.now()])
     );
     console.log('[Database] MQTT message enqueued:', topic, 'id:', result.lastInsertRowId);
     return result.lastInsertRowId;
@@ -1157,7 +1157,7 @@ export async function getPendingMqttMessages(): Promise<DBMqttQueueItem[]> {
       `SELECT * FROM mqtt_queue 
        WHERE retry_count < max_retries AND next_retry_at <= ? 
        ORDER BY created_at ASC`,
-      [Date.now()]
+      toSQLiteParams([Date.now()])
     );
     return rows.map(row => ({
       id: row.id,
