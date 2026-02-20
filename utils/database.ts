@@ -264,29 +264,37 @@ export async function listConversationsDB(): Promise<DBConversation[]> {
 }
 
 export async function saveConversationDB(conv: DBConversation): Promise<void> {
+  console.log('[DB] saveConversationDB appelé avec:', conv);
   const database = await getDatabase();
-  await database.runAsync(`
-    INSERT INTO conversations (id, name, isForum, peerPubkey, lastMessage, lastMessageTime, unreadCount, online, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000)
-    ON CONFLICT(id) DO UPDATE SET
-      name = excluded.name,
-      isForum = excluded.isForum,
-      peerPubkey = excluded.peerPubkey,
-      lastMessage = excluded.lastMessage,
-      lastMessageTime = excluded.lastMessageTime,
-      unreadCount = excluded.unreadCount,
-      online = excluded.online,
-      updatedAt = excluded.updatedAt
-  `, [
-    conv.id,
-    conv.name,
-    conv.isForum ? 1 : 0,
-    conv.peerPubkey || null,
-    conv.lastMessage || null,
-    conv.lastMessageTime,
-    conv.unreadCount,
-    conv.online ? 1 : 0,
-  ]);
+  
+  try {
+    await database.runAsync(`
+      INSERT INTO conversations (id, name, isForum, peerPubkey, lastMessage, lastMessageTime, unreadCount, online, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        isForum = excluded.isForum,
+        peerPubkey = excluded.peerPubkey,
+        lastMessage = excluded.lastMessage,
+        lastMessageTime = excluded.lastMessageTime,
+        unreadCount = excluded.unreadCount,
+        online = excluded.online,
+        updatedAt = excluded.updatedAt
+    `, [
+      conv.id,
+      conv.name,
+      conv.isForum ? 1 : 0,
+      conv.peerPubkey || null,
+      conv.lastMessage || null,
+      conv.lastMessageTime,
+      conv.unreadCount,
+      conv.online ? 1 : 0,
+    ]);
+    console.log('[DB] Conversation sauvegardée avec succès');
+  } catch (err) {
+    console.error('[DB] Erreur saveConversationDB:', err);
+    throw err;
+  }
 }
 
 export async function updateConversationLastMessageDB(
