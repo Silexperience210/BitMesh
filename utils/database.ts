@@ -33,8 +33,14 @@ const MAX_INIT_ATTEMPTS = 3;
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (!db) {
     try {
+      // ✅ AJOUT: Délai pour laisser le temps à SQLite de s'initialiser
+      await new Promise(resolve => setTimeout(resolve, 100));
       db = await SQLite.openDatabaseAsync('bitmesh.db');
       await initDatabase();
+      // ✅ VÉRIFICATION: db est bien initialisé après initDatabase
+      if (!db) {
+        throw new Error('Database initialization failed - db is null after init');
+      }
     } catch (error) {
       console.error('[Database] Erreur ouverture:', error);
       initAttempts++;
@@ -43,12 +49,22 @@ export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
         console.error('[Database] Trop de tentatives, reset de la base...');
         await resetDatabase();
         initAttempts = 0;
+        // ✅ VÉRIFICATION après reset
+        if (!db) {
+          throw new Error('Database still null after reset');
+        }
       } else {
+        // ✅ AJOUT: Attendre avant de réessayer
+        await new Promise(resolve => setTimeout(resolve, 500));
         throw error;
       }
     }
   }
-  return db!;
+  // ✅ Vérification finale avant return
+  if (!db) {
+    throw new Error('Database is null - cannot proceed');
+  }
+  return db;
 }
 
 /**

@@ -43,7 +43,7 @@
     "expo-router": "~6.0.17",
     "expo-secure-store": "~15.0.8",
     "expo-splash-screen": "~31.0.12",
-    "expo-sqlite": "~15.2.0",
+    "expo-sqlite": "~16.0.0",
     "expo-status-bar": "~3.0.9",
     "expo-symbols": "~1.0.8",
     "expo-system-ui": "~6.0.9",
