@@ -350,30 +350,42 @@ export async function updateConversationLastMessageDB(
   ts: number,
   incrementUnread: boolean
 ): Promise<void> {
-  const database = await getDatabase();
-  // ✅ CONVERSION explicite
-  const params = [String(lastMessage), Math.floor(Number(ts)), String(convId)];
-  
-  if (incrementUnread) {
-    await database.runAsync(`
-      UPDATE conversations 
-      SET lastMessage = ?, lastMessageTime = ?, unreadCount = unreadCount + 1, updatedAt = strftime('%s', 'now') * 1000
-      WHERE id = ?
-    `, params);
-  } else {
-    await database.runAsync(`
-      UPDATE conversations 
-      SET lastMessage = ?, lastMessageTime = ?, updatedAt = strftime('%s', 'now') * 1000
-      WHERE id = ?
-    `, params);
+  try {
+    const database = await getDatabase();
+    // ✅ CONVERSION explicite
+    const params = [String(lastMessage), Math.floor(Number(ts)), String(convId)];
+    
+    if (incrementUnread) {
+      await database.runAsync(`
+        UPDATE conversations 
+        SET lastMessage = ?, lastMessageTime = ?, unreadCount = unreadCount + 1, updatedAt = strftime('%s', 'now') * 1000
+        WHERE id = ?
+      `, params);
+    } else {
+      await database.runAsync(`
+        UPDATE conversations 
+        SET lastMessage = ?, lastMessageTime = ?, updatedAt = strftime('%s', 'now') * 1000
+        WHERE id = ?
+      `, params);
+    }
+    console.log('[DB] Conversation mise à jour:', convId);
+  } catch (err) {
+    console.error('[DB] Erreur updateConversationLastMessageDB:', err);
+    throw err;
   }
 }
 
 export async function markConversationReadDB(convId: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE conversations SET unreadCount = 0, updatedAt = strftime('%s', 'now') * 1000 WHERE id = ?
-  `, toSQLiteParams([convId]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE conversations SET unreadCount = 0, updatedAt = strftime('%s', 'now') * 1000 WHERE id = ?
+    `, toSQLiteParams([convId]));
+    console.log('[DB] Conversation marquée comme lue:', convId);
+  } catch (err) {
+    console.error('[DB] Erreur markConversationReadDB:', err);
+    throw err;
+  }
 }
 
 // --- Messages ---
@@ -410,30 +422,37 @@ export async function loadMessagesDB(convId: string, limit: number = 200): Promi
 }
 
 export async function saveMessageDB(msg: DBMessage): Promise<void> {
-  const database = await getDatabase();
-  
-  // ✅ CONVERSION explicite des types pour SQLite
-  const params = [
-    String(msg.id),
-    String(msg.conversationId),
-    String(msg.fromNodeId),
-    msg.fromPubkey ? String(msg.fromPubkey) : null,
-    String(msg.text),
-    String(msg.type),
-    Math.floor(Number(msg.timestamp || Date.now())),
-    msg.isMine ? 1 : 0,
-    String(msg.status),
-    msg.cashuAmount ? Math.floor(Number(msg.cashuAmount)) : null,
-    msg.cashuToken ? String(msg.cashuToken) : null,
-    msg.btcAmount ? Math.floor(Number(msg.btcAmount)) : null,
-    msg.compressed ? 1 : 0,
-  ];
-  
-  await database.runAsync(`
-    INSERT OR REPLACE INTO messages 
-    (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, params);
+  try {
+    const database = await getDatabase();
+    
+    // ✅ CONVERSION explicite des types pour SQLite
+    const params = [
+      String(msg.id),
+      String(msg.conversationId),
+      String(msg.fromNodeId),
+      msg.fromPubkey ? String(msg.fromPubkey) : null,
+      String(msg.text),
+      String(msg.type),
+      Math.floor(Number(msg.timestamp || Date.now())),
+      msg.isMine ? 1 : 0,
+      String(msg.status),
+      msg.cashuAmount ? Math.floor(Number(msg.cashuAmount)) : null,
+      msg.cashuToken ? String(msg.cashuToken) : null,
+      msg.btcAmount ? Math.floor(Number(msg.btcAmount)) : null,
+      msg.compressed ? 1 : 0,
+    ];
+    
+    await database.runAsync(`
+      INSERT OR REPLACE INTO messages 
+      (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, params);
+    
+    console.log('[DB] Message sauvegardé:', msg.id);
+  } catch (err) {
+    console.error('[DB] Erreur saveMessageDB:', err);
+    throw err;
+  }
 }
 
 export async function updateMessageStatusDB(
@@ -541,77 +560,112 @@ export interface DBCashuToken {
 }
 
 export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    INSERT OR REPLACE INTO cashu_tokens 
-    (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
-    VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?, ?, ?, ?, ?)
-  `, toSQLiteParams([
-    token.id,
-    token.mintUrl,
-    token.amount,
-    token.token,
-    token.proofs,
-    token.keysetId || null,
-    token.state || 'unspent',
-    token.spentAt || null,
-    token.source || null,
-    token.memo || null,
-    token.unverified ? 1 : 0,
-    token.retryCount || 0,
-    token.lastCheckAt || null,
-  ]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      INSERT OR REPLACE INTO cashu_tokens 
+      (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
+      VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?, ?, ?, ?, ?)
+    `, toSQLiteParams([
+      token.id,
+      token.mintUrl,
+      token.amount,
+      token.token,
+      token.proofs,
+      token.keysetId || null,
+      token.state || 'unspent',
+      token.spentAt || null,
+      token.source || null,
+      token.memo || null,
+      token.unverified ? 1 : 0,
+      token.retryCount || 0,
+      token.lastCheckAt || null,
+    ]));
+    console.log('[DB] Cashu token sauvegardé:', token.id);
+  } catch (err) {
+    console.error('[DB] Erreur saveCashuToken:', err);
+    throw err;
+  }
 }
 
 export async function getUnspentCashuTokens(): Promise<DBCashuToken[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM cashu_tokens WHERE state IN ('unspent', 'unverified') ORDER BY receivedAt DESC
-  `);
-  return rows.map(row => ({
-    ...row,
-    state: row.state || (row.spent ? 'spent' : 'unspent'),
-    unverified: Boolean(row.unverified),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM cashu_tokens WHERE state IN ('unspent', 'unverified') ORDER BY receivedAt DESC
+    `);
+    return rows.map(row => ({
+      ...row,
+      state: row.state || (row.spent ? 'spent' : 'unspent'),
+      unverified: Boolean(row.unverified),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getUnspentCashuTokens:', err);
+    return []; // Retourner tableau vide en cas d'erreur
+  }
 }
 
 export async function markCashuTokenSpent(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE cashu_tokens 
-    SET state = 'spent', spentAt = strftime('%s', 'now') * 1000
-    WHERE id = ?
-  `, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE cashu_tokens 
+      SET state = 'spent', spentAt = strftime('%s', 'now') * 1000
+      WHERE id = ?
+    `, toSQLiteParams([id]));
+    console.log('[DB] Cashu token marqué comme spent:', id);
+  } catch (err) {
+    console.error('[DB] Erreur markCashuTokenSpent:', err);
+    throw err;
+  }
 }
 
 // ✅ NOUVEAU : Marquer comme pending
 export async function markCashuTokenPending(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE cashu_tokens 
-    SET state = 'pending'
-    WHERE id = ?
-  `, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE cashu_tokens 
+      SET state = 'pending'
+      WHERE id = ?
+    `, toSQLiteParams([id]));
+    console.log('[DB] Cashu token marqué comme pending:', id);
+  } catch (err) {
+    console.error('[DB] Erreur markCashuTokenPending:', err);
+    throw err;
+  }
 }
 
 // ✅ NOUVEAU : Remettre à unspent (rollback)
 export async function markCashuTokenUnspent(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE cashu_tokens 
-    SET state = 'unspent', pending = 0
-    WHERE id = ?
-  `, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE cashu_tokens 
+      SET state = 'unspent', pending = 0
+      WHERE id = ?
+    `, toSQLiteParams([id]));
+    console.log('[DB] Cashu token remis à unspent:', id);
+  } catch (err) {
+    console.error('[DB] Erreur markCashuTokenUnspent:', err);
+    throw err;
+  }
 }
 
 // ✅ NOUVEAU : Mettre à jour après vérification
 export async function markCashuTokenVerified(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE cashu_tokens 
-    SET state = 'unspent', unverified = 0, lastCheckAt = strftime('%s', 'now') * 1000
-    WHERE id = ?
-  `, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE cashu_tokens 
+      SET state = 'unspent', unverified = 0, lastCheckAt = strftime('%s', 'now') * 1000
+      WHERE id = ?
+    `, toSQLiteParams([id]));
+    console.log('[DB] Cashu token vérifié:', id);
+  } catch (err) {
+    console.error('[DB] Erreur markCashuTokenVerified:', err);
+    throw err;
+  }
 }
 
 export async function getCashuTokenById(id: string): Promise<DBCashuToken | null> {
