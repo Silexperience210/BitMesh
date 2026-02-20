@@ -53,7 +53,6 @@ import {
   type MeshCorePacket,
   MeshCoreMessageType,
   MeshCoreFlags,
-  createTextMessageSync,
   extractTextFromPacket,
   uint64ToNodeId,
   nodeIdToUint64,
@@ -62,12 +61,10 @@ import {
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
   extractPosition,
-  compressWithFallback,
 } from '@/utils/meshcore-protocol';
 // Import Cashu validation
-import { verifyCashuToken, decodeCashuToken, getTokenAmount, generateTokenId } from '@/utils/cashu';
-import { getAckService } from '@/services/AckService';
-import { getChunkManager, validateMessageSize, LORA_MAX_TEXT_CHARS } from '@/services/ChunkManager';
+import { verifyCashuToken, generateTokenId } from '@/utils/cashu';
+import { getChunkManager, validateMessageSize } from '@/services/ChunkManager';
 
 // Format du message sur le réseau MQTT
 interface WireMessage {
@@ -122,7 +119,6 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const mqttRef = useRef<MeshMqttClient | null>(null);
   const meshRouterRef = useRef<MeshRouter | null>(null);
-  const ackServiceRef = useRef(getAckService());
   const chunkManagerRef = useRef(getChunkManager());
   const joinedForums = useRef<Set<string>>(new Set());
   // ✅ NOUVEAU : Forums découverts
@@ -190,11 +186,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           // Message complet reconstitué, traiter comme un TEXT normal
           console.log('[MeshCore] Message chunké reconstitué:', result.message.length, 'caractères');
           
-          // Créer un faux paquet TEXT pour réutiliser le traitement existant
+          // Créer un paquet TEXT reconstruit pour traitement
           const reconstructedPacket: MeshCorePacket = {
             version: 0x01,
             type: MeshCoreMessageType.TEXT,
-            flags: packet.flags, // Garder les flags (encrypted, etc.)
+            flags: packet.flags,
             ttl: packet.ttl,
             messageId: packet.messageId,
             fromNodeId: packet.fromNodeId,
@@ -204,11 +200,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             payload: new TextEncoder().encode(result.message),
           };
           
-          // Relancer le traitement avec le paquet reconstruit
-          // Note: handleIncomingMeshCorePacket est défini plus haut dans le useCallback
-          // On ne peut pas l'appeler directement ici, il faut dupliquer le code ou utiliser une ref
-          // Pour l'instant, on log juste le message
-          console.log('[MeshCore] Message reconstitué prêt:', result.message);
+          // Traiter le paquet reconstruit
+          console.log('[MeshCore] Traitement du paquet reconstruit:', reconstructedPacket.messageId);
           
           // ✅ Message chunké reconstitué - stocké dans la DB
           const fromNodeId = uint64ToNodeId(packet.fromNodeId);
@@ -1084,8 +1077,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const isForum = convId.startsWith('forum:');
 
     // **Transport hybride : BLE (LoRa) prioritaire, fallback MQTT**
-    // Si BLE connecté ET c'est un DM → utiliser protocole MeshCore binaire
-    if (ble.connected && isDM) {
+    // Si BLE connecté ET c'est un DM (pas un forum) → utiliser protocole MeshCore binaire
+    if (ble.connected && isDM && !isForum) {
       try {
         // ✅ FIX: Encoder le payload chiffré au lieu du texte en clair
         const encryptedPayload = encodeEncryptedPayload(enc);
