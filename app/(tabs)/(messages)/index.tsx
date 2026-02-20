@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,6 +9,7 @@ import {
   Modal,
   TextInput,
   Alert,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Radio, Plus, Wifi, Globe, Hash, User, X, Lock, Search } from 'lucide-react-native';
@@ -101,12 +102,20 @@ function ConvItem({ conv, onPress }: { conv: StoredConversation; onPress: () => 
   );
 }
 
+// Valider le nom de forum (caractères MQTT autorisés)
+function validateForumName(name: string): string | null {
+  if (!name.trim()) return 'Entrez un nom de forum';
+  if (name.length > 64) return 'Nom trop long (max 64 caractères)';
+  if (/[#$+]/.test(name)) return 'Caractères interdits: # $ +';
+  return null;
+}
+
 // Modal pour nouvelle conversation ou rejoindre un forum
 function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
   visible: boolean;
   onClose: () => void;
   onDM: (nodeId: string, name: string) => void;
-  onForum: (channelName: string) => void;
+  onForum: (channelName: string) => Promise<void>;
   mqttState: 'disconnected' | 'connecting' | 'connected' | 'error';
 }) {
   const { discoveredForums, announceForumPublic, joinForum: joinForumContext } = useMessages();
@@ -117,6 +126,7 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
   const [newForumName, setNewForumName] = useState('');
   const [newForumDesc, setNewForumDesc] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const handleDM = () => {
     if (!nodeId.trim()) return;
@@ -125,66 +135,76 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
     onClose();
   };
 
-  const handleForum = () => {
+  // FIX: handleForum est maintenant async et attend la fin avant de fermer
+  const handleForum = async () => {
     if (!channel.trim()) return;
-    onForum(channel.trim().toLowerCase().replace(/\s+/g, '-'));
-    setChannel('');
-    onClose();
+    const channelName = channel.trim().toLowerCase().replace(/\s+/g, '-');
+    const error = validateForumName(channelName);
+    if (error) {
+      Alert.alert('Nom invalide', error);
+      return;
+    }
+    try {
+      setLoading(true);
+      await onForum(channelName);
+      setChannel('');
+      onClose();
+    } catch (err) {
+      Alert.alert('Erreur', 'Impossible de rejoindre le forum. Réessayez.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleCreatePublicForum = async () => {
-    console.log('[Forum] handleCreatePublicForum appelé');
-    
-    if (!newForumName.trim()) {
-      console.log('[Forum] Erreur: nom vide');
-      Alert.alert('Erreur', 'Entrez un nom de forum');
+    const error = validateForumName(newForumName);
+    if (error) {
+      Alert.alert('Nom invalide', error);
       return;
     }
-    
-    // Vérifier si MQTT est connecté
-    console.log('[Forum] mqttState:', mqttState);
-    Alert.alert('Debug MQTT', `Status: ${mqttState}`);
-    
+
     if (mqttState !== 'connected') {
-      console.log('[Forum] Erreur: MQTT non connecté');
       Alert.alert(
         'Non connecté',
         `La messagerie n'est pas encore connectée (status: ${mqttState}). Veuillez patienter quelques secondes et réessayer.`
       );
       return;
     }
-    
+
     const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
-    console.log('[Forum] Création du forum:', channelName);
-    Alert.alert('Debug', `Création forum: ${channelName}`);
-    
     try {
+      setLoading(true);
       await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
-      console.log('[Forum] Forum rejoint avec succès');
-      Alert.alert('Debug', 'Forum rejoint');
-    } catch (err) {
-      console.error('[Forum] Erreur joinForumContext:', err);
-      Alert.alert('Erreur', `Impossible de rejoindre le forum: ${err}`);
-      return;
-    }
-    
-    console.log('[Forum] Annonce en cours...');
-    const announced = announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
-    console.log('[Forum] announceForumPublic retourné:', announced);
-    Alert.alert('Debug', `Annonce: ${announced}`);
-    
-    if (announced) {
-      Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
+      const announced = announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
+      if (announced) {
+        Alert.alert('Forum créé!', `"#${channelName}" a été créé et annoncé sur le réseau.`);
+      } else {
+        Alert.alert(
+          'Forum créé localement',
+          `"#${channelName}" a été créé. Il ne sera annoncé sur le réseau qu'une fois connecté au MQTT.`
+        );
+      }
       setNewForumName(''); setNewForumDesc(''); setShowCreateForm(false);
-    } else {
-      Alert.alert('Erreur', 'Impossible d\'annoncer le forum. Vérifiez votre connexion.');
+      onForum(channelName);
+    } catch (err) {
+      console.log('[Forum] Erreur création:', err);
+      Alert.alert('Erreur', `Impossible de créer le forum: ${err instanceof Error ? err.message : 'Erreur inconnue'}`);
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleJoinDiscoveredForum = async (channelName: string, description: string) => {
-    await joinForumContext(channelName, description);
-    Alert.alert('Rejoint!', `Vous avez rejoint #${channelName}`);
-    onClose();
+    try {
+      setLoading(true);
+      await joinForumContext(channelName, description);
+      Alert.alert('Rejoint!', `Vous avez rejoint #${channelName}`);
+      onClose();
+    } catch (err) {
+      Alert.alert('Erreur', 'Impossible de rejoindre ce forum.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -264,9 +284,19 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
                 Tout le monde connaissant ce nom peut rejoindre le forum.
                 Les messages sont chiffrés avec SHA256(&quot;forum:&quot;+nom).
               </Text>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: Colors.cyan }]} onPress={handleForum}>
-                <Hash size={14} color={Colors.black} />
-                <Text style={styles.modalBtnText}>Rejoindre le forum</Text>
+              <TouchableOpacity
+                style={[styles.modalBtn, { backgroundColor: Colors.cyan, opacity: loading ? 0.6 : 1 }]}
+                onPress={handleForum}
+                disabled={loading}
+              >
+                {loading ? (
+                  <ActivityIndicator size="small" color={Colors.black} />
+                ) : (
+                  <>
+                    <Hash size={14} color={Colors.black} />
+                    <Text style={styles.modalBtnText}>Rejoindre le forum</Text>
+                  </>
+                )}
               </TouchableOpacity>
             </View>
           ) : (
@@ -300,10 +330,15 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
                     onChangeText={setNewForumDesc}
                   />
                   <TouchableOpacity
-                    style={[styles.modalBtn, { backgroundColor: Colors.green }]}
+                    style={[styles.modalBtn, { backgroundColor: Colors.green, opacity: loading ? 0.6 : 1 }]}
                     onPress={handleCreatePublicForum}
+                    disabled={loading}
                   >
-                    <Text style={styles.modalBtnText}>Créer et Annoncer</Text>
+                    {loading ? (
+                      <ActivityIndicator size="small" color={Colors.black} />
+                    ) : (
+                      <Text style={styles.modalBtnText}>Créer et Annoncer</Text>
+                    )}
                   </TouchableOpacity>
                 </View>
               )}
@@ -385,7 +420,7 @@ export default function MessagesScreen() {
     router.push(`/(messages)/${encodeURIComponent(nodeId)}` as never);
   };
 
-  const handleForum = async (channelName: string) => {
+  const handleForum = async (channelName: string): Promise<void> => {
     await joinForum(channelName);
     router.push(`/(messages)/${encodeURIComponent('forum:' + channelName)}` as never);
   };

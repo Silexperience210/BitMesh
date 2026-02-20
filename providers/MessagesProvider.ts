@@ -101,7 +101,7 @@ export interface MessagesState {
   joinForum: (channelName: string, description?: string) => Promise<void>;
   leaveForum: (channelName: string) => void;
   markRead: (convId: string) => Promise<void>;
-  // ✅ NOUVEAU : Annoncer un forum public
+  // ✅ NOUVEAU : Annoncer un forum public (retourne false si non connecté)
   announceForumPublic: (channelName: string, description: string) => boolean;
   // ✅ NOUVEAU : Mettre à jour le display name
   setDisplayName: (name: string) => Promise<void>;
@@ -121,6 +121,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const meshRouterRef = useRef<MeshRouter | null>(null);
   const chunkManagerRef = useRef(getChunkManager());
   const joinedForums = useRef<Set<string>>(new Set());
+  // FIX: Référence vers l'interval de polling pour cleanup en cas de démontage pendant connexion
+  const statePollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // ✅ NOUVEAU : Forums découverts
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
 
@@ -980,12 +982,16 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             joinForumChannel(client, ch, handleIncomingForum(ch));
           });
           clearInterval(statePoller);
+          statePollerRef.current = null; // FIX: nettoyer la référence
         } else if (s === 'error' || s === 'disconnected') {
           console.log('[Messages] Connexion MQTT échouée ou perdue:', s);
           clearInterval(statePoller);
+          statePollerRef.current = null;
         }
       }
     }, 2000);
+    // FIX: Stocker la référence pour permettre le cleanup en cas de démontage
+    statePollerRef.current = statePoller;
   }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement]);
 
   // Auto-connexion dès que l'identité est disponible
@@ -994,6 +1000,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       connect();
     }
     return () => {
+      // FIX: Nettoyer l'interval de polling si le composant se démonte pendant la connexion
+      if (statePollerRef.current) {
+        clearInterval(statePollerRef.current);
+        statePollerRef.current = null;
+      }
       if (mqttRef.current) {
         disconnectMesh(mqttRef.current);
         mqttRef.current = null;
@@ -1181,8 +1192,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     text: string,
     type: MessageType = 'text'
   ): Promise<void> => {
-    if (!identity || !mqttRef.current) {
-      throw new Error('Non connecté');
+    if (!identity || mqttRef.current?.state !== 'connected') {
+      throw new Error('Non connecté au réseau MQTT');
     }
 
     // ✅ Validation taille message
@@ -1349,8 +1360,12 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       joinForumChannel(mqttRef.current, channelName, handleIncomingForum(channelName));
     }
 
-    const existing = conversations.find(c => c.id === convId);
-    if (!existing) {
+    // FIX: Vérifier dans AsyncStorage (source de vérité) plutôt que dans le state React
+    // qui peut ne pas encore être chargé au démarrage → évite les doublons
+    setConversations(prev => {
+      const existing = prev.find(c => c.id === convId);
+      if (existing) return prev;
+
       const conv: StoredConversation = {
         id: convId,
         name: `#${channelName}`,
@@ -1376,13 +1391,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
   // ✅ NOUVEAU : Annoncer un forum public
   const announceForumPublic = useCallback((channelName: string, description: string): boolean => {
-    if (!mqttRef.current || !identity) {
-      console.log('[Forums] Impossible d\'annoncer — non connecté');
-      return false;
-    }
-
-    if (mqttRef.current.state !== 'connected') {
-      console.log('[Forums] Impossible d\'annoncer — MQTT pas connecté (state:', mqttRef.current.state + ')');
+    if (!mqttRef.current || mqttRef.current.state !== 'connected' || !identity) {
+      console.log('[Forums] Impossible d\'annoncer — non connecté, état:', mqttRef.current?.state);
       return false;
     }
 
@@ -1401,7 +1411,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   // ✅ NOUVEAU : Mettre à jour le display name
   const setDisplayName = useCallback(async (name: string): Promise<void> => {
     if (!identity) return;
-    
+
     // ✅ CORRECTION: try/catch pour setUserProfile
     try {
       await setUserProfile({ displayName: name });
