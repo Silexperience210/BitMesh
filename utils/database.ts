@@ -281,16 +281,21 @@ export interface DBConversation {
 }
 
 export async function listConversationsDB(): Promise<DBConversation[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM conversations 
-    ORDER BY lastMessageTime DESC
-  `);
-  return rows.map(row => ({
-    ...row,
-    isForum: Boolean(row.isForum),
-    online: Boolean(row.online),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM conversations 
+      ORDER BY lastMessageTime DESC
+    `);
+    return rows.map(row => ({
+      ...row,
+      isForum: Boolean(row.isForum),
+      online: Boolean(row.online),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur listConversationsDB:', err);
+    return []; // Retourner tableau vide en cas d'erreur
+  }
 }
 
 export async function saveConversationDB(conv: DBConversation): Promise<void> {
@@ -407,18 +412,23 @@ export interface DBMessage {
 }
 
 export async function loadMessagesDB(convId: string, limit: number = 200): Promise<DBMessage[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM messages 
-    WHERE conversationId = ?
-    ORDER BY timestamp DESC
-    LIMIT ?
-  `, [convId, limit]);
-  return rows.reverse().map(row => ({
-    ...row,
-    isMine: Boolean(row.isMine),
-    compressed: Boolean(row.compressed),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM messages 
+      WHERE conversationId = ?
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `, [convId, limit]);
+    return rows.reverse().map(row => ({
+      ...row,
+      isMine: Boolean(row.isMine),
+      compressed: Boolean(row.compressed),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur loadMessagesDB:', err);
+    return []; // Retourner tableau vide en cas d'erreur
+  }
 }
 
 export async function saveMessageDB(msg: DBMessage): Promise<void> {
@@ -459,10 +469,16 @@ export async function updateMessageStatusDB(
   msgId: string,
   status: DBMessage['status']
 ): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE messages SET status = ? WHERE id = ?
-  `, [status, msgId]);
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE messages SET status = ? WHERE id = ?
+    `, [status, msgId]);
+    console.log('[DB] Message status updated:', msgId, status);
+  } catch (err) {
+    console.error('[DB] Erreur updateMessageStatusDB:', err);
+    throw err;
+  }
 }
 
 // --- Pending Messages (Retry Queue) ---
@@ -481,33 +497,50 @@ export async function queuePendingMessage(
   packet: Uint8Array,
   maxRetries: number = 3
 ): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    INSERT INTO pending_messages (id, packet, retries, maxRetries, nextRetryAt)
-    VALUES (?, ?, 0, ?, strftime('%s', 'now') * 1000)
-    ON CONFLICT(id) DO UPDATE SET
-      retries = retries + 1,
-      nextRetryAt = strftime('%s', 'now') * 1000 + (1000 * (retries + 1) * (retries + 1))
-  `, [id, uint8ArrayToBase64(packet), maxRetries]);
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      INSERT INTO pending_messages (id, packet, retries, maxRetries, nextRetryAt)
+      VALUES (?, ?, 0, ?, strftime('%s', 'now') * 1000)
+      ON CONFLICT(id) DO UPDATE SET
+        retries = retries + 1,
+        nextRetryAt = strftime('%s', 'now') * 1000 + (1000 * (retries + 1) * (retries + 1))
+    `, [id, uint8ArrayToBase64(packet), maxRetries]);
+    console.log('[DB] Pending message queued:', id);
+  } catch (err) {
+    console.error('[DB] Erreur queuePendingMessage:', err);
+    throw err;
+  }
 }
 
 export async function getPendingMessages(): Promise<PendingMessage[]> {
-  const database = await getDatabase();
-  const now = Date.now();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM pending_messages 
-    WHERE retries < maxRetries AND nextRetryAt <= ?
-    ORDER BY nextRetryAt ASC
-  `, [now]);
-  return rows.map(row => ({
-    ...row,
-    packet: base64ToUint8Array(row.packet),
-  }));
+  try {
+    const database = await getDatabase();
+    const now = Date.now();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM pending_messages 
+      WHERE retries < maxRetries AND nextRetryAt <= ?
+      ORDER BY nextRetryAt ASC
+    `, [now]);
+    return rows.map(row => ({
+      ...row,
+      packet: base64ToUint8Array(row.packet),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getPendingMessages:', err);
+    return [];
+  }
 }
 
 export async function removePendingMessage(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`DELETE FROM pending_messages WHERE id = ?`, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`DELETE FROM pending_messages WHERE id = ?`, toSQLiteParams([id]));
+    console.log('[DB] Pending message removed:', id);
+  } catch (err) {
+    console.error('[DB] Erreur removePendingMessage:', err);
+    throw err;
+  }
 }
 
 export async function incrementRetryCount(id: string, error?: string): Promise<void> {
@@ -526,18 +559,23 @@ export async function incrementRetryCount(id: string, error?: string): Promise<v
 const MESSAGE_RETENTION_HOURS = 24;
 
 export async function cleanupOldMessages(): Promise<number> {
-  const database = await getDatabase();
-  const cutoffTime = Date.now() - (MESSAGE_RETENTION_HOURS * 60 * 60 * 1000);
-  
-  const result = await database.runAsync(`
-    DELETE FROM messages WHERE timestamp < ?
-  `, [cutoffTime]);
-  
-  const deletedCount = result.changes || 0;
-  if (deletedCount > 0) {
-    console.log(`[Database] ${deletedCount} messages effacés (> ${MESSAGE_RETENTION_HOURS}h)`);
+  try {
+    const database = await getDatabase();
+    const cutoffTime = Date.now() - (MESSAGE_RETENTION_HOURS * 60 * 60 * 1000);
+    
+    const result = await database.runAsync(`
+      DELETE FROM messages WHERE timestamp < ?
+    `, [cutoffTime]);
+    
+    const deletedCount = result.changes || 0;
+    if (deletedCount > 0) {
+      console.log(`[Database] ${deletedCount} messages effacés (> ${MESSAGE_RETENTION_HOURS}h)`);
+    }
+    return deletedCount;
+  } catch (err) {
+    console.error('[DB] Erreur cleanupOldMessages:', err);
+    return 0;
   }
-  return deletedCount;
 }
 
 // --- Cashu Tokens (Wallet) ---
@@ -669,69 +707,94 @@ export async function markCashuTokenVerified(id: string): Promise<void> {
 }
 
 export async function getCashuTokenById(id: string): Promise<DBCashuToken | null> {
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<any>(`
-    SELECT * FROM cashu_tokens WHERE id = ?
-  `, [id]);
-  if (!row) return null;
-  return { ...row, spent: Boolean(row.spent) };
+  try {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<any>(`
+      SELECT * FROM cashu_tokens WHERE id = ?
+    `, [id]);
+    if (!row) return null;
+    return { ...row, spent: Boolean(row.spent) };
+  } catch (err) {
+    console.error('[DB] Erreur getCashuTokenById:', err);
+    return null;
+  }
 }
 
 export async function getCashuBalance(): Promise<{ total: number; byMint: Record<string, number> }> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<{ mintUrl: string; amount: number }>(`
-    SELECT mintUrl, SUM(amount) as amount 
-    FROM cashu_tokens 
-    WHERE state IN ('unspent', 'unverified')
-    GROUP BY mintUrl
-  `);
-  
-  let total = 0;
-  const byMint: Record<string, number> = {};
-  
-  for (const row of rows) {
-    total += row.amount;
-    byMint[row.mintUrl] = row.amount;
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<{ mintUrl: string; amount: number }>(`
+      SELECT mintUrl, SUM(amount) as amount 
+      FROM cashu_tokens 
+      WHERE state IN ('unspent', 'unverified')
+      GROUP BY mintUrl
+    `);
+    
+    let total = 0;
+    const byMint: Record<string, number> = {};
+    
+    for (const row of rows) {
+      total += row.amount;
+      byMint[row.mintUrl] = row.amount;
+    }
+    
+    return { total, byMint };
+  } catch (err) {
+    console.error('[DB] Erreur getCashuBalance:', err);
+    return { total: 0, byMint: {} };
   }
-  
-  return { total, byMint };
 }
 
 // ✅ NOUVEAU : Récupérer tous les mints utilisés
 export async function getAllMints(): Promise<string[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<{ mintUrl: string }>(`
-    SELECT DISTINCT mintUrl FROM cashu_tokens ORDER BY mintUrl
-  `);
-  return rows.map(r => r.mintUrl);
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<{ mintUrl: string }>(`
+      SELECT DISTINCT mintUrl FROM cashu_tokens ORDER BY mintUrl
+    `);
+    return rows.map(r => r.mintUrl);
+  } catch (err) {
+    console.error('[DB] Erreur getAllMints:', err);
+    return [];
+  }
 }
 
 // ✅ NOUVEAU : Récupérer les tokens par mint
 export async function getTokensByMint(mintUrl: string): Promise<DBCashuToken[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM cashu_tokens 
-    WHERE mintUrl = ? AND state IN ('unspent', 'unverified')
-    ORDER BY amount DESC
-  `, [mintUrl]);
-  return rows.map(row => ({
-    ...row,
-    state: row.state || 'unspent',
-    unverified: Boolean(row.unverified),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM cashu_tokens 
+      WHERE mintUrl = ? AND state IN ('unspent', 'unverified')
+      ORDER BY amount DESC
+    `, [mintUrl]);
+    return rows.map(row => ({
+      ...row,
+      state: row.state || 'unspent',
+      unverified: Boolean(row.unverified),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getTokensByMint:', err);
+    return [];
+  }
 }
 
 // ✅ NOUVEAU : Export tous les tokens (backup)
 export async function exportCashuTokens(): Promise<DBCashuToken[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM cashu_tokens ORDER BY receivedAt DESC
-  `);
-  return rows.map(row => ({
-    ...row,
-    state: row.state || 'unspent',
-    unverified: Boolean(row.unverified),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM cashu_tokens ORDER BY receivedAt DESC
+    `);
+    return rows.map(row => ({
+      ...row,
+      state: row.state || 'unspent',
+      unverified: Boolean(row.unverified),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur exportCashuTokens:', err);
+    return [];
+  }
 }
 
 // ✅ NOUVEAU : Import tokens (restore)
@@ -772,18 +835,23 @@ export async function importCashuTokens(tokens: DBCashuToken[]): Promise<number>
 
 // ✅ NOUVEAU : Récupérer les tokens unverified pour retry
 export async function getUnverifiedCashuTokens(): Promise<DBCashuToken[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(`
-    SELECT * FROM cashu_tokens 
-    WHERE state = 'unverified' 
-    AND (retryCount < 5 OR retryCount IS NULL)
-    ORDER BY receivedAt ASC
-  `);
-  return rows.map(row => ({
-    ...row,
-    state: row.state || 'unspent',
-    unverified: Boolean(row.unverified),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(`
+      SELECT * FROM cashu_tokens 
+      WHERE state = 'unverified' 
+      AND (retryCount < 5 OR retryCount IS NULL)
+      ORDER BY receivedAt ASC
+    `);
+    return rows.map(row => ({
+      ...row,
+      state: row.state || 'unspent',
+      unverified: Boolean(row.unverified),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getUnverifiedCashuTokens:', err);
+    return [];
+  }
 }
 
 // --- User Profile (display name personnalisable) ---
@@ -795,87 +863,125 @@ export interface UserProfile {
 }
 
 export async function getUserProfile(): Promise<UserProfile | null> {
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{ displayName: string | null; statusMessage: string | null; avatarEmoji: string | null }>(`
-    SELECT displayName, statusMessage, avatarEmoji FROM user_profile WHERE id = 1
-  `);
-  return row || null;
+  try {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<{ displayName: string | null; statusMessage: string | null; avatarEmoji: string | null }>(`
+      SELECT displayName, statusMessage, avatarEmoji FROM user_profile WHERE id = 1
+    `);
+    return row || null;
+  } catch (err) {
+    console.error('[DB] Erreur getUserProfile:', err);
+    return null;
+  }
 }
 
 export async function setUserProfile(profile: Partial<UserProfile>): Promise<void> {
-  const database = await getDatabase();
-  const existing = await getUserProfile();
-  
-  if (existing) {
-    await database.runAsync(`
-      UPDATE user_profile 
-      SET displayName = COALESCE(?, displayName),
-          statusMessage = COALESCE(?, statusMessage),
-          avatarEmoji = COALESCE(?, avatarEmoji),
-          updatedAt = strftime('%s', 'now') * 1000
-      WHERE id = 1
-    `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
-  } else {
-    await database.runAsync(`
-      INSERT INTO user_profile (id, displayName, statusMessage, avatarEmoji)
-      VALUES (1, ?, ?, ?)
-    `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+  try {
+    const database = await getDatabase();
+    const existing = await getUserProfile();
+    
+    if (existing) {
+      await database.runAsync(`
+        UPDATE user_profile 
+        SET displayName = COALESCE(?, displayName),
+            statusMessage = COALESCE(?, statusMessage),
+            avatarEmoji = COALESCE(?, avatarEmoji),
+            updatedAt = strftime('%s', 'now') * 1000
+        WHERE id = 1
+      `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+    } else {
+      await database.runAsync(`
+        INSERT INTO user_profile (id, displayName, statusMessage, avatarEmoji)
+        VALUES (1, ?, ?, ?)
+      `, [profile.displayName ?? null, profile.statusMessage ?? null, profile.avatarEmoji ?? null]);
+    }
+    console.log('[DB] User profile updated');
+  } catch (err) {
+    console.error('[DB] Erreur setUserProfile:', err);
+    throw err;
   }
 }
 
 // --- Key Store ---
 
 export async function savePubkey(nodeId: string, pubkeyHex: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    INSERT INTO key_store (nodeId, pubkeyHex, lastSeen)
-    VALUES (?, ?, strftime('%s', 'now') * 1000)
-    ON CONFLICT(nodeId) DO UPDATE SET
-      pubkeyHex = excluded.pubkeyHex,
-      lastSeen = excluded.lastSeen
-  `, [nodeId, pubkeyHex]);
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      INSERT INTO key_store (nodeId, pubkeyHex, lastSeen)
+      VALUES (?, ?, strftime('%s', 'now') * 1000)
+      ON CONFLICT(nodeId) DO UPDATE SET
+        pubkeyHex = excluded.pubkeyHex,
+        lastSeen = excluded.lastSeen
+    `, [nodeId, pubkeyHex]);
+    console.log('[DB] Pubkey saved:', nodeId);
+  } catch (err) {
+    console.error('[DB] Erreur savePubkey:', err);
+    throw err;
+  }
 }
 
 export async function getPubkey(nodeId: string): Promise<string | null> {
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{ pubkeyHex: string }>(`
-    SELECT pubkeyHex FROM key_store WHERE nodeId = ?
-  `, [nodeId]);
-  return row?.pubkeyHex || null;
+  try {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<{ pubkeyHex: string }>(`
+      SELECT pubkeyHex FROM key_store WHERE nodeId = ?
+    `, [nodeId]);
+    return row?.pubkeyHex || null;
+  } catch (err) {
+    console.error('[DB] Erreur getPubkey:', err);
+    return null;
+  }
 }
 
 // --- Message Counter (pour IDs uniques) ---
 
 export async function getNextMessageId(): Promise<number> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    UPDATE message_counters SET counter = counter + 1 WHERE id = 1
-  `);
-  const row = await database.getFirstAsync<{ counter: number }>(`
-    SELECT counter FROM message_counters WHERE id = 1
-  `);
-  return row?.counter || 0;
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      UPDATE message_counters SET counter = counter + 1 WHERE id = 1
+    `);
+    const row = await database.getFirstAsync<{ counter: number }>(`
+      SELECT counter FROM message_counters WHERE id = 1
+    `);
+    return row?.counter || 0;
+  } catch (err) {
+    console.error('[DB] Erreur getNextMessageId:', err);
+    return Date.now(); // Fallback
+  }
 }
 
 // --- App State ---
 
 export async function setAppState(key: string, value: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`
-    INSERT INTO app_state (key, value, updatedAt)
-    VALUES (?, ?, strftime('%s', 'now') * 1000)
-    ON CONFLICT(key) DO UPDATE SET
-      value = excluded.value,
-      updatedAt = excluded.updatedAt
-  `, [key, value]);
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`
+      INSERT INTO app_state (key, value, updatedAt)
+      VALUES (?, ?, strftime('%s', 'now') * 1000)
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updatedAt = excluded.updatedAt
+    `, [key, value]);
+    console.log('[DB] App state set:', key);
+  } catch (err) {
+    console.error('[DB] Erreur setAppState:', err);
+    throw err;
+  }
 }
 
 export async function getAppState(key: string): Promise<string | null> {
-  const database = await getDatabase();
-  const row = await database.getFirstAsync<{ value: string }>(`
-    SELECT value FROM app_state WHERE key = ?
-  `, [key]);
-  return row?.value || null;
+  try {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<{ value: string }>(`
+      SELECT value FROM app_state WHERE key = ?
+    `, [key]);
+    return row?.value || null;
+  } catch (err) {
+    console.error('[DB] Erreur getAppState:', err);
+    return null;
+  }
 }
 
 // --- Migration depuis AsyncStorage ---
@@ -989,50 +1095,74 @@ export async function enqueueMqttMessage(
   qos: number = 1,
   maxRetries: number = 3
 ): Promise<number> {
-  const database = await getDatabase();
-  const result = await database.runAsync(
-    `INSERT INTO mqtt_queue (topic, payload, qos, max_retries, next_retry_at) VALUES (?, ?, ?, ?, ?)`,
-    [topic, payload, qos, maxRetries, Date.now()]
-  );
-  console.log('[Database] MQTT message enqueued:', topic, 'id:', result.lastInsertRowId);
-  return result.lastInsertRowId;
+  try {
+    const database = await getDatabase();
+    const result = await database.runAsync(
+      `INSERT INTO mqtt_queue (topic, payload, qos, max_retries, next_retry_at) VALUES (?, ?, ?, ?, ?)`,
+      [topic, payload, qos, maxRetries, Date.now()]
+    );
+    console.log('[Database] MQTT message enqueued:', topic, 'id:', result.lastInsertRowId);
+    return result.lastInsertRowId;
+  } catch (err) {
+    console.error('[DB] Erreur enqueueMqttMessage:', err);
+    throw err;
+  }
 }
 
 export async function getPendingMqttMessages(): Promise<DBMqttQueueItem[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(
-    `SELECT * FROM mqtt_queue 
-     WHERE retry_count < max_retries AND next_retry_at <= ? 
-     ORDER BY created_at ASC`,
-    [Date.now()]
-  );
-  return rows.map(row => ({
-    id: row.id,
-    topic: row.topic,
-    payload: row.payload,
-    qos: row.qos,
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(
+      `SELECT * FROM mqtt_queue 
+       WHERE retry_count < max_retries AND next_retry_at <= ? 
+       ORDER BY created_at ASC`,
+      [Date.now()]
+    );
+    return rows.map(row => ({
+      id: row.id,
+      topic: row.topic,
+      payload: row.payload,
+      qos: row.qos,
     retryCount: row.retry_count,
     maxRetries: row.max_retries,
     createdAt: row.created_at,
     nextRetryAt: row.next_retry_at,
-  }));
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getPendingMqttMessages:', err);
+    return [];
+  }
 }
 
 export async function markMqttMessageSent(id: number): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(`DELETE FROM mqtt_queue WHERE id = ?`, toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync(`DELETE FROM mqtt_queue WHERE id = ?`, toSQLiteParams([id]));
+    console.log('[DB] MQTT message marked as sent:', id);
+  } catch (err) {
+    console.error('[DB] Erreur markMqttMessageSent:', err);
+    throw err;
+  }
 }
 
 export async function incrementMqttRetry(id: number): Promise<void> {
-  const database = await getDatabase();
-  const nextRetry = Date.now() + Math.pow(2, (await database.getFirstAsync<{retry_count: number}>(
-    `SELECT retry_count FROM mqtt_queue WHERE id = ?`, [id]
-  ))?.retry_count || 0) * 1000;
-  
-  await database.runAsync(
-    `UPDATE mqtt_queue SET retry_count = retry_count + 1, next_retry_at = ? WHERE id = ?`,
-    [nextRetry, id]
-  );
+  try {
+    const database = await getDatabase();
+    const row = await database.getFirstAsync<{retry_count: number}>(
+      `SELECT retry_count FROM mqtt_queue WHERE id = ?`, [id]
+    );
+    const retryCount = row?.retry_count || 0;
+    const nextRetry = Date.now() + Math.pow(2, retryCount) * 1000;
+    
+    await database.runAsync(
+      `UPDATE mqtt_queue SET retry_count = retry_count + 1, next_retry_at = ? WHERE id = ?`,
+      [nextRetry, id]
+    );
+    console.log('[DB] MQTT retry incremented:', id);
+  } catch (err) {
+    console.error('[DB] Erreur incrementMqttRetry:', err);
+    throw err;
+  }
 }
 
 // --- Sub-meshes ---
@@ -1061,72 +1191,100 @@ export interface DBSubMeshPeer {
 }
 
 export async function saveSubMeshDB(submesh: DBSubMesh): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT OR REPLACE INTO submeshes 
-     (id, name, description, color, icon, is_default, auto_join, require_invite, max_hops, parent_mesh, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      submesh.id,
-      submesh.name,
-      submesh.description || null,
-      submesh.color,
-      submesh.icon || null,
-      submesh.isDefault ? 1 : 0,
-      submesh.autoJoin ? 1 : 0,
-      submesh.requireInvite ? 1 : 0,
-      submesh.maxHops,
-      submesh.parentMesh || null,
-      submesh.createdAt || Date.now(),
-    ]
-  );
+  try {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT OR REPLACE INTO submeshes 
+       (id, name, description, color, icon, is_default, auto_join, require_invite, max_hops, parent_mesh, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        submesh.id,
+        submesh.name,
+        submesh.description || null,
+        submesh.color,
+        submesh.icon || null,
+        submesh.isDefault ? 1 : 0,
+        submesh.autoJoin ? 1 : 0,
+        submesh.requireInvite ? 1 : 0,
+        submesh.maxHops,
+        submesh.parentMesh || null,
+        submesh.createdAt || Date.now(),
+      ]
+    );
+    console.log('[DB] SubMesh saved:', submesh.id);
+  } catch (err) {
+    console.error('[DB] Erreur saveSubMeshDB:', err);
+    throw err;
+  }
 }
 
 export async function getSubMeshesDB(): Promise<DBSubMesh[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>('SELECT * FROM submeshes ORDER BY created_at DESC');
-  return rows.map(row => ({
-    id: row.id,
-    name: row.name,
-    description: row.description,
-    color: row.color,
-    icon: row.icon,
-    isDefault: Boolean(row.is_default),
-    autoJoin: Boolean(row.auto_join),
-    requireInvite: Boolean(row.require_invite),
-    maxHops: row.max_hops,
-    parentMesh: row.parent_mesh,
-    createdAt: row.created_at,
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>('SELECT * FROM submeshes ORDER BY created_at DESC');
+    return rows.map(row => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+      color: row.color,
+      icon: row.icon,
+      isDefault: Boolean(row.is_default),
+      autoJoin: Boolean(row.auto_join),
+      requireInvite: Boolean(row.require_invite),
+      maxHops: row.max_hops,
+      parentMesh: row.parent_mesh,
+      createdAt: row.created_at,
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getSubMeshesDB:', err);
+    return [];
+  }
 }
 
 export async function deleteSubMeshDB(id: string): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync('DELETE FROM submeshes WHERE id = ?', toSQLiteParams([id]));
+  try {
+    const database = await getDatabase();
+    await database.runAsync('DELETE FROM submeshes WHERE id = ?', toSQLiteParams([id]));
+    console.log('[DB] SubMesh deleted:', id);
+  } catch (err) {
+    console.error('[DB] Erreur deleteSubMeshDB:', err);
+    throw err;
+  }
 }
 
 export async function saveSubMeshPeerDB(peer: DBSubMeshPeer): Promise<void> {
-  const database = await getDatabase();
-  await database.runAsync(
-    `INSERT OR REPLACE INTO submesh_peers 
-     (node_id, submesh_id, rssi, last_seen, hops, is_bridge)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [peer.nodeId, peer.submeshId, peer.rssi, peer.lastSeen, peer.hops, peer.isBridge ? 1 : 0]
-  );
+  try {
+    const database = await getDatabase();
+    await database.runAsync(
+      `INSERT OR REPLACE INTO submesh_peers 
+       (node_id, submesh_id, rssi, last_seen, hops, is_bridge)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [peer.nodeId, peer.submeshId, peer.rssi, peer.lastSeen, peer.hops, peer.isBridge ? 1 : 0]
+    );
+    console.log('[DB] SubMesh peer saved:', peer.nodeId);
+  } catch (err) {
+    console.error('[DB] Erreur saveSubMeshPeerDB:', err);
+    throw err;
+  }
 }
 
 export async function getSubMeshPeersDB(submeshId: string): Promise<DBSubMeshPeer[]> {
-  const database = await getDatabase();
-  const rows = await database.getAllAsync<any>(
-    'SELECT * FROM submesh_peers WHERE submesh_id = ? ORDER BY last_seen DESC',
-    [submeshId]
-  );
-  return rows.map(row => ({
-    nodeId: row.node_id,
-    submeshId: row.submesh_id,
-    rssi: row.rssi,
-    lastSeen: row.last_seen,
-    hops: row.hops,
-    isBridge: Boolean(row.is_bridge),
-  }));
+  try {
+    const database = await getDatabase();
+    const rows = await database.getAllAsync<any>(
+      'SELECT * FROM submesh_peers WHERE submesh_id = ? ORDER BY last_seen DESC',
+      [submeshId]
+    );
+    return rows.map(row => ({
+      nodeId: row.node_id,
+      submeshId: row.submesh_id,
+      rssi: row.rssi,
+      lastSeen: row.last_seen,
+      hops: row.hops,
+      isBridge: Boolean(row.is_bridge),
+    }));
+  } catch (err) {
+    console.error('[DB] Erreur getSubMeshPeersDB:', err);
+    return [];
+  }
 }
