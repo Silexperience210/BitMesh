@@ -218,22 +218,28 @@ export async function getAddressTransactions(address: string, limit: number = 50
 export const fetchAddressBalance = getAddressBalance;
 export const fetchAddressTransactions = getAddressTransactions;
 export const fetchFeeEstimates = getFeeEstimates;
-export const fetchBtcPrice = async (mempoolUrl?: string, currency?: string): Promise<number> => {
+export const fetchBtcPrice = async (_mempoolUrl?: string, currency?: string): Promise<number> => {
   try {
-    const baseUrl = mempoolUrl?.replace('/api', '') || MEMPOOL_API_BASE;
-    const response = await fetch(`${baseUrl}/v1/prices`);
+    // Utiliser CoinGecko API (plus fiable que mempool.space)
+    const vsCurrency = currency?.toLowerCase() || 'usd';
+    const url = `https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=${vsCurrency}`;
+    console.log('[Price] Fetching from CoinGecko:', url);
+    
+    const response = await fetch(url);
     
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     
     const data = await response.json();
-    const price = currency === 'EUR' ? data.EUR : data.USD;
-    console.log('[Mempool] Prix BTC:', price, currency || 'USD');
+    console.log('[Price] CoinGecko data:', data);
+    
+    const price = data.bitcoin[vsCurrency];
+    console.log('[Price] Prix BTC:', price, currency || 'USD');
     return price;
   } catch (error) {
-    console.error('[Mempool] Erreur prix BTC:', error);
-    // Fallback
+    console.error('[Price] Erreur prix BTC:', error);
+    // Fallback silencieux (pas d'alerte pour pas spammer)
     return currency === 'EUR' ? 60000 : 65000;
   }
 };

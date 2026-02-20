@@ -133,13 +133,20 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
   };
 
   const handleCreatePublicForum = async () => {
+    console.log('[Forum] handleCreatePublicForum appelé');
+    
     if (!newForumName.trim()) {
+      console.log('[Forum] Erreur: nom vide');
       Alert.alert('Erreur', 'Entrez un nom de forum');
       return;
     }
     
     // Vérifier si MQTT est connecté
+    console.log('[Forum] mqttState:', mqttState);
+    Alert.alert('Debug MQTT', `Status: ${mqttState}`);
+    
     if (mqttState !== 'connected') {
+      console.log('[Forum] Erreur: MQTT non connecté');
       Alert.alert(
         'Non connecté',
         `La messagerie n'est pas encore connectée (status: ${mqttState}). Veuillez patienter quelques secondes et réessayer.`
@@ -149,10 +156,22 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
     
     const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
     console.log('[Forum] Création du forum:', channelName);
-    await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
-    console.log('[Forum] Forum rejoint, annonce en cours...');
+    Alert.alert('Debug', `Création forum: ${channelName}`);
     
+    try {
+      await joinForumContext(channelName, newForumDesc || `Forum ${newForumName}`);
+      console.log('[Forum] Forum rejoint avec succès');
+      Alert.alert('Debug', 'Forum rejoint');
+    } catch (err) {
+      console.error('[Forum] Erreur joinForumContext:', err);
+      Alert.alert('Erreur', `Impossible de rejoindre le forum: ${err}`);
+      return;
+    }
+    
+    console.log('[Forum] Annonce en cours...');
     const announced = announceForumPublic(channelName, newForumDesc || `Forum ${newForumName}`);
+    console.log('[Forum] announceForumPublic retourné:', announced);
+    Alert.alert('Debug', `Annonce: ${announced}`);
     
     if (announced) {
       Alert.alert('Forum créé!', `Le forum "${channelName}" a été annoncé sur le réseau`);
