@@ -21,7 +21,10 @@ function toSQLiteParams(params: any[]): any[] {
     if (p === null || p === undefined) return null;
     if (typeof p === 'boolean') return p ? 1 : 0;
     if (typeof p === 'number') return Math.floor(p);
+    if (typeof p === 'string') return p;
     if (p instanceof Uint8Array) return uint8ArrayToBase64(p);
+    // ✅ CORRECTION: Convertir les objets en JSON string
+    if (typeof p === 'object') return JSON.stringify(p);
     return String(p);
   });
 }
