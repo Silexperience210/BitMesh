@@ -344,6 +344,7 @@ export async function saveConversationDB(conv: DBConversation): Promise<void> {
     ];
     
     console.log('[DB] Params pour SQLite:', params);
+    console.log('[DB] Exécution SQL...');
     
     await database.runAsync(`
       INSERT INTO conversations (id, name, isForum, peerPubkey, lastMessage, lastMessageTime, unreadCount, online, updatedAt)
