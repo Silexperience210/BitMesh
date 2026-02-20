@@ -48,6 +48,7 @@ import SeedQRScanner from '@/components/SeedQRScanner';
 import { useGateway } from '@/providers/GatewayProvider';
 import { type ConnectionMode } from '@/providers/AppSettingsProvider';
 import { testMempoolConnection } from '@/utils/mempool';
+import { BROKER_OPTIONS } from '@/utils/mqtt-client';
 import { UpdateChecker } from '@/components/UpdateChecker';
 import { testMintConnection, formatMintUrl } from '@/utils/cashu';
 import { testMqttConnection } from '@/utils/mqtt';
@@ -895,26 +896,54 @@ function GatewayModeCard() {
           />
 
           {gwSettings.useCustomMqttBroker && (
-            <View style={styles.customEndpointContainer}>
-              <TextInput
-                style={styles.endpointInput}
-                placeholder="wss://your-broker.com:8084/mqtt"
-                placeholderTextColor={Colors.textMuted}
-                value={mqttInput}
-                onChangeText={setMqttInput}
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="url"
-                testID="custom-mqtt-input"
-              />
-              <TouchableOpacity
-                style={styles.saveEndpointBtn}
-                onPress={handleSaveMqttCustom}
-                activeOpacity={0.7}
-              >
-                <Check size={16} color={Colors.purple} />
-              </TouchableOpacity>
-            </View>
+            <>
+              {/* ✅ SÉLECTEUR DE BROKER PRÉDÉFINI */}
+              <View style={styles.brokerSelector}>
+                <Text style={styles.brokerSelectorLabel}>Quick Select:</Text>
+                {BROKER_OPTIONS.map((broker) => (
+                  <TouchableOpacity
+                    key={broker.name}
+                    style={[
+                      styles.brokerOption,
+                      mqttInput === broker.url && styles.brokerOptionActive,
+                    ]}
+                    onPress={() => setMqttInput(broker.url)}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.brokerOptionName,
+                        mqttInput === broker.url && styles.brokerOptionNameActive,
+                      ]}
+                    >
+                      {broker.name}
+                    </Text>
+                    <Text style={styles.brokerOptionDesc}>{broker.description}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+
+              <View style={styles.customEndpointContainer}>
+                <TextInput
+                  style={styles.endpointInput}
+                  placeholder="wss://your-broker.com:8084/mqtt"
+                  placeholderTextColor={Colors.textMuted}
+                  value={mqttInput}
+                  onChangeText={setMqttInput}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  testID="custom-mqtt-input"
+                />
+                <TouchableOpacity
+                  style={styles.saveEndpointBtn}
+                  onPress={handleSaveMqttCustom}
+                  activeOpacity={0.7}
+                >
+                  <Check size={16} color={Colors.purple} />
+                </TouchableOpacity>
+              </View>
+            </>
           )}
 
           <TouchableOpacity
@@ -2008,5 +2037,40 @@ const styles = StyleSheet.create({
     width: 8,
     height: 8,
     borderRadius: 4,
+  },
+  // ✅ Styles pour le sélecteur de broker
+  brokerSelector: {
+    marginBottom: 12,
+    gap: 8,
+  },
+  brokerSelectorLabel: {
+    color: Colors.textSecondary,
+    fontSize: 12,
+    fontWeight: '600' as const,
+    marginBottom: 4,
+  },
+  brokerOption: {
+    backgroundColor: Colors.surface,
+    borderRadius: 8,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  brokerOptionActive: {
+    borderColor: Colors.purple,
+    backgroundColor: Colors.purple + '20',
+  },
+  brokerOptionName: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600' as const,
+  },
+  brokerOptionNameActive: {
+    color: Colors.purple,
+  },
+  brokerOptionDesc: {
+    color: Colors.textMuted,
+    fontSize: 10,
+    marginTop: 2,
   },
 });
