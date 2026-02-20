@@ -26,7 +26,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   mempoolUrl: 'https://mempool.space',
   customMempoolUrl: '',
   useCustomMempool: false,
-  defaultCashuMint: 'https://8333.space:3338', // ✅ TESTÉ ET FONCTIONNEL
+  defaultCashuMint: 'https://mint.minibits.cash/Bitcoin', // ✅ MAINNET - minibits.cash
   fallbackCashuMint: 'https://mint.lnvoltz.com', // ✅ BACKUP TESTÉ ET FONCTIONNEL
   customCashuMint: '',
   useCustomCashuMint: false,
