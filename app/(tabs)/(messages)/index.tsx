@@ -443,7 +443,9 @@ export default function MessagesScreen() {
       </View>
 
       <FlatList
-        data={conversations}
+        data={conversations.filter((conv, index, self) => 
+          index === self.findIndex(c => c.id === conv.id)
+        )}
         keyExtractor={(item) => item.id}
         renderItem={renderConv}
         contentContainerStyle={[styles.listContent, conversations.length === 0 && styles.emptyList]}
