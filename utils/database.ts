@@ -63,7 +63,13 @@ export async function resetDatabase(): Promise<void> {
 }
 
 async function initDatabase(): Promise<void> {
-  if (!db) return;
+  // ✅ CORRECTION: Attendre que db soit initialisé
+  if (!db) {
+    console.error('[Database] initDatabase appelé avec db=null');
+    throw new Error('Database not initialized');
+  }
+
+  console.log('[Database] Initialisation des tables...');
 
   // Table: conversations
   await db.execAsync(`
@@ -81,6 +87,7 @@ async function initDatabase(): Promise<void> {
     );
     CREATE INDEX IF NOT EXISTS idx_conv_time ON conversations(lastMessageTime DESC);
   `);
+  console.log('[Database] Table conversations OK');
 
   // Table: messages
   await db.execAsync(`
@@ -104,6 +111,7 @@ async function initDatabase(): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_msg_conv ON messages(conversationId, timestamp DESC);
     CREATE INDEX IF NOT EXISTS idx_msg_status ON messages(status) WHERE status IN ('pending', 'sending');
   `);
+  console.log('[Database] Table messages OK');
 
   // Table: pending_messages (file d'attente retry)
   await db.execAsync(`
@@ -265,7 +273,19 @@ export async function listConversationsDB(): Promise<DBConversation[]> {
 
 export async function saveConversationDB(conv: DBConversation): Promise<void> {
   console.log('[DB] saveConversationDB appelé avec:', conv);
+  
+  // ✅ VÉRIFICATION: La base est-elle initialisée ?
+  if (!db) {
+    console.log('[DB] Base non initialisée, tentative d\'initialisation...');
+    await getDatabase();
+  }
+  
   const database = await getDatabase();
+  
+  // ✅ VÉRIFICATION: La base est-elle bien ouverte ?
+  if (!database) {
+    throw new Error('Database is null after getDatabase()');
+  }
   
   try {
     // ✅ CONVERSION explicite des types pour SQLite
