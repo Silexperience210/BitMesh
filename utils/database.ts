@@ -89,9 +89,14 @@ export async function resetDatabase(): Promise<void> {
       DROP TABLE IF EXISTS conversations;
       DROP TABLE IF EXISTS messages;
       DROP TABLE IF EXISTS pending_messages;
+      DROP TABLE IF EXISTS cashu_tokens;
+      DROP TABLE IF EXISTS mqtt_queue;
+      DROP TABLE IF EXISTS user_profile;
       DROP TABLE IF EXISTS key_store;
       DROP TABLE IF EXISTS message_counters;
       DROP TABLE IF EXISTS app_state;
+      DROP TABLE IF EXISTS submeshes;
+      DROP TABLE IF EXISTS submesh_peers;
     `);
     
     // Recréer
@@ -218,14 +223,18 @@ async function initDatabase(): Promise<void> {
       proofs TEXT NOT NULL,
       keysetId TEXT,
       receivedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
-      spent INTEGER NOT NULL DEFAULT 0,
+      state TEXT NOT NULL DEFAULT 'unspent',
       spentAt INTEGER,
       source TEXT,
-      memo TEXT
+      memo TEXT,
+      unverified INTEGER DEFAULT 0,
+      retryCount INTEGER DEFAULT 0,
+      lastCheckAt INTEGER
     );
-    CREATE INDEX IF NOT EXISTS idx_cashu_spent ON cashu_tokens(spent) WHERE spent = 0;
+    CREATE INDEX IF NOT EXISTS idx_cashu_state ON cashu_tokens(state) WHERE state IN ('unspent', 'unverified');
     CREATE INDEX IF NOT EXISTS idx_cashu_mint ON cashu_tokens(mintUrl);
   `);
+  console.log('[Database] Table cashu_tokens OK');
 
   console.log('[Database] Tables initialisées');
 
