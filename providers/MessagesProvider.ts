@@ -1360,12 +1360,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       joinForumChannel(mqttRef.current, channelName, handleIncomingForum(channelName));
     }
 
-    // FIX: Vérifier dans AsyncStorage (source de vérité) plutôt que dans le state React
-    // qui peut ne pas encore être chargé au démarrage → évite les doublons
-    setConversations(prev => {
-      const existing = prev.find(c => c.id === convId);
-      if (existing) return prev;
-
+    const existing = conversations.find(c => c.id === convId);
+    if (!existing) {
       const conv: StoredConversation = {
         id: convId,
         name: `#${channelName}`,
