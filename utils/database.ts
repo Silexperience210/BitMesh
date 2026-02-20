@@ -32,40 +32,53 @@ function toSQLiteParams(params: any[]): any[] {
 let db: SQLite.SQLiteDatabase | null = null;
 let initAttempts = 0;
 const MAX_INIT_ATTEMPTS = 3;
+let initPromise: Promise<SQLite.SQLiteDatabase> | null = null; // ✅ VERROU pour éviter les appels simultanés
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
-  if (!db) {
-    try {
-      // ✅ AJOUT: Délai pour laisser le temps à SQLite de s'initialiser
-      await new Promise(resolve => setTimeout(resolve, 100));
-      db = await SQLite.openDatabaseAsync('bitmesh.db');
-      await initDatabase();
-      // ✅ VÉRIFICATION: db est bien initialisé après initDatabase
-      if (!db) {
-        throw new Error('Database initialization failed - db is null after init');
-      }
-    } catch (error) {
-      console.error('[Database] Erreur ouverture:', error);
-      initAttempts++;
-      
-      if (initAttempts >= MAX_INIT_ATTEMPTS) {
-        console.error('[Database] Trop de tentatives, reset de la base...');
-        await resetDatabase();
-        initAttempts = 0;
-        // ✅ VÉRIFICATION après reset
-        if (!db) {
-          throw new Error('Database still null after reset');
-        }
-      } else {
-        // ✅ AJOUT: Attendre avant de réessayer
-        await new Promise(resolve => setTimeout(resolve, 500));
-        throw error;
-      }
-    }
+  // ✅ VERROU: Si une initialisation est déjà en cours, attendre qu'elle termine
+  if (initPromise) {
+    console.log('[Database] Initialisation déjà en cours, attente...');
+    return initPromise;
   }
-  // ✅ Vérification finale avant return
+  
   if (!db) {
-    throw new Error('Database is null - cannot proceed');
+    // Créer une promesse d'initialisation
+    initPromise = (async () => {
+      try {
+        // ✅ AJOUT: Délai pour laisser le temps à SQLite de s'initialiser
+        await new Promise(resolve => setTimeout(resolve, 100));
+        db = await SQLite.openDatabaseAsync('bitmesh.db');
+        await initDatabase();
+        // ✅ VÉRIFICATION: db est bien initialisé après initDatabase
+        if (!db) {
+          throw new Error('Database initialization failed - db is null after init');
+        }
+        return db;
+      } catch (error) {
+        console.error('[Database] Erreur ouverture:', error);
+        initAttempts++;
+        
+        if (initAttempts >= MAX_INIT_ATTEMPTS) {
+          console.error('[Database] Trop de tentatives, reset de la base...');
+          await resetDatabase();
+          initAttempts = 0;
+          // ✅ VÉRIFICATION après reset
+          if (!db) {
+            throw new Error('Database still null after reset');
+          }
+          return db!;
+        } else {
+          // ✅ AJOUT: Attendre avant de réessayer
+          await new Promise(resolve => setTimeout(resolve, 500));
+          throw error;
+        }
+      } finally {
+        // ✅ Libérer le verrou
+        initPromise = null;
+      }
+    })();
+    
+    return initPromise;
   }
   return db;
 }
