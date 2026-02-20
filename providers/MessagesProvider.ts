@@ -961,7 +961,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const client = createMeshMqttClient(identity.nodeId, identity.pubkeyHex);
     mqttRef.current = client;
 
-    // Mettre à jour le state de connexion via polling léger
+    // ✅ CORRECTION: Polling moins fréquent (2s au lieu de 500ms)
     const statePoller = setInterval(() => {
       if (mqttRef.current) {
         const s = mqttRef.current.state;
@@ -984,12 +984,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           });
           clearInterval(statePoller);
         } else if (s === 'error' || s === 'disconnected') {
-          // Arrêter le poller en cas d'erreur ou de déconnexion
           console.log('[Messages] Connexion MQTT échouée ou perdue:', s);
           clearInterval(statePoller);
         }
       }
-    }, 500);
+    }, 2000);
   }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement]);
 
   // Auto-connexion dès que l'identité est disponible

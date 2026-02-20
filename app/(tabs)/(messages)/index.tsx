@@ -262,7 +262,7 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
               />
               <Text style={styles.inputHint}>
                 Tout le monde connaissant ce nom peut rejoindre le forum.
-                Les messages sont chiffrés avec SHA256("forum:"+nom).
+                Les messages sont chiffrés avec SHA256(&quot;forum:&quot;+nom).
               </Text>
               <TouchableOpacity style={[styles.modalBtn, { backgroundColor: Colors.cyan }]} onPress={handleForum}>
                 <Hash size={14} color={Colors.black} />

@@ -4,6 +4,28 @@
  */
 import * as SQLite from 'expo-sqlite';
 
+// ✅ UTILITAIRE: Remplacer Buffer pour React Native
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  const binary = Array.from(bytes).map(b => String.fromCharCode(b)).join('');
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  return Uint8Array.from(binary.split('').map(c => c.charCodeAt(0)));
+}
+
+// ✅ UTILITAIRE: Convertir les paramètres pour SQLite
+function toSQLiteParams(params: any[]): any[] {
+  return params.map(p => {
+    if (p === null || p === undefined) return null;
+    if (typeof p === 'boolean') return p ? 1 : 0;
+    if (typeof p === 'number') return Math.floor(p);
+    if (p instanceof Uint8Array) return uint8ArrayToBase64(p);
+    return String(p);
+  });
+}
+
 let db: SQLite.SQLiteDatabase | null = null;
 let initAttempts = 0;
 const MAX_INIT_ATTEMPTS = 3;
@@ -329,18 +351,21 @@ export async function updateConversationLastMessageDB(
   incrementUnread: boolean
 ): Promise<void> {
   const database = await getDatabase();
+  // ✅ CONVERSION explicite
+  const params = [String(lastMessage), Math.floor(Number(ts)), String(convId)];
+  
   if (incrementUnread) {
     await database.runAsync(`
       UPDATE conversations 
       SET lastMessage = ?, lastMessageTime = ?, unreadCount = unreadCount + 1, updatedAt = strftime('%s', 'now') * 1000
       WHERE id = ?
-    `, [lastMessage, ts, convId]);
+    `, params);
   } else {
     await database.runAsync(`
       UPDATE conversations 
       SET lastMessage = ?, lastMessageTime = ?, updatedAt = strftime('%s', 'now') * 1000
       WHERE id = ?
-    `, [lastMessage, ts, convId]);
+    `, params);
   }
 }
 
@@ -348,7 +373,7 @@ export async function markConversationReadDB(convId: string): Promise<void> {
   const database = await getDatabase();
   await database.runAsync(`
     UPDATE conversations SET unreadCount = 0, updatedAt = strftime('%s', 'now') * 1000 WHERE id = ?
-  `, [convId]);
+  `, toSQLiteParams([convId]));
 }
 
 // --- Messages ---
@@ -386,25 +411,29 @@ export async function loadMessagesDB(convId: string, limit: number = 200): Promi
 
 export async function saveMessageDB(msg: DBMessage): Promise<void> {
   const database = await getDatabase();
+  
+  // ✅ CONVERSION explicite des types pour SQLite
+  const params = [
+    String(msg.id),
+    String(msg.conversationId),
+    String(msg.fromNodeId),
+    msg.fromPubkey ? String(msg.fromPubkey) : null,
+    String(msg.text),
+    String(msg.type),
+    Math.floor(Number(msg.timestamp || Date.now())),
+    msg.isMine ? 1 : 0,
+    String(msg.status),
+    msg.cashuAmount ? Math.floor(Number(msg.cashuAmount)) : null,
+    msg.cashuToken ? String(msg.cashuToken) : null,
+    msg.btcAmount ? Math.floor(Number(msg.btcAmount)) : null,
+    msg.compressed ? 1 : 0,
+  ];
+  
   await database.runAsync(`
     INSERT OR REPLACE INTO messages 
     (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `, [
-    msg.id,
-    msg.conversationId,
-    msg.fromNodeId,
-    msg.fromPubkey || null,
-    msg.text,
-    msg.type,
-    msg.timestamp,
-    msg.isMine ? 1 : 0,
-    msg.status,
-    msg.cashuAmount || null,
-    msg.cashuToken || null,
-    msg.btcAmount || null,
-    msg.compressed ? 1 : 0,
-  ]);
+  `, params);
 }
 
 export async function updateMessageStatusDB(
@@ -440,7 +469,7 @@ export async function queuePendingMessage(
     ON CONFLICT(id) DO UPDATE SET
       retries = retries + 1,
       nextRetryAt = strftime('%s', 'now') * 1000 + (1000 * (retries + 1) * (retries + 1))
-  `, [id, Buffer.from(packet).toString('base64'), maxRetries]);
+  `, [id, uint8ArrayToBase64(packet), maxRetries]);
 }
 
 export async function getPendingMessages(): Promise<PendingMessage[]> {
@@ -453,13 +482,13 @@ export async function getPendingMessages(): Promise<PendingMessage[]> {
   `, [now]);
   return rows.map(row => ({
     ...row,
-    packet: Uint8Array.from(Buffer.from(row.packet, 'base64')),
+    packet: base64ToUint8Array(row.packet),
   }));
 }
 
 export async function removePendingMessage(id: string): Promise<void> {
   const database = await getDatabase();
-  await database.runAsync(`DELETE FROM pending_messages WHERE id = ?`, [id]);
+  await database.runAsync(`DELETE FROM pending_messages WHERE id = ?`, toSQLiteParams([id]));
 }
 
 export async function incrementRetryCount(id: string, error?: string): Promise<void> {
@@ -517,7 +546,7 @@ export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): P
     INSERT OR REPLACE INTO cashu_tokens 
     (id, mintUrl, amount, token, proofs, keysetId, receivedAt, state, spentAt, source, memo, unverified, retryCount, lastCheckAt)
     VALUES (?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000, ?, ?, ?, ?, ?, ?, ?)
-  `, [
+  `, toSQLiteParams([
     token.id,
     token.mintUrl,
     token.amount,
@@ -531,7 +560,7 @@ export async function saveCashuToken(token: Omit<DBCashuToken, 'receivedAt'>): P
     token.unverified ? 1 : 0,
     token.retryCount || 0,
     token.lastCheckAt || null,
-  ]);
+  ]));
 }
 
 export async function getUnspentCashuTokens(): Promise<DBCashuToken[]> {
@@ -552,7 +581,7 @@ export async function markCashuTokenSpent(id: string): Promise<void> {
     UPDATE cashu_tokens 
     SET state = 'spent', spentAt = strftime('%s', 'now') * 1000
     WHERE id = ?
-  `, [id]);
+  `, toSQLiteParams([id]));
 }
 
 // ✅ NOUVEAU : Marquer comme pending
@@ -562,7 +591,7 @@ export async function markCashuTokenPending(id: string): Promise<void> {
     UPDATE cashu_tokens 
     SET state = 'pending'
     WHERE id = ?
-  `, [id]);
+  `, toSQLiteParams([id]));
 }
 
 // ✅ NOUVEAU : Remettre à unspent (rollback)
@@ -572,7 +601,7 @@ export async function markCashuTokenUnspent(id: string): Promise<void> {
     UPDATE cashu_tokens 
     SET state = 'unspent', pending = 0
     WHERE id = ?
-  `, [id]);
+  `, toSQLiteParams([id]));
 }
 
 // ✅ NOUVEAU : Mettre à jour après vérification
@@ -582,7 +611,7 @@ export async function markCashuTokenVerified(id: string): Promise<void> {
     UPDATE cashu_tokens 
     SET state = 'unspent', unverified = 0, lastCheckAt = strftime('%s', 'now') * 1000
     WHERE id = ?
-  `, [id]);
+  `, toSQLiteParams([id]));
 }
 
 export async function getCashuTokenById(id: string): Promise<DBCashuToken | null> {
@@ -937,7 +966,7 @@ export async function getPendingMqttMessages(): Promise<DBMqttQueueItem[]> {
 
 export async function markMqttMessageSent(id: number): Promise<void> {
   const database = await getDatabase();
-  await database.runAsync(`DELETE FROM mqtt_queue WHERE id = ?`, [id]);
+  await database.runAsync(`DELETE FROM mqtt_queue WHERE id = ?`, toSQLiteParams([id]));
 }
 
 export async function incrementMqttRetry(id: number): Promise<void> {
@@ -1019,7 +1048,7 @@ export async function getSubMeshesDB(): Promise<DBSubMesh[]> {
 
 export async function deleteSubMeshDB(id: string): Promise<void> {
   const database = await getDatabase();
-  await database.runAsync('DELETE FROM submeshes WHERE id = ?', [id]);
+  await database.runAsync('DELETE FROM submeshes WHERE id = ?', toSQLiteParams([id]));
 }
 
 export async function saveSubMeshPeerDB(peer: DBSubMeshPeer): Promise<void> {
