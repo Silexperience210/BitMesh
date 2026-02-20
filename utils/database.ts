@@ -268,6 +268,20 @@ export async function saveConversationDB(conv: DBConversation): Promise<void> {
   const database = await getDatabase();
   
   try {
+    // ✅ CONVERSION explicite des types pour SQLite
+    const params = [
+      String(conv.id),
+      String(conv.name),
+      conv.isForum ? 1 : 0,
+      conv.peerPubkey ? String(conv.peerPubkey) : null,
+      conv.lastMessage ? String(conv.lastMessage) : '',
+      Math.floor(Number(conv.lastMessageTime || Date.now())),
+      Math.floor(Number(conv.unreadCount || 0)),
+      conv.online ? 1 : 0,
+    ];
+    
+    console.log('[DB] Params pour SQLite:', params);
+    
     await database.runAsync(`
       INSERT INTO conversations (id, name, isForum, peerPubkey, lastMessage, lastMessageTime, unreadCount, online, updatedAt)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, strftime('%s', 'now') * 1000)
@@ -280,16 +294,7 @@ export async function saveConversationDB(conv: DBConversation): Promise<void> {
         unreadCount = excluded.unreadCount,
         online = excluded.online,
         updatedAt = excluded.updatedAt
-    `, [
-      conv.id,
-      conv.name,
-      conv.isForum ? 1 : 0,
-      conv.peerPubkey || null,
-      conv.lastMessage || null,
-      conv.lastMessageTime,
-      conv.unreadCount,
-      conv.online ? 1 : 0,
-    ]);
+    `, params);
     console.log('[DB] Conversation sauvegardée avec succès');
   } catch (err) {
     console.error('[DB] Erreur saveConversationDB:', err);
