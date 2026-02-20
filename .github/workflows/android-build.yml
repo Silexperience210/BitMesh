@@ -27,7 +27,9 @@ jobs:
           bun-version: latest
 
       - name: Install dependencies
-        run: bun install
+        run: |
+          bun install
+          bun run postinstall
 
       - name: Setup Java 17
         uses: actions/setup-java@v4

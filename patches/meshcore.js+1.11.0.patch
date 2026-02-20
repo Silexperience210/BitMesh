@@ -1,0 +1,24 @@
+diff --git a/src/index.js b/src/index.js
+index 1234567..abcdefg 100644
+--- a/src/index.js
++++ b/src/index.js
+@@ -3,7 +3,9 @@ import WebBleConnection from "./connection/web_ble_connection.js";
+ import SerialConnection from "./connection/serial_connection.js";
+ import NodeJSSerialConnection from "./connection/nodejs_serial_connection.js";
+ import WebSerialConnection from "./connection/web_serial_connection.js";
+-import TCPConnection from "./connection/tcp_connection.js";
++// import TCPConnection from "./connection/tcp_connection.js"; // Commenté pour React Native (pas de module net)
++const TCPConnection = null; // Fallback pour React Native
+ import Constants from "./constants.js";
+ import Advert from "./advert.js";
+ import Packet from "./packet.js";
+@@ -14,7 +16,7 @@ export {
+     WebBleConnection,
+     SerialConnection,
+     NodeJSSerialConnection,
+     WebSerialConnection,
+-    TCPConnection,
++    // TCPConnection, // Commenté pour React Native
+     Constants,
+     Advert,
+     Packet,

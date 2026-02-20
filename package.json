@@ -8,7 +8,8 @@
     "start-web-dev": "DEBUG=expo* bunx rork start -p rc03422yqnuamhmc4hl7d --web --tunnel",
     "lint": "expo lint",
     "android": "expo run:android",
-    "ios": "expo run:ios"
+    "ios": "expo run:ios",
+    "postinstall": "node scripts/patch-meshcore.js"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
@@ -76,6 +77,7 @@
     "@types/secp256k1": "^4.0.7",
     "eslint": "^9.31.0",
     "eslint-config-expo": "~10.0.0",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true
