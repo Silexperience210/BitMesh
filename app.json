@@ -64,6 +64,13 @@
           "modes": [],
           "bluetoothAlwaysPermission": "BitMesh utilise Bluetooth pour se connecter au gateway LoRa ESP32."
         }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "BitMesh accède à votre galerie pour envoyer des photos et GIFs.",
+          "cameraPermission": "BitMesh accède à votre caméra pour prendre des photos."
+        }
       ]
     ],
     "experiments": {

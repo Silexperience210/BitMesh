@@ -265,6 +265,9 @@ async function initDatabase(): Promise<void> {
   // Migration: ajouter colonnes audio aux messages existants (silencieux si déjà présentes)
   try { await db.execAsync('ALTER TABLE messages ADD COLUMN audioData TEXT'); } catch {}
   try { await db.execAsync('ALTER TABLE messages ADD COLUMN audioDuration INTEGER DEFAULT 0'); } catch {}
+  // Migration: colonnes image/gif
+  try { await db.execAsync('ALTER TABLE messages ADD COLUMN imageData TEXT'); } catch {}
+  try { await db.execAsync('ALTER TABLE messages ADD COLUMN imageMime TEXT'); } catch {}
 
   console.log('[Database] Tables initialisées');
 
@@ -460,7 +463,7 @@ export interface DBMessage {
   fromNodeId: string;
   fromPubkey?: string;
   text: string;
-  type: 'text' | 'cashu' | 'btc_tx' | 'lora' | 'audio';
+  type: 'text' | 'cashu' | 'btc_tx' | 'lora' | 'audio' | 'image' | 'gif';
   timestamp: number;
   isMine: boolean;
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -470,6 +473,8 @@ export interface DBMessage {
   compressed?: boolean;
   audioData?: string;      // base64 audio pour messages vocaux
   audioDuration?: number;  // durée en millisecondes
+  imageData?: string;      // base64 image/gif
+  imageMime?: string;      // 'image/jpeg' | 'image/gif' | etc.
 }
 
 export async function loadMessagesDB(convId: string, limit: number = 200): Promise<DBMessage[]> {
@@ -516,17 +521,19 @@ export async function saveMessageDB(msg: DBMessage): Promise<void> {
     // ✅ CONVERSION avec toSQLiteParams
     const sqliteParams = toSQLiteParams(params);
     
-    const audioParams = [
+    const fullParams = [
       ...params,
       msg.audioData ? String(msg.audioData) : null,
       msg.audioDuration ? Math.floor(Number(msg.audioDuration)) : null,
+      msg.imageData ? String(msg.imageData) : null,
+      msg.imageMime ? String(msg.imageMime) : null,
     ];
-    const sqliteParamsFull = toSQLiteParams(audioParams);
+    const sqliteParamsFull = toSQLiteParams(fullParams);
 
     await database.runAsync(`
       INSERT OR REPLACE INTO messages
-      (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed, audioData, audioDuration)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed, audioData, audioDuration, imageData, imageMime)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `, sqliteParamsFull);
     
     console.log('[DB] Message sauvegardé:', msg.id);

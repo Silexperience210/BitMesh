@@ -61,6 +61,7 @@ import {
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
   extractPosition,
+  createPingPacket,
 } from '@/utils/meshcore-protocol';
 // Import Cashu validation
 import { verifyCashuToken, generateTokenId } from '@/utils/cashu';
@@ -96,6 +97,7 @@ export interface MessagesState {
   disconnect: () => void;
   sendMessage: (convId: string, text: string, type?: MessageType) => Promise<void>;
   sendAudio: (convId: string, base64: string, durationMs: number) => Promise<void>;
+  sendImage: (convId: string, base64: string, mimeType: string) => Promise<void>;
   sendCashu: (convId: string, token: string, amountSats: number) => Promise<void>;
   loadConversationMessages: (convId: string) => Promise<void>;
   startConversation: (peerNodeId: string, peerName?: string) => Promise<void>;
@@ -169,6 +171,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
     };
   }, [mnemonic, identity]);
+
+  // Envoyer un PING BLE dès que la connexion BLE est établie + identité dispo
+  // → permet à BleProvider de confirmer loraActive=true si le device répond
+  useEffect(() => {
+    if (ble.connected && identity) {
+      const pingPacket = createPingPacket(identity.nodeId);
+      ble.sendPacket(pingPacket).catch(() => {
+        // Silencieux — le PING est un test optionnel
+      });
+      console.log('[MeshCore] PING envoyé pour vérifier relay LoRa');
+    }
+  }, [ble.connected, identity]);
 
   // Handler pour paquets MeshCore entrants via BLE → LoRa
   const handleIncomingMeshCorePacket = useCallback(async (packet: MeshCorePacket) => {
@@ -650,9 +664,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       
       const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
 
-      // Décoder payload audio si nécessaire
+      // Décoder payload audio/image si nécessaire
       let audioData: string | undefined;
       let audioDuration: number | undefined;
+      let imageData: string | undefined;
+      let imageMime: string | undefined;
       let displayText = plaintext;
 
       if (wire.type === 'audio') {
@@ -663,6 +679,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           displayText = `[Audio ${Math.round(audioDuration / 1000)}s]`;
         } catch {
           displayText = '[Audio]';
+        }
+      } else if (wire.type === 'image' || wire.type === 'gif') {
+        try {
+          const imagePayload = JSON.parse(plaintext) as { mime: string; data: string };
+          imageData = imagePayload.data;
+          imageMime = imagePayload.mime;
+          displayText = wire.type === 'gif' ? '[GIF]' : '[Photo]';
+        } catch {
+          displayText = wire.type === 'gif' ? '[GIF]' : '[Photo]';
         }
       }
 
@@ -733,6 +758,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         cashuToken: cashuTokenStr,
         audioData,
         audioDuration,
+        imageData,
+        imageMime,
       };
 
       saveMessage(msg);
@@ -1292,6 +1319,78 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     ));
   }, [identity, conversations]);
 
+  // Envoyer une image ou GIF via MQTT (trop volumieux pour LoRa)
+  const sendImage = useCallback(async (convId: string, base64: string, mimeType: string): Promise<void> => {
+    if (!identity || mqttRef.current?.state !== 'connected') {
+      throw new Error('Non connecté au réseau MQTT');
+    }
+
+    const id = identity;
+    const isForum = convId.startsWith('forum:');
+    const msgId = generateMsgId();
+    const ts = Date.now();
+    const isGif = mimeType === 'image/gif';
+    const label = isGif ? '[GIF]' : '[Photo]';
+
+    // Payload = JSON { mime, data }
+    const imagePayload = JSON.stringify({ mime: mimeType, data: base64 });
+
+    let enc: EncryptedPayload;
+    let topic: string;
+    if (isForum) {
+      const channelName = convId.slice(6);
+      enc = encryptForum(imagePayload, channelName);
+      topic = TOPICS.forum(channelName);
+    } else {
+      const conv = conversations.find(c => c.id === convId);
+      if (!conv?.peerPubkey) throw new Error('Clé publique du pair inconnue');
+      enc = encryptDM(imagePayload, id.privkeyBytes, conv.peerPubkey);
+      topic = TOPICS.route(convId);
+    }
+
+    const wire: WireMessage = {
+      v: 1,
+      id: msgId,
+      fromNodeId: id.nodeId,
+      fromPubkey: id.pubkeyHex,
+      to: convId,
+      enc,
+      ts,
+      type: isGif ? 'gif' : 'image',
+    };
+    publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+
+    const msg: StoredMessage = {
+      id: msgId,
+      conversationId: convId,
+      fromNodeId: id.nodeId,
+      fromPubkey: id.pubkeyHex,
+      text: label,
+      type: isGif ? 'gif' : 'image',
+      timestamp: ts,
+      isMine: true,
+      status: 'sent',
+      imageData: base64,
+      imageMime: mimeType,
+    };
+
+    try {
+      await saveMessage(msg);
+      await updateConversationLastMessage(convId, label, ts, false);
+    } catch (err) {
+      console.error('[Messages] Erreur sauvegarde image:', err);
+    }
+
+    setMessagesByConv(prev => ({
+      ...prev,
+      [convId]: [...(prev[convId] ?? []), msg],
+    }));
+
+    setConversations(prev => prev.map(c =>
+      c.id === convId ? { ...c, lastMessage: label, lastMessageTime: ts } : c
+    ));
+  }, [identity, conversations]);
+
   // Envoyer un message (DM ou forum)
   const sendMessage = useCallback(async (
     convId: string,
@@ -1613,6 +1712,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     disconnect,
     sendMessage,
     sendAudio,
+    sendImage,
     sendCashu,
     loadConversationMessages,
     startConversation,

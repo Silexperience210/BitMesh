@@ -2,10 +2,10 @@ import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react'
 import {
   View, Text, StyleSheet, FlatList, TextInput,
   TouchableOpacity, Pressable, KeyboardAvoidingView, Platform,
-  ActivityIndicator, Modal, Alert,
+  ActivityIndicator, Modal, Alert, Image,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
-import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square } from 'lucide-react-native';
+import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square, Camera } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { formatMessageTime } from '@/utils/helpers';
@@ -24,6 +24,7 @@ import {
   formatDuration,
   AUDIO_MAX_DURATION_MS,
 } from '@/utils/audio';
+import { pickAndResizeImage, pickGif } from '@/utils/media';
 import type { Audio } from 'expo-av';
 
 function PaymentBubble({ amount }: { amount: number }) {
@@ -100,6 +101,40 @@ function AudioBubble({ audioData, audioDuration, isMe }: { audioData?: string; a
   );
 }
 
+function ImageBubble({ imageData, imageMime, isMe }: { imageData?: string; imageMime?: string; isMe: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  if (!imageData) return null;
+
+  const uri = `data:${imageMime ?? 'image/jpeg'};base64,${imageData}`;
+
+  return (
+    <>
+      <TouchableOpacity onPress={() => setExpanded(true)} activeOpacity={0.85}>
+        <Image
+          source={{ uri }}
+          style={[styles.imageBubble, isMe ? styles.imageBubbleMe : styles.imageBubbleThem]}
+          resizeMode="cover"
+        />
+        {imageMime === 'image/gif' && (
+          <View style={styles.gifBadge}>
+            <Text style={styles.gifBadgeText}>GIF</Text>
+          </View>
+        )}
+      </TouchableOpacity>
+
+      {/* Visionneuse plein écran */}
+      <Modal visible={expanded} transparent animationType="fade" onRequestClose={() => setExpanded(false)}>
+        <TouchableOpacity style={styles.imageViewer} activeOpacity={1} onPress={() => setExpanded(false)}>
+          <Image source={{ uri }} style={styles.imageViewerFull} resizeMode="contain" />
+          <View style={styles.imageViewerClose}>
+            <X size={22} color={Colors.white} />
+          </View>
+        </TouchableOpacity>
+      </Modal>
+    </>
+  );
+}
+
 function MessageBubble({ message, displayName, onLongPress }: { message: StoredMessage; displayName?: string; onLongPress?: () => void }) {
   const isMe = message.isMine;
   const senderName = displayName ?? message.fromNodeId;
@@ -119,9 +154,12 @@ function MessageBubble({ message, displayName, onLongPress }: { message: StoredM
         isMe ? styles.myBubble : styles.theirBubble,
         message.type === 'btc_tx' && styles.paymentWrapper,
         message.type === 'cashu' && styles.cashuWrapper,
+        (message.type === 'image' || message.type === 'gif') && styles.imageWrapper,
       ]}>
         {message.type === 'audio' ? (
           <AudioBubble audioData={message.audioData} audioDuration={message.audioDuration} isMe={isMe} />
+        ) : (message.type === 'image' || message.type === 'gif') ? (
+          <ImageBubble imageData={message.imageData} imageMime={message.imageMime} isMe={isMe} />
         ) : message.type === 'cashu' && message.cashuAmount ? (
           <CashuBubble amount={message.cashuAmount} />
         ) : message.type === 'btc_tx' && message.btcAmount ? (
@@ -285,7 +323,7 @@ export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
-  const { conversations, messagesByConv, sendMessage, sendAudio, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage, contacts } = useMessages();
+  const { conversations, messagesByConv, sendMessage, sendAudio, sendImage, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage, contacts } = useMessages();
   const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
@@ -295,6 +333,7 @@ export default function ChatScreen() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCashuModal, setShowCashuModal] = useState(false);
+  const [isSendingMedia, setIsSendingMedia] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
   const flatListRef = useRef<FlatList>(null);
@@ -356,6 +395,75 @@ export default function ChatScreen() {
       ]
     );
   }, [convId, deleteMessage]);
+
+  const handlePickMedia = useCallback(() => {
+    if (isRecording || isSendingMedia) return;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Alert.alert(
+      'Envoyer un média',
+      'Choisissez le type de média (MQTT uniquement)',
+      [
+        {
+          text: 'Photo (galerie)',
+          onPress: async () => {
+            setIsSendingMedia(true);
+            setError(null);
+            try {
+              const picked = await pickAndResizeImage('gallery');
+              if (!picked) return;
+              await sendImage(convId, picked.base64, picked.mimeType);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Erreur envoi photo';
+              setError(msg);
+              Alert.alert('Photo refusée', msg);
+            } finally {
+              setIsSendingMedia(false);
+            }
+          },
+        },
+        {
+          text: 'Photo (caméra)',
+          onPress: async () => {
+            setIsSendingMedia(true);
+            setError(null);
+            try {
+              const picked = await pickAndResizeImage('camera');
+              if (!picked) return;
+              await sendImage(convId, picked.base64, picked.mimeType);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Erreur prise de vue';
+              setError(msg);
+              Alert.alert('Caméra refusée', msg);
+            } finally {
+              setIsSendingMedia(false);
+            }
+          },
+        },
+        {
+          text: 'GIF',
+          onPress: async () => {
+            setIsSendingMedia(true);
+            setError(null);
+            try {
+              const picked = await pickGif();
+              if (!picked) return;
+              await sendImage(convId, picked.base64, picked.mimeType);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'Erreur GIF';
+              setError(msg);
+              Alert.alert('GIF refusé', msg);
+            } finally {
+              setIsSendingMedia(false);
+            }
+          },
+        },
+        { text: 'Annuler', style: 'cancel' },
+      ]
+    );
+  }, [isRecording, isSendingMedia, convId, sendImage]);
 
   const handleMicPressOut = useCallback(async (sendIt = true) => {
     if (!recordingRef.current) return;
@@ -421,9 +529,14 @@ export default function ChatScreen() {
       <Stack.Screen
         options={{
           headerTitle: () => {
-            const transportLabel = ble.connected ? 'LoRa' : mqttState === 'connected' ? 'MQTT' : 'Offline';
-            const transportColor = ble.connected ? Colors.cyan : mqttState === 'connected' ? Colors.green : Colors.textMuted;
-            const TransportIcon = ble.connected ? Radio : Globe;
+            const transportLabel = ble.loraActive
+              ? (mqttState === 'connected' ? 'LoRa+MQTT' : 'LoRa')
+              : ble.connected ? 'BLE (pas de relay)'
+              : mqttState === 'connected' ? 'MQTT' : 'Offline';
+            const transportColor = ble.loraActive ? Colors.cyan
+              : ble.connected ? Colors.yellow
+              : mqttState === 'connected' ? Colors.green : Colors.textMuted;
+            const TransportIcon = ble.loraActive || ble.connected ? Radio : Globe;
 
             return (
               <View style={styles.headerTitle}>
@@ -497,6 +610,18 @@ export default function ChatScreen() {
         )}
 
         <View style={styles.inputContainer}>
+          {/* Bouton Média (photo/GIF) — toujours présent */}
+          <TouchableOpacity
+            style={styles.cashuSendButton}
+            activeOpacity={0.7}
+            onPress={handlePickMedia}
+            disabled={isRecording || isSendingMedia}
+          >
+            {isSendingMedia
+              ? <ActivityIndicator size="small" color={Colors.blue} />
+              : <Camera size={20} color={isRecording ? Colors.textMuted : Colors.blue} />}
+          </TouchableOpacity>
+
           {/* Bouton Cashu — toujours présent, pas de switch de layout */}
           <TouchableOpacity
             style={styles.cashuSendButton}
@@ -704,6 +829,55 @@ const styles = StyleSheet.create({
   audioDurationMe: {
     color: 'rgba(0,0,0,0.5)',
   },
+  // Wrapper sans padding pour les images (évite le padding de messageBubble)
+  imageWrapper: { padding: 0, overflow: 'hidden' },
+  // Image / GIF bubble
+  imageBubble: {
+    width: 200,
+    height: 160,
+    borderRadius: 12,
+  },
+  imageBubbleMe: {
+    borderBottomRightRadius: 4,
+  },
+  imageBubbleThem: {
+    borderBottomLeftRadius: 4,
+  },
+  gifBadge: {
+    position: 'absolute',
+    top: 6,
+    left: 6,
+    backgroundColor: 'rgba(0,0,0,0.65)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  gifBadgeText: {
+    color: Colors.white,
+    fontSize: 10,
+    fontWeight: '700',
+    fontFamily: 'monospace',
+  },
+  // Visionneuse plein écran
+  imageViewer: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageViewerFull: {
+    width: '100%',
+    height: '85%',
+  },
+  imageViewerClose: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    padding: 10,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 20,
+  },
+  white: { color: '#fff' },
 });
 
 const cashuStyles = StyleSheet.create({

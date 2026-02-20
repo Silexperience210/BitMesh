@@ -19,6 +19,7 @@ const BLE_LAST_DEVICE_KEY = 'ble_last_device_id';
 
 interface BleState {
   connected: boolean;
+  loraActive: boolean;  // true = au moins un paquet LoRa reçu/envoyé avec succès
   device: BleGatewayDevice | null;
   scanning: boolean;
   availableDevices: BleGatewayDevice[];
@@ -31,6 +32,7 @@ interface BleContextValue extends BleState {
   disconnectGateway: () => Promise<void>;
   sendPacket: (packet: MeshCorePacket, timeoutMs?: number) => Promise<void>;
   onPacket: (handler: (packet: MeshCorePacket) => void) => void;
+  confirmLoraActive: () => void;  // Appelé par MessagesProvider après réception d'un paquet BLE
 }
 
 const BleContext = createContext<BleContextValue | null>(null);
@@ -46,6 +48,7 @@ export function useBle(): BleContextValue {
 export function BleProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<BleState>({
     connected: false,
+    loraActive: false,
     device: null,
     scanning: false,
     availableDevices: [],
@@ -239,6 +242,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       setState((prev) => ({
         ...prev,
         connected: false,
+        loraActive: false,
         device: null,
       }));
 
@@ -284,11 +288,23 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Enregistre un handler pour les paquets entrants
+   * Wrappé pour marquer loraActive=true dès le premier paquet reçu
    */
   const onPacket = (handler: (packet: MeshCorePacket) => void) => {
     if (clientRef.current) {
-      clientRef.current.onMessage(handler);
+      clientRef.current.onMessage((packet) => {
+        // Premier paquet reçu = confirmation que le relay LoRa fonctionne
+        setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
+        handler(packet);
+      });
     }
+  };
+
+  /**
+   * Marque explicitement LoRa comme actif (appelé par MessagesProvider après envoi/réception BLE)
+   */
+  const confirmLoraActive = () => {
+    setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
   };
 
   const contextValue: BleContextValue = {
@@ -298,6 +314,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     disconnectGateway,
     sendPacket,
     onPacket,
+    confirmLoraActive,
   };
 
   return <BleContext.Provider value={contextValue}>{children}</BleContext.Provider>;
