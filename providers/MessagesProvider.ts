@@ -1156,8 +1156,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       cashuToken: type === 'cashu' ? text : undefined,
     };
 
-    saveMessage(msg);
-    updateConversationLastMessage(convId, text.slice(0, 50), ts, false);
+    // ✅ CORRECTION: try/catch avec await
+    try {
+      await saveMessage(msg);
+      await updateConversationLastMessage(convId, text.slice(0, 50), ts, false);
+      console.log('[Messages] Message sauvegardé localement:', msgId);
+    } catch (err) {
+      console.error('[Messages] Erreur sauvegarde message:', err);
+      // On continue quand même pour ne pas bloquer l'UI
+    }
 
     setMessagesByConv(prev => ({
       ...prev,
@@ -1228,8 +1235,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         isMine: true,
         status: 'sent',
       };
-      await saveMessage(msg);
-      await updateConversationLastMessage(convId, text.slice(0, 50), ts, false);
+      
+      // ✅ CORRECTION: try/catch pour la sauvegarde
+      try {
+        await saveMessage(msg);
+        await updateConversationLastMessage(convId, text.slice(0, 50), ts, false);
+        console.log('[Messages] Message chunk sauvegardé:', msgId);
+      } catch (err) {
+        console.error('[Messages] Erreur sauvegarde message chunk:', err);
+      }
       
       setMessagesByConv(prev => ({
         ...prev,
@@ -1261,7 +1275,12 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
               c.id === convId ? { ...c, peerPubkey: pubkeyHex } : c
             );
             const updatedConv = updated.find(c => c.id === convId);
-            if (updatedConv) saveConversation(updatedConv);
+            // ✅ CORRECTION: try/catch pour saveConversation
+            if (updatedConv) {
+              saveConversation(updatedConv).catch(err => {
+                console.error('[Messages] Erreur sauvegarde conversation:', err);
+              });
+            }
             return updated;
           });
           const enc = encryptDM(text, id.privkeyBytes, pubkeyHex);
@@ -1286,8 +1305,14 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
   // Charger les messages d'une conversation depuis AsyncStorage
   const loadConversationMessages = useCallback(async (convId: string): Promise<void> => {
-    const msgs = await loadMessages(convId);
-    setMessagesByConv(prev => ({ ...prev, [convId]: msgs }));
+    try {
+      const msgs = await loadMessages(convId);
+      setMessagesByConv(prev => ({ ...prev, [convId]: msgs }));
+      console.log('[Messages] Messages chargés pour:', convId, '-', msgs.length, 'messages');
+    } catch (err) {
+      console.error('[Messages] Erreur chargement messages:', err);
+      // Ne pas bloquer l'UI, juste loguer l'erreur
+    }
   }, []);
 
   // Démarrer une nouvelle conversation DM
@@ -1307,8 +1332,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       unreadCount: 0,
       online: false,
     };
-    await saveConversation(conv);
-    setConversations(prev => [conv, ...prev]);
+    // ✅ CORRECTION: try/catch pour saveConversation
+    try {
+      await saveConversation(conv);
+      setConversations(prev => [conv, ...prev]);
+      console.log('[Messages] Conversation démarrée:', peerNodeId);
+    } catch (err) {
+      console.error('[Messages] Erreur démarrage conversation:', err);
+      throw err;
+    }
   }, [conversations]);
 
   // Rejoindre un forum
@@ -1331,10 +1363,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         unreadCount: 0,
         online: true,
       };
-      await saveConversation(conv);
-      setConversations(prev => [conv, ...prev]);
+      // ✅ AJOUT: try/catch pour gérer les erreurs SQLite
+      try {
+        await saveConversation(conv);
+        setConversations(prev => [conv, ...prev]);
+        console.log('[Messages] Forum rejoint:', channelName);
+      } catch (err) {
+        console.error('[Messages] Erreur sauvegarde forum:', err);
+        throw err; // Propager l'erreur pour que l'UI puisse l'afficher
+      }
+    } else {
+      console.log('[Messages] Forum déjà existant:', channelName);
     }
-    console.log('[Messages] Forum rejoint:', channelName);
   }, [conversations, handleIncomingForum]);
 
   // ✅ NOUVEAU : Annoncer un forum public
@@ -1365,14 +1405,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const setDisplayName = useCallback(async (name: string): Promise<void> => {
     if (!identity) return;
     
-    await setUserProfile({ displayName: name });
-    
-    setIdentity(prev => {
-      if (!prev) return null;
-      return { ...prev, displayName: name };
-    });
-    
-    console.log('[Messages] Display name mis à jour:', name);
+    // ✅ CORRECTION: try/catch pour setUserProfile
+    try {
+      await setUserProfile({ displayName: name });
+      setIdentity(prev => {
+        if (!prev) return null;
+        return { ...prev, displayName: name };
+      });
+      console.log('[Messages] Display name mis à jour:', name);
+    } catch (err) {
+      console.error('[Messages] Erreur mise à jour display name:', err);
+      throw err;
+    }
   }, [identity]);
 
   // Quitter un forum
@@ -1386,10 +1430,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
   // Marquer une conversation comme lue
   const markRead = useCallback(async (convId: string): Promise<void> => {
-    await markConversationRead(convId);
-    setConversations(prev => prev.map(c =>
-      c.id === convId ? { ...c, unreadCount: 0 } : c
-    ));
+    try {
+      await markConversationRead(convId);
+      setConversations(prev => prev.map(c =>
+        c.id === convId ? { ...c, unreadCount: 0 } : c
+      ));
+      console.log('[Messages] Conversation marquée comme lue:', convId);
+    } catch (err) {
+      console.error('[Messages] Erreur markRead:', err);
+    }
   }, []);
 
   return {

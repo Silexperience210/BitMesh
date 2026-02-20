@@ -59,7 +59,9 @@ class AckService {
       });
 
       // Mettre à jour le statut
-      updateMessageStatusDB(originalMsgId, 'sending');
+      updateMessageStatusDB(originalMsgId, 'sending').catch(err => {
+        console.error('[AckService] Erreur mise à jour statut:', err);
+      });
     });
   }
 
@@ -76,10 +78,14 @@ class AckService {
       clearTimeout(pending.timeout);
       this.pendingAcks.delete(ackMsgId);
       
-      await updateMessageStatusDB(ackMsgId, 'delivered');
-      this.onAckReceived?.(ackMsgId);
-      
-      console.log('[AckService] ACK reçu pour:', ackMsgId);
+      // ✅ CORRECTION: try/catch pour updateMessageStatusDB
+      try {
+        await updateMessageStatusDB(ackMsgId, 'delivered');
+        this.onAckReceived?.(ackMsgId);
+        console.log('[AckService] ACK reçu pour:', ackMsgId);
+      } catch (err) {
+        console.error('[AckService] Erreur mise à jour statut ACK:', err);
+      }
     }
   }
 
