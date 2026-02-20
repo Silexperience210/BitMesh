@@ -40,7 +40,7 @@ content = content.replace(
 );
 
 content = content.replace(
-  /TCPConnection,(?!.*// Commenté)/,
+  /TCPConnection,(?!.*\/\/ Commenté)/,
   '// TCPConnection, // Commenté pour React Native'
 );
 
