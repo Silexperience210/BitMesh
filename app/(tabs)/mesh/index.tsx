@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Animated,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import {
   Radio,
@@ -22,11 +23,16 @@ import {
   ArrowDownLeft,
   Layers,
   Usb,
+  UserPlus,
+  UserCheck,
+  MessageCircle,
+  Star,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { meshStats, mockGatewayStats, mockGatewayRelayLog } from '@/mocks/data';
 import { useMessages } from '@/providers/MessagesProvider';
+import { useRouter } from 'expo-router';
 import { type RadarPeer, formatDistance } from '@/utils/radar';
 import { useGateway } from '@/providers/GatewayProvider';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
@@ -167,7 +173,41 @@ function FilterChips({ active, onChange }: { active: FilterMode; onChange: (f: F
 }
 
 function NodeDetailModal({ peer, visible, onClose }: { peer: RadarPeer | null; visible: boolean; onClose: () => void }) {
+  const { addContact, removeContact, isContact: isContactFn, startConversation } = useMessages();
+  const router = useRouter();
+  const [alreadyContact, setAlreadyContact] = React.useState(false);
+  const [contactLoading, setContactLoading] = React.useState(false);
+
+  React.useEffect(() => {
+    if (visible && peer) {
+      isContactFn(peer.nodeId).then(setAlreadyContact);
+    }
+  }, [visible, peer?.nodeId]);
+
   if (!peer) return null;
+
+  const handleToggleContact = async () => {
+    setContactLoading(true);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    try {
+      if (alreadyContact) {
+        await removeContact(peer.nodeId);
+        setAlreadyContact(false);
+      } else {
+        await addContact(peer.nodeId, peer.name, peer.pubkeyHex);
+        setAlreadyContact(true);
+      }
+    } finally {
+      setContactLoading(false);
+    }
+  };
+
+  const handleSendDM = async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await startConversation(peer.nodeId, peer.name);
+    onClose();
+    router.push(`/(messages)/${encodeURIComponent(peer.nodeId)}` as never);
+  };
 
   const signalColor = peer.signalStrength > 70 ? Colors.green : peer.signalStrength > 40 ? Colors.accent : Colors.red;
 
@@ -235,6 +275,41 @@ function NodeDetailModal({ peer, visible, onClose }: { peer: RadarPeer | null; v
               <Text style={styles.modalDetailLabel}>Vu il y a</Text>
               <Text style={styles.modalDetailValue}>{formatTime(peer.lastSeen)}</Text>
             </View>
+          </View>
+
+          <View style={styles.modalActions}>
+            <TouchableOpacity
+              style={[
+                styles.modalActionBtn,
+                alreadyContact ? styles.modalActionBtnContact : styles.modalActionBtnAdd,
+              ]}
+              onPress={handleToggleContact}
+              disabled={contactLoading}
+              activeOpacity={0.7}
+            >
+              {contactLoading ? (
+                <ActivityIndicator size="small" color={alreadyContact ? Colors.green : Colors.black} />
+              ) : alreadyContact ? (
+                <>
+                  <UserCheck size={16} color={Colors.green} />
+                  <Text style={[styles.modalActionBtnText, { color: Colors.green }]}>Contact ajouté</Text>
+                </>
+              ) : (
+                <>
+                  <UserPlus size={16} color={Colors.black} />
+                  <Text style={styles.modalActionBtnText}>Ajouter</Text>
+                </>
+              )}
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.modalActionBtn, styles.modalActionBtnDM]}
+              onPress={handleSendDM}
+              activeOpacity={0.7}
+            >
+              <MessageCircle size={16} color={Colors.black} />
+              <Text style={styles.modalActionBtnText}>Message DM</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </View>
@@ -1240,6 +1315,35 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '600',
     fontFamily: 'monospace',
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  modalActionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 14,
+    borderRadius: 14,
+  },
+  modalActionBtnAdd: {
+    backgroundColor: Colors.accent,
+  },
+  modalActionBtnContact: {
+    backgroundColor: Colors.greenDim,
+    borderWidth: 1,
+    borderColor: Colors.green + '40',
+  },
+  modalActionBtnDM: {
+    backgroundColor: Colors.blue,
+  },
+  modalActionBtnText: {
+    color: Colors.black,
+    fontSize: 14,
+    fontWeight: '700',
   },
   pairButton: {
     flexDirection: 'row',

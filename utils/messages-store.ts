@@ -19,7 +19,7 @@ import {
 } from '@/utils/database';
 
 // Re-export des types pour compatibilité
-export type MessageType = 'text' | 'cashu' | 'btc_tx' | 'lora';
+export type MessageType = 'text' | 'cashu' | 'btc_tx' | 'lora' | 'audio';
 
 export interface StoredMessage extends DBMessage {}
 

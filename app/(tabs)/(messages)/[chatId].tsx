@@ -5,7 +5,7 @@ import {
   ActivityIndicator, Modal, Alert,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
-import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin } from 'lucide-react-native';
+import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { formatMessageTime } from '@/utils/helpers';
@@ -15,6 +15,16 @@ import { useBle } from '@/providers/BleProvider';
 import { decodeCashuToken, getTokenAmount, verifyCashuToken, generateTokenId } from '@/utils/cashu';
 import { markCashuTokenSpent, markCashuTokenPending, markCashuTokenUnspent } from '@/utils/database';
 import type { StoredMessage } from '@/utils/messages-store';
+import {
+  requestAudioPermissions,
+  startRecording,
+  stopRecording,
+  audioUriToBase64,
+  playAudioBase64,
+  formatDuration,
+  AUDIO_MAX_DURATION_MS,
+} from '@/utils/audio';
+import type { Audio } from 'expo-av';
 
 function PaymentBubble({ amount }: { amount: number }) {
   return (
@@ -31,6 +41,61 @@ function CashuBubble({ amount }: { amount: number }) {
       <CircleDollarSign size={14} color={Colors.cyan} />
       <Text style={styles.cashuLabel}>Cashu Token</Text>
       <Text style={styles.cashuAmount}>{amount.toLocaleString()} sats</Text>
+    </View>
+  );
+}
+
+function AudioBubble({ audioData, audioDuration, isMe }: { audioData?: string; audioDuration?: number; isMe: boolean }) {
+  const [isPlaying, setIsPlaying] = useState(false);
+  const soundRef = useRef<Audio.Sound | null>(null);
+
+  const handlePlay = useCallback(async () => {
+    if (!audioData) return;
+    if (isPlaying) {
+      soundRef.current?.stopAsync();
+      setIsPlaying(false);
+      return;
+    }
+    setIsPlaying(true);
+    try {
+      const sound = await playAudioBase64(audioData, () => {
+        setIsPlaying(false);
+        soundRef.current = null;
+      });
+      soundRef.current = sound;
+    } catch {
+      setIsPlaying(false);
+    }
+  }, [audioData, isPlaying]);
+
+  useEffect(() => {
+    return () => { soundRef.current?.unloadAsync().catch(() => {}); };
+  }, []);
+
+  const duration = audioDuration ?? 0;
+
+  return (
+    <View style={styles.audioBubble}>
+      <TouchableOpacity onPress={handlePlay} style={[styles.audioPlayBtn, isMe && styles.audioPlayBtnMe]} activeOpacity={0.7}>
+        {isPlaying
+          ? <Square size={14} color={isMe ? Colors.black : Colors.accent} />
+          : <Play size={14} color={isMe ? Colors.black : Colors.accent} />}
+      </TouchableOpacity>
+      <View style={styles.audioWaveform}>
+        {[...Array(12)].map((_, i) => (
+          <View
+            key={i}
+            style={[
+              styles.audioBar,
+              { height: 4 + Math.sin(i * 1.2) * 8 + 6 },
+              isMe ? styles.audioBarMe : styles.audioBarThem,
+            ]}
+          />
+        ))}
+      </View>
+      <Text style={[styles.audioDuration, isMe && styles.audioDurationMe]}>
+        {formatDuration(duration)}
+      </Text>
     </View>
   );
 }
@@ -54,7 +119,9 @@ function MessageBubble({ message, onLongPress }: { message: StoredMessage; onLon
         message.type === 'btc_tx' && styles.paymentWrapper,
         message.type === 'cashu' && styles.cashuWrapper,
       ]}>
-        {message.type === 'cashu' && message.cashuAmount ? (
+        {message.type === 'audio' ? (
+          <AudioBubble audioData={message.audioData} audioDuration={message.audioDuration} isMe={isMe} />
+        ) : message.type === 'cashu' && message.cashuAmount ? (
           <CashuBubble amount={message.cashuAmount} />
         ) : message.type === 'btc_tx' && message.btcAmount ? (
           <PaymentBubble amount={message.btcAmount} />
@@ -217,7 +284,7 @@ export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
-  const { conversations, messagesByConv, sendMessage, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage } = useMessages();
+  const { conversations, messagesByConv, sendMessage, sendAudio, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage } = useMessages();
   const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
@@ -227,7 +294,11 @@ export default function ChatScreen() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCashuModal, setShowCashuModal] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
   const flatListRef = useRef<FlatList>(null);
+  const recordingRef = useRef<Audio.Recording | null>(null);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const isForum = convId.startsWith('forum:');
 
@@ -275,6 +346,52 @@ export default function ChatScreen() {
       ]
     );
   }, [convId, deleteMessage]);
+
+  const handleMicPressOut = useCallback(async (sendIt = true) => {
+    if (!recordingRef.current) return;
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+    const rec = recordingRef.current;
+    recordingRef.current = null;
+    setIsRecording(false);
+    setRecordingDuration(0);
+    try {
+      const { uri, durationMs } = await stopRecording(rec);
+      if (!sendIt || durationMs < 500) return; // Trop court, ignorer
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      const base64 = await audioUriToBase64(uri);
+      await sendAudio(convId, base64, durationMs);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Erreur envoi audio';
+      setError(msg);
+    }
+  }, [convId, sendAudio]);
+
+  const handleMicPressIn = useCallback(async () => {
+    const granted = await requestAudioPermissions();
+    if (!granted) {
+      Alert.alert('Permission requise', 'L\'accès au microphone est nécessaire pour envoyer des messages vocaux.');
+      return;
+    }
+    try {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      const recording = await startRecording();
+      recordingRef.current = recording;
+      setIsRecording(true);
+      setRecordingDuration(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration(d => d + 1000);
+      }, 1000);
+      // Auto-stop à 30 secondes
+      setTimeout(() => {
+        if (recordingRef.current) handleMicPressOut(true);
+      }, AUDIO_MAX_DURATION_MS);
+    } catch {
+      Alert.alert('Erreur', 'Impossible de démarrer l\'enregistrement.');
+    }
+  }, [handleMicPressOut]);
 
   const renderMessage = useCallback(
     ({ item }: { item: StoredMessage }) => (
@@ -352,36 +469,66 @@ export default function ChatScreen() {
         />
 
         <View style={styles.inputContainer}>
-          <TouchableOpacity
-            style={styles.cashuSendButton}
-            activeOpacity={0.7}
-            onPress={() => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-              setShowCashuModal(true);
-            }}
-          >
-            <CircleDollarSign size={20} color={Colors.cyan} />
-          </TouchableOpacity>
-          <TextInput
-            style={styles.textInput}
-            value={inputText}
-            onChangeText={setInputText}
-            placeholder={isForum ? 'Message au forum...' : 'Message chiffré E2E...'}
-            placeholderTextColor={Colors.textMuted}
-            multiline
-            maxLength={500}
-            onSubmitEditing={handleSend}
-          />
-          <TouchableOpacity
-            style={[styles.sendButton, inputText.trim() && !isSending ? styles.sendButtonActive : null]}
-            onPress={handleSend}
-            disabled={!inputText.trim() || isSending}
-            activeOpacity={0.7}
-          >
-            {isSending
-              ? <ActivityIndicator size="small" color={Colors.black} />
-              : <Send size={18} color={inputText.trim() ? Colors.black : Colors.textMuted} />}
-          </TouchableOpacity>
+          {isRecording ? (
+            <View style={styles.recordingBar}>
+              <View style={styles.recordingDot} />
+              <Text style={styles.recordingText}>Enregistrement... {formatDuration(recordingDuration)}</Text>
+            </View>
+          ) : (
+            <TouchableOpacity
+              style={styles.cashuSendButton}
+              activeOpacity={0.7}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setShowCashuModal(true);
+              }}
+            >
+              <CircleDollarSign size={20} color={Colors.cyan} />
+            </TouchableOpacity>
+          )}
+
+          {isRecording ? (
+            <TouchableOpacity
+              style={[styles.sendButton, styles.sendButtonActive]}
+              onPress={() => handleMicPressOut(false)}
+              activeOpacity={0.7}
+            >
+              <X size={18} color={Colors.black} />
+            </TouchableOpacity>
+          ) : (
+            <TextInput
+              style={styles.textInput}
+              value={inputText}
+              onChangeText={setInputText}
+              placeholder={isForum ? 'Message au forum...' : 'Message chiffré E2E...'}
+              placeholderTextColor={Colors.textMuted}
+              multiline
+              maxLength={500}
+              onSubmitEditing={handleSend}
+            />
+          )}
+
+          {inputText.trim() ? (
+            <TouchableOpacity
+              style={[styles.sendButton, !isSending && styles.sendButtonActive]}
+              onPress={handleSend}
+              disabled={isSending}
+              activeOpacity={0.7}
+            >
+              {isSending
+                ? <ActivityIndicator size="small" color={Colors.black} />
+                : <Send size={18} color={Colors.black} />}
+            </TouchableOpacity>
+          ) : (
+            <TouchableOpacity
+              style={[styles.sendButton, isRecording ? styles.micButtonRecording : styles.micButton]}
+              onPressIn={handleMicPressIn}
+              onPressOut={() => handleMicPressOut(true)}
+              activeOpacity={0.7}
+            >
+              <Mic size={18} color={isRecording ? Colors.black : Colors.textMuted} />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
 
@@ -457,6 +604,77 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceLight, justifyContent: 'center', alignItems: 'center',
   },
   sendButtonActive: { backgroundColor: Colors.accent },
+  micButton: {},
+  micButtonRecording: { backgroundColor: Colors.red },
+  recordingBar: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: Colors.redDim,
+    borderRadius: 20,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 0.5,
+    borderColor: Colors.red + '60',
+  },
+  recordingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: Colors.red,
+  },
+  recordingText: {
+    color: Colors.red,
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: 'monospace',
+  },
+  // Audio bubble
+  audioBubble: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingVertical: 4,
+    minWidth: 160,
+  },
+  audioPlayBtn: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    backgroundColor: Colors.accentGlow,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioPlayBtnMe: {
+    backgroundColor: 'rgba(0,0,0,0.2)',
+  },
+  audioWaveform: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+    height: 28,
+  },
+  audioBar: {
+    width: 3,
+    borderRadius: 1.5,
+    opacity: 0.7,
+  },
+  audioBarMe: {
+    backgroundColor: Colors.black,
+  },
+  audioBarThem: {
+    backgroundColor: Colors.accent,
+  },
+  audioDuration: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontFamily: 'monospace',
+  },
+  audioDurationMe: {
+    color: 'rgba(0,0,0,0.5)',
+  },
 });
 
 const cashuStyles = StyleSheet.create({

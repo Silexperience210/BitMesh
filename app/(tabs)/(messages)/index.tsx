@@ -4,6 +4,7 @@ import {
   Text,
   StyleSheet,
   FlatList,
+  ScrollView,
   TouchableOpacity,
   Animated,
   Modal,
@@ -18,6 +19,7 @@ import { formatTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
 import type { StoredConversation } from '@/utils/messages-store';
+import type { DBContact } from '@/utils/database';
 
 function SignalDots({ strength }: { strength: number }) {
   const bars = strength >= 70 ? 3 : strength >= 40 ? 2 : 1;
@@ -394,7 +396,7 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
 export default function MessagesScreen() {
   const router = useRouter();
   const { settings, isInternetMode, isLoRaMode } = useAppSettings();
-  const { conversations, mqttState, identity, startConversation, joinForum, deleteConversation } = useMessages();
+  const { conversations, mqttState, identity, startConversation, joinForum, deleteConversation, contacts } = useMessages();
   const [modalVisible, setModalVisible] = useState(false);
 
   const modeLabel = settings.connectionMode === 'internet' ? 'Internet Mode'
@@ -438,6 +440,11 @@ export default function MessagesScreen() {
     router.push(`/(messages)/${encodeURIComponent(nodeId)}` as never);
   };
 
+  const handleDMContact = useCallback(async (contact: DBContact) => {
+    await startConversation(contact.nodeId, contact.displayName);
+    router.push(`/(messages)/${encodeURIComponent(contact.nodeId)}` as never);
+  }, [startConversation, router]);
+
   const handleForum = async (channelName: string): Promise<void> => {
     await joinForum(channelName);
     router.push(`/(messages)/${encodeURIComponent('forum:' + channelName)}` as never);
@@ -460,8 +467,23 @@ export default function MessagesScreen() {
         </Text>
       </View>
 
+      {contacts.length > 0 && (
+        <View style={styles.contactsStrip}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.contactsScroll}>
+            {contacts.map((c) => (
+              <TouchableOpacity key={c.nodeId} style={styles.contactChip} onPress={() => handleDMContact(c)} activeOpacity={0.7}>
+                <View style={[styles.contactAvatar, c.isFavorite && styles.contactAvatarFav]}>
+                  <Text style={styles.contactAvatarText}>{c.displayName.charAt(0).toUpperCase()}</Text>
+                </View>
+                <Text style={styles.contactName} numberOfLines={1}>{c.displayName}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+      )}
+
       <FlatList
-        data={conversations.filter((conv, index, self) => 
+        data={conversations.filter((conv, index, self) =>
           index === self.findIndex(c => c.id === conv.id)
         )}
         keyExtractor={(item) => item.id}
@@ -554,6 +576,47 @@ const styles = StyleSheet.create({
   },
   unreadText: { color: Colors.black, fontSize: 11, fontWeight: '700' },
   separator: { height: 0.5, backgroundColor: Colors.border, marginLeft: 80 },
+  // Contacts strip
+  contactsStrip: {
+    backgroundColor: Colors.surface,
+    borderBottomWidth: 0.5,
+    borderBottomColor: Colors.border,
+    paddingVertical: 10,
+  },
+  contactsScroll: {
+    paddingHorizontal: 12,
+    gap: 12,
+  },
+  contactChip: {
+    alignItems: 'center',
+    gap: 4,
+    width: 56,
+  },
+  contactAvatar: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: Colors.surfaceLight,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: Colors.border,
+  },
+  contactAvatarFav: {
+    borderColor: Colors.accent,
+  },
+  contactAvatarText: {
+    color: Colors.text,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  contactName: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+    width: 56,
+  },
   fab: {
     position: 'absolute', bottom: 24, right: 20,
     width: 56, height: 56, borderRadius: 28, backgroundColor: Colors.accent,

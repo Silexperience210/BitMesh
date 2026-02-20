@@ -249,6 +249,23 @@ async function initDatabase(): Promise<void> {
   `);
   console.log('[Database] Table cashu_tokens OK');
 
+  // Table: contacts (carnet d'adresses)
+  await db.execAsync(`
+    CREATE TABLE IF NOT EXISTS contacts (
+      nodeId TEXT PRIMARY KEY,
+      displayName TEXT NOT NULL,
+      pubkeyHex TEXT,
+      notes TEXT,
+      isFavorite INTEGER NOT NULL DEFAULT 0,
+      addedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000),
+      updatedAt INTEGER NOT NULL DEFAULT (strftime('%s', 'now') * 1000)
+    );
+  `);
+
+  // Migration: ajouter colonnes audio aux messages existants (silencieux si déjà présentes)
+  try { await db.execAsync('ALTER TABLE messages ADD COLUMN audioData TEXT'); } catch {}
+  try { await db.execAsync('ALTER TABLE messages ADD COLUMN audioDuration INTEGER DEFAULT 0'); } catch {}
+
   console.log('[Database] Tables initialisées');
 
   // ✅ NOUVEAU: Table mqtt_queue (file d'attente persistante)
@@ -443,7 +460,7 @@ export interface DBMessage {
   fromNodeId: string;
   fromPubkey?: string;
   text: string;
-  type: 'text' | 'cashu' | 'btc_tx' | 'lora';
+  type: 'text' | 'cashu' | 'btc_tx' | 'lora' | 'audio';
   timestamp: number;
   isMine: boolean;
   status: 'sending' | 'sent' | 'delivered' | 'read' | 'failed';
@@ -451,6 +468,8 @@ export interface DBMessage {
   cashuToken?: string;
   btcAmount?: number;
   compressed?: boolean;
+  audioData?: string;      // base64 audio pour messages vocaux
+  audioDuration?: number;  // durée en millisecondes
 }
 
 export async function loadMessagesDB(convId: string, limit: number = 200): Promise<DBMessage[]> {
@@ -497,11 +516,18 @@ export async function saveMessageDB(msg: DBMessage): Promise<void> {
     // ✅ CONVERSION avec toSQLiteParams
     const sqliteParams = toSQLiteParams(params);
     
+    const audioParams = [
+      ...params,
+      msg.audioData ? String(msg.audioData) : null,
+      msg.audioDuration ? Math.floor(Number(msg.audioDuration)) : null,
+    ];
+    const sqliteParamsFull = toSQLiteParams(audioParams);
+
     await database.runAsync(`
-      INSERT OR REPLACE INTO messages 
-      (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `, sqliteParams);
+      INSERT OR REPLACE INTO messages
+      (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken, btcAmount, compressed, audioData, audioDuration)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, sqliteParamsFull);
     
     console.log('[DB] Message sauvegardé:', msg.id);
   } catch (err) {
@@ -589,6 +615,57 @@ export async function removePendingMessage(id: string): Promise<void> {
     console.error('[DB] Erreur removePendingMessage:', err);
     throw err;
   }
+}
+
+// --- Contacts ---
+
+export interface DBContact {
+  nodeId: string;
+  displayName: string;
+  pubkeyHex?: string;
+  notes?: string;
+  isFavorite: boolean;
+  addedAt: number;
+  updatedAt: number;
+}
+
+export async function saveContact(contact: Omit<DBContact, 'addedAt' | 'updatedAt'>): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`
+    INSERT OR REPLACE INTO contacts (nodeId, displayName, pubkeyHex, notes, isFavorite, addedAt, updatedAt)
+    VALUES (?, ?, ?, ?, ?, strftime('%s','now')*1000, strftime('%s','now')*1000)
+  `, toSQLiteParams([contact.nodeId, contact.displayName, contact.pubkeyHex || null, contact.notes || null, contact.isFavorite ? 1 : 0]));
+  console.log('[DB] Contact sauvegardé:', contact.nodeId);
+}
+
+export async function getContacts(): Promise<DBContact[]> {
+  const database = await getDatabase();
+  const rows = await database.getAllAsync<any>(`
+    SELECT * FROM contacts ORDER BY isFavorite DESC, displayName ASC
+  `);
+  return rows.map(r => ({ ...r, isFavorite: Boolean(r.isFavorite) }));
+}
+
+export async function isContact(nodeId: string): Promise<boolean> {
+  const database = await getDatabase();
+  const row = await database.getFirstAsync<{ c: number }>(`SELECT COUNT(*) as c FROM contacts WHERE nodeId = ?`, toSQLiteParams([nodeId]));
+  return (row?.c ?? 0) > 0;
+}
+
+export async function deleteContact(nodeId: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync('DELETE FROM contacts WHERE nodeId = ?', toSQLiteParams([nodeId]));
+  console.log('[DB] Contact supprimé:', nodeId);
+}
+
+export async function updateContactName(nodeId: string, displayName: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`UPDATE contacts SET displayName = ?, updatedAt = strftime('%s','now')*1000 WHERE nodeId = ?`, toSQLiteParams([displayName, nodeId]));
+}
+
+export async function toggleContactFavorite(nodeId: string): Promise<void> {
+  const database = await getDatabase();
+  await database.runAsync(`UPDATE contacts SET isFavorite = 1 - isFavorite, updatedAt = strftime('%s','now')*1000 WHERE nodeId = ?`, toSQLiteParams([nodeId]));
 }
 
 export async function incrementRetryCount(id: string, error?: string): Promise<void> {

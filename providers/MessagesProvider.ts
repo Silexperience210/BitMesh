@@ -41,7 +41,7 @@ import {
   markConversationRead,
   generateMsgId,
 } from '@/utils/messages-store';
-import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken, getUnverifiedCashuTokens, markCashuTokenVerified, incrementRetryCount, deleteMessageDB, deleteConversationDB } from '@/utils/database';
+import { cleanupOldMessages, getUserProfile, setUserProfile, saveCashuToken, getUnverifiedCashuTokens, markCashuTokenVerified, incrementRetryCount, deleteMessageDB, deleteConversationDB, saveContact, getContacts, deleteContact, isContact, toggleContactFavorite, type DBContact } from '@/utils/database';
 import { deriveMeshIdentity, type MeshIdentity, verifyNodeId } from '@/utils/identity';
 import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-routing';
 // MeshIdentity utilisé comme type de paramètre pour publishAndStore
@@ -95,6 +95,7 @@ export interface MessagesState {
   connect: () => void;
   disconnect: () => void;
   sendMessage: (convId: string, text: string, type?: MessageType) => Promise<void>;
+  sendAudio: (convId: string, base64: string, durationMs: number) => Promise<void>;
   sendCashu: (convId: string, token: string, amountSats: number) => Promise<void>;
   loadConversationMessages: (convId: string) => Promise<void>;
   startConversation: (peerNodeId: string, peerName?: string) => Promise<void>;
@@ -105,6 +106,13 @@ export interface MessagesState {
   setDisplayName: (name: string) => Promise<void>;
   deleteMessage: (msgId: string, convId: string) => Promise<void>;
   deleteConversation: (convId: string) => Promise<void>;
+  // Contacts
+  contacts: DBContact[];
+  addContact: (nodeId: string, displayName: string, pubkeyHex?: string) => Promise<void>;
+  removeContact: (nodeId: string) => Promise<void>;
+  isContact: (nodeId: string) => Promise<boolean>;
+  toggleFavorite: (nodeId: string) => Promise<void>;
+  refreshContacts: () => Promise<void>;
 }
 
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
@@ -115,6 +123,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
   const [messagesByConv, setMessagesByConv] = useState<Record<string, StoredMessage[]>>({});
   const [radarPeers, setRadarPeers] = useState<RadarPeer[]>([]);
+  const [contacts, setContacts] = useState<DBContact[]>([]);
   const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null);
   const myLocationRef = useRef<{ lat: number; lng: number } | null>(null);
   const mqttRef = useRef<MeshMqttClient | null>(null);
@@ -641,10 +650,26 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       
       const fromNodeIdValue = wire.from || wire.fromNodeId || 'unknown';
 
+      // Décoder payload audio si nécessaire
+      let audioData: string | undefined;
+      let audioDuration: number | undefined;
+      let displayText = plaintext;
+
+      if (wire.type === 'audio') {
+        try {
+          const audioPayload = JSON.parse(plaintext) as { dur: number; data: string };
+          audioData = audioPayload.data;
+          audioDuration = audioPayload.dur;
+          displayText = `[Audio ${Math.round(audioDuration / 1000)}s]`;
+        } catch {
+          displayText = '[Audio]';
+        }
+      }
+
       // ✅ NOUVEAU : Validation et stockage des tokens Cashu
       let cashuAmount: number | undefined;
       let cashuTokenStr: string | undefined;
-      
+
       if (wire.type === 'cashu') {
         try {
           const verification = await verifyCashuToken(plaintext);
@@ -699,17 +724,19 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         conversationId: fromNodeIdValue,
         fromNodeId: fromNodeIdValue,
         fromPubkey: wire.fromPubkey,
-        text: plaintext,
+        text: displayText,
         type: wire.type,
         timestamp: wire.ts,
         isMine: false,
         status: 'delivered',
         cashuAmount,
         cashuToken: cashuTokenStr,
+        audioData,
+        audioDuration,
       };
 
       saveMessage(msg);
-      updateConversationLastMessage(fromNodeIdValue, plaintext.slice(0, 50), wire.ts, true);
+      updateConversationLastMessage(fromNodeIdValue, displayText.slice(0, 50), wire.ts, true);
 
       setMessagesByConv(prev => ({
         ...prev,
@@ -725,7 +752,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
             name: fromNodeIdValue,
             isForum: false,
             peerPubkey: wire.fromPubkey,
-            lastMessage: plaintext.slice(0, 50),
+            lastMessage: displayText.slice(0, 50),
             lastMessageTime: wire.ts,
             unreadCount: 1,
             online: true,
@@ -1186,6 +1213,85 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     ));
   }, [ble]);
 
+  // Envoyer un message vocal (MQTT uniquement - trop volumineux pour LoRa)
+  const sendAudio = useCallback(async (
+    convId: string,
+    base64: string,
+    durationMs: number
+  ): Promise<void> => {
+    if (!identity || mqttRef.current?.state !== 'connected') {
+      throw new Error('Non connecté au réseau MQTT');
+    }
+
+    const id = identity;
+    const isForum = convId.startsWith('forum:');
+    const msgId = generateMsgId();
+    const ts = Date.now();
+
+    // Chiffrer le payload audio (on encode durée + base64 ensemble)
+    const audioPayload = JSON.stringify({ dur: durationMs, data: base64 });
+
+    let enc: EncryptedPayload;
+    let topic: string;
+    if (isForum) {
+      const channelName = convId.slice(6);
+      enc = encryptForum(audioPayload, channelName);
+      topic = TOPICS.forum(channelName);
+    } else {
+      const conv = conversations.find(c => c.id === convId);
+      if (!conv?.peerPubkey) throw new Error('Clé publique du pair inconnue');
+      enc = encryptDM(audioPayload, id.privkeyBytes, conv.peerPubkey);
+      topic = TOPICS.route(convId);
+    }
+
+    // Publier via MQTT uniquement (audio trop volumineux pour LoRa)
+    if (mqttRef.current) {
+      const wire: WireMessage = {
+        v: 1,
+        id: msgId,
+        fromNodeId: id.nodeId,
+        fromPubkey: id.pubkeyHex,
+        to: convId,
+        enc,
+        ts,
+        type: 'audio',
+      };
+      publishMesh(mqttRef.current, topic, JSON.stringify(wire), 1);
+    }
+
+    const msg: StoredMessage = {
+      id: msgId,
+      conversationId: convId,
+      fromNodeId: id.nodeId,
+      fromPubkey: id.pubkeyHex,
+      text: `[Audio ${Math.round(durationMs / 1000)}s]`,
+      type: 'audio',
+      timestamp: ts,
+      isMine: true,
+      status: 'sent',
+      audioData: base64,
+      audioDuration: durationMs,
+    };
+
+    try {
+      await saveMessage(msg);
+      await updateConversationLastMessage(convId, `[Audio ${Math.round(durationMs / 1000)}s]`, ts, false);
+    } catch (err) {
+      console.error('[Messages] Erreur sauvegarde message audio:', err);
+    }
+
+    setMessagesByConv(prev => ({
+      ...prev,
+      [convId]: [...(prev[convId] ?? []), msg],
+    }));
+
+    setConversations(prev => prev.map(c =>
+      c.id === convId
+        ? { ...c, lastMessage: `[Audio ${Math.round(durationMs / 1000)}s]`, lastMessageTime: ts }
+        : c
+    ));
+  }, [identity, conversations]);
+
   // Envoyer un message (DM ou forum)
   const sendMessage = useCallback(async (
     convId: string,
@@ -1444,6 +1550,29 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, []);
 
+  // --- Contacts ---
+  const refreshContacts = useCallback(async () => {
+    const list = await getContacts();
+    setContacts(list);
+  }, []);
+
+  useEffect(() => { refreshContacts(); }, []);
+
+  const addContact = useCallback(async (nodeId: string, displayName: string, pubkeyHex?: string) => {
+    await saveContact({ nodeId, displayName, pubkeyHex, isFavorite: false });
+    await refreshContacts();
+  }, [refreshContacts]);
+
+  const removeContact = useCallback(async (nodeId: string) => {
+    await deleteContact(nodeId);
+    await refreshContacts();
+  }, [refreshContacts]);
+
+  const toggleFavorite = useCallback(async (nodeId: string) => {
+    await toggleContactFavorite(nodeId);
+    await refreshContacts();
+  }, [refreshContacts]);
+
   // Supprimer un message localement
   const deleteMessage = useCallback(async (msgId: string, convId: string): Promise<void> => {
     try {
@@ -1483,6 +1612,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     connect,
     disconnect,
     sendMessage,
+    sendAudio,
     sendCashu,
     loadConversationMessages,
     startConversation,
@@ -1493,6 +1623,12 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     setDisplayName,
     deleteMessage,
     deleteConversation,
+    contacts,
+    addContact,
+    removeContact,
+    isContact,
+    toggleFavorite,
+    refreshContacts,
   };
 });
 
