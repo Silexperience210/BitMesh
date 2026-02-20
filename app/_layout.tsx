@@ -8,7 +8,7 @@ import React, { useEffect, useState } from "react";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { StatusBar } from "expo-status-bar";
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import { ActivityIndicator, View, Text } from "react-native";
+import { ActivityIndicator, View, Text, TouchableOpacity, Alert } from "react-native";
 import Colors from "@/constants/colors";
 import { WalletSeedContext } from "@/providers/WalletSeedProvider";
 import { BitcoinContext } from "@/providers/BitcoinProvider";
@@ -78,17 +78,51 @@ function AppContent() {
   // Écran de chargement pendant l'initialisation
   if (!isReady || onboardingDone === null) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background }}>
-        <ActivityIndicator size="large" color={Colors.tint} />
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Colors.background, padding: 20 }}>
+        {!error && <ActivityIndicator size="large" color={Colors.tint} />}
         {isMigrating && (
           <Text style={{ marginTop: 16, color: Colors.text }}>
             Migration des données...
           </Text>
         )}
         {error && (
-          <Text style={{ marginTop: 16, color: 'red' }}>
-            Erreur: {error}
-          </Text>
+          <>
+            <Text style={{ marginTop: 16, color: 'red', textAlign: 'center' }}>
+              Erreur: {error}
+            </Text>
+            <Text style={{ marginTop: 8, color: Colors.textMuted, fontSize: 12, textAlign: 'center' }}>
+              La base de données semble corrompue. Vider le cache peut résoudre le problème.
+            </Text>
+            <TouchableOpacity
+              style={{ marginTop: 20, backgroundColor: Colors.purple, paddingHorizontal: 20, paddingVertical: 12, borderRadius: 8 }}
+              onPress={() => {
+                Alert.alert(
+                  'Vider le cache',
+                  'Cela supprimera toutes les données locales. Continuer?',
+                  [
+                    { text: 'Annuler', style: 'cancel' },
+                    { 
+                      text: 'Vider', 
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          await AsyncStorage.clear();
+                          // Reload app
+                          if (typeof window !== 'undefined' && window.location) {
+                            window.location.reload();
+                          }
+                        } catch (e) {
+                          console.error('Erreur vidage cache:', e);
+                        }
+                      }
+                    },
+                  ]
+                );
+              }}
+            >
+              <Text style={{ color: 'white', fontWeight: '600' }}>Vider le cache</Text>
+            </TouchableOpacity>
+          </>
         )}
       </View>
     );
