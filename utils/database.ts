@@ -1038,20 +1038,23 @@ export async function migrateFromAsyncStorage(): Promise<void> {
       console.log(`[Database] Migration de ${conversations.length} conversations...`);
       
       for (const conv of conversations) {
+        // ✅ CORRECTION: Utiliser toSQLiteParams pour conversion des types
+        const params = toSQLiteParams([
+          String(conv.id),
+          String(conv.name),
+          conv.isForum ? 1 : 0,
+          conv.peerPubkey || null,
+          conv.lastMessage || '',
+          Math.floor(Number(conv.lastMessageTime || Date.now())),
+          Math.floor(Number(conv.unreadCount || 0)),
+          conv.online ? 1 : 0
+        ]);
+        
         await db.runAsync(
           `INSERT OR IGNORE INTO conversations 
-           (id, name, is_forum, peer_pubkey, last_message, last_message_time, unread_count, online)
+           (id, name, isForum, peerPubkey, lastMessage, lastMessageTime, unreadCount, online)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            conv.id,
-            conv.name,
-            conv.isForum ? 1 : 0,
-            conv.peerPubkey || null,
-            conv.lastMessage || '',
-            conv.lastMessageTime || Date.now(),
-            conv.unreadCount || 0,
-            conv.online ? 1 : 0
-          ]
+          params
         );
       }
       console.log('[Database] Conversations migrées');
@@ -1064,23 +1067,26 @@ export async function migrateFromAsyncStorage(): Promise<void> {
       console.log(`[Database] Migration de ${messages.length} messages...`);
       
       for (const msg of messages) {
+        // ✅ CORRECTION: Utiliser toSQLiteParams pour conversion des types
+        const params = toSQLiteParams([
+          String(msg.id),
+          String(msg.conversationId),
+          String(msg.from),
+          msg.fromPubkey || null,
+          String(msg.text),
+          String(msg.type),
+          Math.floor(Number(msg.timestamp)),
+          msg.isMine ? 1 : 0,
+          String(msg.status),
+          msg.cashuAmount || null,
+          msg.cashuToken || null
+        ]);
+        
         await db.runAsync(
           `INSERT OR IGNORE INTO messages 
-           (id, conversation_id, from_node_id, from_pubkey, text, type, timestamp, is_mine, status, cashu_amount, cashu_token)
+           (id, conversationId, fromNodeId, fromPubkey, text, type, timestamp, isMine, status, cashuAmount, cashuToken)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [
-            msg.id,
-            msg.conversationId,
-            msg.from,
-            msg.fromPubkey || null,
-            msg.text,
-            msg.type,
-            msg.timestamp,
-            msg.isMine ? 1 : 0,
-            msg.status,
-            msg.cashuAmount || null,
-            msg.cashuToken || null
-          ]
+          params
         );
       }
       console.log('[Database] Messages migrés');
