@@ -4,6 +4,7 @@ import createContextHook from '@nkzw/create-context-hook';
 import * as Notifications from 'expo-notifications'; // ✅ NOUVEAU
 import {
   type MeshMqttClient,
+  type MessageHandler,
   createMeshMqttClient,
   publishMesh,
   subscribeMesh,
@@ -141,6 +142,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
   // FIX #1: Deduplication — Set des IDs de messages récents (max 200)
   const recentMsgIds = useRef<Set<string>>(new Set());
+  // FIX: Cache des handlers forum (même référence sur reconnexion → dedup fonctionne)
+  const forumHandlerRefs = useRef<Map<string, MessageHandler>>(new Map());
   const addToDedup = (id: string) => {
     recentMsgIds.current.add(id);
     if (recentMsgIds.current.size > 200) {
@@ -1032,6 +1035,20 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
   }, [identity]);
 
+  // FIX BUG 1: Vider le cache des handlers forum quand l'identité change
+  useEffect(() => {
+    forumHandlerRefs.current.clear();
+  }, [handleIncomingForum]);
+
+  // FIX BUG 1: Helper qui retourne TOUJOURS la même référence de handler pour un channel
+  // Essentiel pour que subscribeMesh puisse dédupliquer correctement par référence
+  const getForumHandler = useCallback((channelName: string): MessageHandler => {
+    if (!forumHandlerRefs.current.has(channelName)) {
+      forumHandlerRefs.current.set(channelName, handleIncomingForum(channelName));
+    }
+    return forumHandlerRefs.current.get(channelName)!;
+  }, [handleIncomingForum]);
+
   // Connecter au broker MQTT
   const connect = useCallback(() => {
     if (!identity) {
@@ -1057,7 +1074,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const pos = myLocationRef.current;
       updatePresence(client, identity.nodeId, identity.pubkeyHex, pos?.lat, pos?.lng);
       joinedForums.current.forEach(ch => {
-        joinForumChannel(client, ch, handleIncomingForum(ch));
+        joinForumChannel(client, ch, getForumHandler(ch));
       });
     };
 
@@ -1086,7 +1103,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       }
     }, 1000);
     statePollerRef.current = statePoller;
-  }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement]);
+  }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement, getForumHandler]);
 
   // Auto-connexion dès que l'identité est disponible
   useEffect(() => {
@@ -1231,6 +1248,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         const wire: WireMessage = {
           v: 1,
           id: msgId,
+          from: id.nodeId, // FIX BUG 6: nécessaire pour filtrer l'écho dans handleIncomingForum
           fromNodeId: id.nodeId,
           fromPubkey: id.pubkeyHex,
           to: convId,
@@ -1308,7 +1326,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const conv = conversations.find(c => c.id === convId);
       if (!conv?.peerPubkey) throw new Error('Clé publique du pair inconnue');
       enc = encryptDM(audioPayload, id.privkeyBytes, conv.peerPubkey);
-      topic = TOPICS.route(convId);
+      // FIX BUG 4: audio DM → topic DM direct (WireMessage), pas route (MeshMessage)
+      topic = TOPICS.dm(convId);
     }
 
     // Publier via MQTT uniquement (audio trop volumineux pour LoRa)
@@ -1316,6 +1335,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       const wire: WireMessage = {
         v: 1,
         id: msgId,
+        from: id.nodeId, // FIX BUG 6: filtre écho dans handleIncomingForum/handleIncomingDM
         fromNodeId: id.nodeId,
         fromPubkey: id.pubkeyHex,
         to: convId,
@@ -1391,6 +1411,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const wire: WireMessage = {
       v: 1,
       id: msgId,
+      from: id.nodeId, // FIX BUG 6: filtre écho forum
       fromNodeId: id.nodeId,
       fromPubkey: id.pubkeyHex,
       to: convId,
@@ -1437,7 +1458,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     text: string,
     type: MessageType = 'text'
   ): Promise<void> => {
-    if (!identity || mqttRef.current?.state !== 'connected') {
+    if (!identity) {
+      throw new Error('Identité non disponible');
+    }
+    // FIX BUG 5: autoriser l'envoi via BLE même si MQTT déconnecté
+    if (!ble.connected && mqttRef.current?.state !== 'connected') {
       throw new Error('Non connecté au réseau MQTT');
     }
 
@@ -1632,7 +1657,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     AsyncStorage.setItem(JOINED_FORUMS_KEY, JSON.stringify([...joinedForums.current])).catch(() => {});
 
     if (mqttRef.current?.state === 'connected') {
-      joinForumChannel(mqttRef.current, channelName, handleIncomingForum(channelName));
+      joinForumChannel(mqttRef.current, channelName, getForumHandler(channelName));
     }
 
     const existing = conversations.find(c => c.id === convId);

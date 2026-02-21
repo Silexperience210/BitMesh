@@ -36,6 +36,8 @@ export interface MeshMqttClient {
   handlers: Map<string, MessageHandler[]>;
   // Handlers pour patterns MQTT à un niveau (ex: "meshcore/identity/+")
   patternHandlers: Map<string, MessageHandler[]>;
+  // FIX BUG 2: handler d'annonces forum caché pour éviter accumulation sur reconnexion
+  forumAnnouncementHandler?: MessageHandler;
 }
 
 // Créer et connecter un client MQTT réel
@@ -416,29 +418,36 @@ export function subscribeForumAnnouncements(
   instance: MeshMqttClient,
   handler: (announcement: ForumAnnouncement) => void
 ): void {
-  const wrappedHandler: MessageHandler = (_topic, payload) => {
-    try {
-      // Ignorer les messages vides (suppression retained)
-      if (!payload || payload.trim() === '') return;
-      const announcement = JSON.parse(payload) as ForumAnnouncement;
-      // Ignorer nos propres annonces (nos forums sont déjà dans conversations)
-      if (announcement.creatorNodeId !== instance.nodeId) {
-        handler(announcement);
+  // FIX BUG 2: créer le wrappedHandler une seule fois et le cacher dans l'instance
+  // → subscribePattern déduplique par référence, donc toujours la même référence = pas d'accumulation
+  if (!instance.forumAnnouncementHandler) {
+    instance.forumAnnouncementHandler = (_topic, payload) => {
+      try {
+        // Ignorer les messages vides (suppression retained)
+        if (!payload || payload.trim() === '') return;
+        const announcement = JSON.parse(payload) as ForumAnnouncement;
+        // Ignorer nos propres annonces (nos forums sont déjà dans conversations)
+        if (announcement.creatorNodeId !== instance.nodeId) {
+          handler(announcement);
+        }
+      } catch (err) {
+        console.log('[MQTT] Erreur parse annonce forum:', err);
       }
-    } catch (err) {
-      console.log('[MQTT] Erreur parse annonce forum:', err);
-    }
-  };
+    };
+  }
 
-  // ✅ FIX : Wildcard "+" pour recevoir TOUS les forums retained sur leurs topics individuels
+  // Wildcard "+" pour recevoir TOUS les forums retained sur leurs topics individuels
   const wildcardTopic = `${TOPICS.forumsAnnounce}/+`;
-  subscribePattern(instance, wildcardTopic, wrappedHandler, 1);
+  subscribePattern(instance, wildcardTopic, instance.forumAnnouncementHandler, 1);
   console.log('[MQTT] Abonné aux annonces de forums (wildcard):', wildcardTopic);
 }
 
 // ✅ NOUVEAU : Se désabonner des annonces de forums
 export function unsubscribeForumAnnouncements(instance: MeshMqttClient): void {
   const wildcardTopic = `${TOPICS.forumsAnnounce}/+`;
-  unsubscribeMesh(instance, wildcardTopic);
+  // FIX BUG 3: supprimer de patternHandlers (pas handlers) car ajouté via subscribePattern
+  instance.patternHandlers.delete(wildcardTopic);
+  instance.client?.unsubscribe(wildcardTopic);
+  instance.forumAnnouncementHandler = undefined;
   console.log('[MQTT] Désabonné des annonces de forums');
 }
