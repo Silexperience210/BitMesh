@@ -45,3 +45,7 @@ rork-eslint.config.js
 core
 node_modules
 .expo
+# Android signing credentials (sensible)
+bitmesh.keystore
+credentials.json
+build_apk.ps1
