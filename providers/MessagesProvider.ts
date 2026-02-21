@@ -49,6 +49,9 @@ import { MeshRouter, type MeshMessage, isValidMeshMessage } from '@/utils/mesh-r
 import { useWalletSeed } from '@/providers/WalletSeedProvider';
 // Import BLE provider pour communication LoRa via gateway ESP32
 import { useBle } from '@/providers/BleProvider';
+// Import Gateway provider pour tracking peers, relay LoRa et Cashu
+import { useGateway } from '@/providers/GatewayProvider';
+import { type GatewayPeer } from '@/utils/gateway';
 // Import protocole MeshCore binaire
 import {
   type MeshCorePacket,
@@ -124,6 +127,7 @@ export interface MessagesState {
 export const [MessagesContext, useMessages] = createContextHook((): MessagesState => {
   const { mnemonic } = useWalletSeed();
   const ble = useBle(); // Accès au BLE gateway pour LoRa
+  const { gatewayState, registerPeer, handleLoRaMessage: handleLoRaMsg, relayCashu } = useGateway();
   const [identity, setIdentity] = useState<MeshIdentity | null>(null);
   const [mqttState, setMqttState] = useState<'disconnected' | 'connecting' | 'connected' | 'error'>('disconnected');
   const [conversations, setConversations] = useState<StoredConversation[]>([]);
@@ -214,7 +218,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       // Vérifier que le paquet est pour nous (ou broadcast)
       const myNodeIdUint64 = nodeIdToUint64(identity.nodeId);
       if (packet.toNodeId !== myNodeIdUint64 && packet.toNodeId !== 0n) {
-        console.log('[MeshCore] Paquet ignoré (pas pour nous)');
+        // Forward to gateway if active (LoRa relay mode)
+        if (gatewayState.isActive) {
+          const rawPayload = JSON.stringify(packet);
+          handleLoRaMsg(rawPayload, packet.fromNodeId?.toString() ?? 'unknown');
+        }
         return;
       }
 
@@ -544,7 +552,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     } catch (err) {
       console.error('[MeshCore] Erreur traitement paquet:', err);
     }
-  }, [identity]);
+  }, [identity, gatewayState.isActive, handleLoRaMsg]);
 
   // Enregistrer le handler BLE dès que possible + annoncer notre clé publique
   useEffect(() => {
@@ -663,10 +671,24 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         if (!peer.online && filtered.length === prev.length) return prev; // pair déjà absent
         return peer.online ? [peer, ...filtered] : filtered;
       });
+
+      // Gateway peer tracking
+      if (gatewayState.isActive && peer.online) {
+        const gatewayPeer: GatewayPeer = {
+          nodeId: peer.nodeId,
+          name: peer.name,
+          lastSeen: peer.lastSeen,
+          signalStrength: peer.signalStrength,
+          hops: 1,
+          capabilities: [],
+          isGateway: false,
+        };
+        registerPeer(gatewayPeer);
+      }
     } catch (err) {
       console.log('[Radar] Erreur parse présence:', err);
     }
-  }, [identity]);
+  }, [identity, gatewayState.isActive, registerPeer]);
 
   // Handler pour un message DM entrant
   const handleIncomingDM = useCallback(async (topic: string, payloadStr: string) => {
@@ -774,6 +796,11 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         }
       }
 
+      // Gateway Cashu relay
+      if (wire.type === 'cashu' && cashuTokenStr && gatewayState.isActive && gatewayState.services.cashu) {
+        relayCashu(cashuTokenStr, gatewayState.cashuMintUrl, fromNodeIdValue, 'relay');
+      }
+
       const msg: StoredMessage = {
         id: wire.id,
         conversationId: fromNodeIdValue,
@@ -828,7 +855,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     } catch (err) {
       console.log('[Messages] Erreur déchiffrement DM:', err);
     }
-  }, [identity]);
+  }, [identity, gatewayState.isActive, gatewayState.services.cashu, gatewayState.cashuMintUrl, relayCashu]);
 
   // Handler pour les messages multi-hop routés (meshcore/route/{nodeId})
   const handleIncomingRouteMessage = useCallback((topic: string, payloadStr: string) => {

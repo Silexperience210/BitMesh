@@ -2,7 +2,8 @@ name: Android Build Release
 
 on:
   push:
-    branches: [main]
+    tags:
+      - 'apk-*'
   workflow_dispatch:
 
 jobs:
