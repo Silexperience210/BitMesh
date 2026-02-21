@@ -55,7 +55,7 @@ import { BROKER_OPTIONS } from '@/utils/mqtt-client';
 import { UpdateChecker } from '@/components/UpdateChecker';
 import { testMintConnection, formatMintUrl } from '@/utils/cashu';
 import { testMqttConnection } from '@/utils/mqtt';
-import { mockGatewayRelayLog, mockGatewayStats, type GatewayRelayLogEntry } from '@/mocks/data';
+import { type GatewayRelayJob } from '@/utils/gateway';
 
 interface SettingRowProps {
   icon: React.ReactNode;
@@ -768,7 +768,7 @@ function GatewayModeCard() {
   });
 
   const statusColor = gatewayState.isActive ? Colors.green : Colors.textMuted;
-  const stats = mockGatewayStats;
+  const stats = gatewayState.stats;
 
   return (
     <Animated.View style={[styles.gatewayCard, { opacity: fadeAnim }]}>
@@ -982,16 +982,22 @@ function GatewayModeCard() {
 
       {showRelayLog && (
         <View style={styles.relayLogContainer}>
-          {mockGatewayRelayLog.map((entry) => (
-            <RelayLogItem key={entry.id} entry={entry} />
-          ))}
+          {gatewayState.relayJobs.length === 0 ? (
+            <Text style={{ color: Colors.textMuted, fontSize: 12, textAlign: 'center', padding: 12 }}>
+              Aucune activité pour l'instant
+            </Text>
+          ) : (
+            [...gatewayState.relayJobs].reverse().slice(0, 20).map((entry) => (
+              <RelayLogItem key={entry.id} entry={entry} />
+            ))
+          )}
         </View>
       )}
     </Animated.View>
   );
 }
 
-function RelayLogItem({ entry }: { entry: GatewayRelayLogEntry }) {
+function RelayLogItem({ entry }: { entry: GatewayRelayJob }) {
   const typeColorMap: Record<string, string> = {
     tx_broadcast: Colors.accent,
     cashu_relay: Colors.cyan,
@@ -1008,6 +1014,8 @@ function RelayLogItem({ entry }: { entry: GatewayRelayLogEntry }) {
   const elapsed = Date.now() - entry.timestamp;
   const minutes = Math.floor(elapsed / 60000);
   const timeLabel = minutes < 60 ? `${minutes}m ago` : `${Math.floor(minutes / 60)}h ago`;
+  const detail = entry.result || entry.error || entry.payload?.slice(0, 60) || '—';
+  const bytesRelayed = entry.payload?.length ?? 0;
 
   return (
     <View style={styles.relayLogItem}>
@@ -1020,9 +1028,9 @@ function RelayLogItem({ entry }: { entry: GatewayRelayLogEntry }) {
           {statusIcon}
           <Text style={styles.relayLogTime}>{timeLabel}</Text>
         </View>
-        <Text style={styles.relayLogDetail} numberOfLines={2}>{entry.detail}</Text>
+        <Text style={styles.relayLogDetail} numberOfLines={2}>{detail}</Text>
         <Text style={styles.relayLogMeta}>
-          From: {entry.sourceNodeId} · {entry.bytesRelayed}B
+          From: {entry.sourceNodeId} · {bytesRelayed}B
         </Text>
       </View>
     </View>
