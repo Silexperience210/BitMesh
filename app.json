@@ -2,7 +2,7 @@
   "expo": {
     "name": "MeshPay: LoRa Messaging & BTC",
     "slug": "meshpay-lora-messaging-btc",
-    "version": "1.0.1",
+    "version": "1.0.3",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "rork-app",
@@ -80,7 +80,7 @@
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD"
     },
-    "runtimeVersion": "1.0.1",
+    "runtimeVersion": "1.0.3",
     "experiments": {
       "typedRoutes": true
     },
