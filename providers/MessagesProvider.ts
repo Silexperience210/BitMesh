@@ -66,6 +66,9 @@ import {
 // Import Cashu validation
 import { verifyCashuToken, generateTokenId } from '@/utils/cashu';
 import { getChunkManager, validateMessageSize } from '@/services/ChunkManager';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+const JOINED_FORUMS_KEY = 'bitmesh:joined_forums_v1';
 
 // Format du message sur le réseau MQTT
 interface WireMessage {
@@ -136,6 +139,15 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const statePollerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // ✅ NOUVEAU : Forums découverts
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
+  // FIX #1: Deduplication — Set des IDs de messages récents (max 200)
+  const recentMsgIds = useRef<Set<string>>(new Set());
+  const addToDedup = (id: string) => {
+    recentMsgIds.current.add(id);
+    if (recentMsgIds.current.size > 200) {
+      // Supprimer le plus ancien (premier inséré)
+      recentMsgIds.current.delete(recentMsgIds.current.values().next().value as string);
+    }
+  };
 
   // Dériver l'identité dès que le wallet est disponible
   useEffect(() => {
@@ -552,6 +564,18 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     });
   }, []);
 
+  // FIX #4: Charger les forums persistés au démarrage
+  useEffect(() => {
+    AsyncStorage.getItem(JOINED_FORUMS_KEY).then(raw => {
+      if (!raw) return;
+      try {
+        const saved: string[] = JSON.parse(raw);
+        saved.forEach(ch => joinedForums.current.add(ch));
+        console.log('[Forums] Forums persistés chargés:', saved);
+      } catch { /* ignore */ }
+    });
+  }, []);
+
   // Demander la permission GPS et tracker notre position
   useEffect(() => {
     let subscription: Location.LocationSubscription | null = null;
@@ -647,6 +671,9 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     try {
       const wire = JSON.parse(payloadStr) as WireMessage;
       if (wire.from === identity.nodeId) return; // ignorer nos propres messages
+      // FIX #1: Deduplication
+      if (wire.id && recentMsgIds.current.has(wire.id)) { console.log('[Messages] DM dupliqué ignoré:', wire.id); return; }
+      if (wire.id) addToDedup(wire.id);
 
       // ✅ NOUVEAU : Vérifier que le nodeId correspond à la clé publique
       if (wire.from && wire.fromPubkey) {
@@ -812,6 +839,9 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         console.log('[MeshRouter] Message invalide ignoré');
         return;
       }
+      // FIX #1: Deduplication route
+      if (meshMsg.msgId && recentMsgIds.current.has(meshMsg.msgId)) { console.log('[MeshRouter] Message dupliqué ignoré:', meshMsg.msgId); return; }
+      if (meshMsg.msgId) addToDedup(meshMsg.msgId);
 
       // Traiter via MeshRouter (deliver/relay/drop)
       const action = meshRouterRef.current.processIncomingMessage(meshMsg);
@@ -939,6 +969,10 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     try {
       const wire = JSON.parse(payloadStr) as WireMessage;
       const convId = `forum:${channelName}`;
+
+      // FIX #1: Deduplication forum
+      if (wire.id && recentMsgIds.current.has(wire.id)) { console.log('[Messages] Forum msg dupliqué ignoré:', wire.id); return; }
+      if (wire.id) addToDedup(wire.id);
 
       // ✅ NOUVEAU : Vérifier que le nodeId correspond à la clé publique
       if (wire.from && wire.fromPubkey) {
@@ -1540,7 +1574,22 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     peerName?: string
   ): Promise<void> => {
     const existing = conversations.find(c => c.id === peerNodeId);
-    if (existing) return;
+    if (existing) {
+      // FIX #3: Si la conv existe mais sans pubkey, tenter une résolution
+      if (!existing.peerPubkey && mqttRef.current?.state === 'connected') {
+        fetchPeerPubkey(mqttRef.current, peerNodeId, (pubkeyHex) => {
+          if (!pubkeyHex) return;
+          setConversations(prev => prev.map(c => {
+            if (c.id !== peerNodeId || c.peerPubkey) return c;
+            const updated = { ...c, peerPubkey: pubkeyHex };
+            saveConversation(updated).catch(() => {});
+            return updated;
+          }));
+          console.log('[Messages] Pubkey résolue proactivement pour:', peerNodeId);
+        });
+      }
+      return;
+    }
 
     const conv: StoredConversation = {
       id: peerNodeId,
@@ -1551,7 +1600,6 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       unreadCount: 0,
       online: false,
     };
-    // ✅ CORRECTION: try/catch pour saveConversation
     try {
       await saveConversation(conv);
       setConversations(prev => [conv, ...prev]);
@@ -1560,12 +1608,28 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       console.error('[Messages] Erreur démarrage conversation:', err);
       throw err;
     }
+
+    // FIX #3: Résolution proactive de la pubkey dès la création
+    if (mqttRef.current?.state === 'connected') {
+      fetchPeerPubkey(mqttRef.current, peerNodeId, (pubkeyHex) => {
+        if (!pubkeyHex) return;
+        setConversations(prev => prev.map(c => {
+          if (c.id !== peerNodeId || c.peerPubkey) return c;
+          const updated = { ...c, peerPubkey: pubkeyHex };
+          saveConversation(updated).catch(() => {});
+          return updated;
+        }));
+        console.log('[Messages] Pubkey résolue proactivement pour:', peerNodeId);
+      });
+    }
   }, [conversations]);
 
   // Rejoindre un forum
   const joinForum = useCallback(async (channelName: string, description?: string): Promise<void> => {
     const convId = `forum:${channelName}`;
     joinedForums.current.add(channelName);
+    // FIX #4: Persister la liste des forums rejoints
+    AsyncStorage.setItem(JOINED_FORUMS_KEY, JSON.stringify([...joinedForums.current])).catch(() => {});
 
     if (mqttRef.current?.state === 'connected') {
       joinForumChannel(mqttRef.current, channelName, handleIncomingForum(channelName));
@@ -1636,6 +1700,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   // Quitter un forum
   const leaveForum = useCallback((channelName: string): void => {
     joinedForums.current.delete(channelName);
+    // FIX #4: Persister la liste mise à jour
+    AsyncStorage.setItem(JOINED_FORUMS_KEY, JSON.stringify([...joinedForums.current])).catch(() => {});
     if (mqttRef.current) {
       leaveForumChannel(mqttRef.current, channelName);
     }

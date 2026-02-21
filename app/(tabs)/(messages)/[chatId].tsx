@@ -323,7 +323,7 @@ export default function ChatScreen() {
   const { chatId } = useLocalSearchParams<{ chatId: string }>();
   const convId = decodeURIComponent(chatId ?? '');
   const { settings, isLoRaMode } = useAppSettings();
-  const { conversations, messagesByConv, sendMessage, sendAudio, sendImage, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage, contacts } = useMessages();
+  const { conversations, messagesByConv, sendMessage, sendAudio, sendImage, sendCashu, loadConversationMessages, markRead, mqttState, deleteMessage, contacts, startConversation } = useMessages();
   const ble = useBle();
 
   const conv = conversations.find(c => c.id === convId);
@@ -355,6 +355,10 @@ export default function ChatScreen() {
   useEffect(() => {
     loadConversationMessages(convId);
     markRead(convId);
+    // FIX #3: Résolution proactive pubkey si DM sans pubkey connue
+    if (!convId.startsWith('forum:')) {
+      startConversation(convId).catch(() => {});
+    }
   }, [convId]);
 
   // Scroll vers le bas à chaque nouveau message

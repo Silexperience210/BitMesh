@@ -53,9 +53,11 @@ export function createMeshMqttClient(
   };
 
   const options: IClientOptions = {
-    clientId: `meshcore-${nodeId}-${Date.now().toString(36)}`,
+    // FIX #2: clientId stable (sans timestamp) + clean:false pour récupérer
+    // les messages QoS 1 manqués pendant une déconnexion
+    clientId: `meshcore-${nodeId}`,
     keepalive: 60,
-    clean: true,
+    clean: false,
     reconnectPeriod: 3000,
     connectTimeout: 10000,
     will: {
@@ -77,6 +79,8 @@ export function createMeshMqttClient(
     client.on('connect', () => {
       console.log('[MQTT] Connecté! nodeId:', nodeId);
       instance.state = 'connected';
+      // FIX #5: Envoyer les messages en attente dès la (re)connexion
+      setTimeout(() => flushMqttQueue(instance), 500);
 
       // Annoncer présence avec pubkey (retained pour que les pairs voient notre clé)
       client.publish(
@@ -140,7 +144,23 @@ export function createMeshMqttClient(
   return instance;
 }
 
-// Publier un message
+// FIX #5: Queue offline — messages en attente si MQTT déconnecté
+export interface QueuedMessage { topic: string; payload: string; qos: 0 | 1; retain: boolean; }
+const MQTT_QUEUE_MAX = 50;
+const mqttOfflineQueues = new Map<string, QueuedMessage[]>();
+
+export function flushMqttQueue(instance: MeshMqttClient): void {
+  const queue = mqttOfflineQueues.get(instance.nodeId) ?? [];
+  if (queue.length === 0) return;
+  console.log(`[MQTT] Flush queue offline: ${queue.length} messages`);
+  const toSend = [...queue];
+  mqttOfflineQueues.set(instance.nodeId, []);
+  for (const msg of toSend) {
+    instance.client?.publish(msg.topic, msg.payload, { qos: msg.qos, retain: msg.retain });
+  }
+}
+
+// Publier un message (avec queue offline si déconnecté)
 export function publishMesh(
   instance: MeshMqttClient,
   topic: string,
@@ -149,7 +169,19 @@ export function publishMesh(
   retain = false
 ): void {
   if (!instance.client || instance.state !== 'connected') {
-    console.log('[MQTT] Impossible de publier — non connecté, state:', instance.state);
+    // FIX #5: Mettre en queue si QoS 1 (messages importants seulement)
+    if (qos === 1) {
+      const queue = mqttOfflineQueues.get(instance.nodeId) ?? [];
+      if (queue.length < MQTT_QUEUE_MAX) {
+        queue.push({ topic, payload, qos, retain });
+        mqttOfflineQueues.set(instance.nodeId, queue);
+        console.log(`[MQTT] Message mis en queue offline (${queue.length}/${MQTT_QUEUE_MAX}):`, topic);
+      } else {
+        console.log('[MQTT] Queue offline pleine — message ignoré:', topic);
+      }
+    } else {
+      console.log('[MQTT] Impossible de publier QoS 0 — non connecté, state:', instance.state);
+    }
     return;
   }
   instance.client.publish(topic, payload, { qos, retain }, (err) => {
