@@ -80,7 +80,7 @@
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD"
     },
-    "runtimeVersion": "1.0.3",
+    "runtimeVersion": "1.0.1",
     "experiments": {
       "typedRoutes": true
     },
