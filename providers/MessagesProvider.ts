@@ -1014,37 +1014,43 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const client = createMeshMqttClient(identity.nodeId, identity.pubkeyHex);
     mqttRef.current = client;
 
-    // ✅ CORRECTION: Polling moins fréquent (2s au lieu de 500ms)
+    // FIX: Fonction de setup des subscriptions (appelée à chaque reconnexion)
+    const setupSubscriptions = () => {
+      subscribeMesh(client, TOPICS.dm(identity.nodeId), handleIncomingDM, 1);
+      subscribeMesh(client, TOPICS.route(identity.nodeId), handleIncomingRouteMessage, 0);
+      subscribePattern(client, 'meshcore/identity/+', handlePeerPresence, 0);
+      subscribeForumAnnouncements(client, handleForumAnnouncement);
+      const pos = myLocationRef.current;
+      updatePresence(client, identity.nodeId, identity.pubkeyHex, pos?.lat, pos?.lng);
+      joinedForums.current.forEach(ch => {
+        joinForumChannel(client, ch, handleIncomingForum(ch));
+      });
+    };
+
+    // FIX: Utiliser l'événement 'connect' du client MQTT.js directement
+    // → Se déclenche à CHAQUE connexion (initiale ET reconnexions)
+    // → subscribeMesh a maintenant une protection anti-doublons
+    client.client?.on('connect', () => {
+      console.log('[Messages] MQTT (re)connecté — setup subscriptions');
+      setMqttState('connected');
+      setupSubscriptions();
+    });
+
+    client.client?.on('disconnect', () => setMqttState('disconnected'));
+    client.client?.on('offline', () => setMqttState('disconnected'));
+    client.client?.on('error', () => setMqttState('error'));
+    client.client?.on('reconnect', () => setMqttState('connecting'));
+
+    // Polling léger uniquement pour détecter la connexion initiale si l'événement arrive avant l'enregistrement
     const statePoller = setInterval(() => {
-      if (mqttRef.current) {
-        const s = mqttRef.current.state;
-        setMqttState(s);
-        if (s === 'connected') {
-          // S'abonner aux DMs une fois connecté
-          subscribeMesh(client, TOPICS.dm(identity.nodeId), handleIncomingDM, 1);
-          // S'abonner aux messages routés multi-hop
-          subscribeMesh(client, TOPICS.route(identity.nodeId), handleIncomingRouteMessage, 0);
-          // S'abonner aux présences de tous les pairs (wildcard)
-          subscribePattern(client, 'meshcore/identity/+', handlePeerPresence, 0);
-          // ✅ NOUVEAU : S'abonner aux annonces de forums
-          subscribeForumAnnouncements(client, handleForumAnnouncement);
-          // Publier notre présence avec GPS si disponible
-          const pos = myLocationRef.current;
-          updatePresence(client, identity.nodeId, identity.pubkeyHex, pos?.lat, pos?.lng);
-          // Rejoindre les forums déjà enregistrés
-          joinedForums.current.forEach(ch => {
-            joinForumChannel(client, ch, handleIncomingForum(ch));
-          });
-          clearInterval(statePoller);
-          statePollerRef.current = null; // FIX: nettoyer la référence
-        } else if (s === 'error' || s === 'disconnected') {
-          console.log('[Messages] Connexion MQTT échouée ou perdue:', s);
-          clearInterval(statePoller);
-          statePollerRef.current = null;
-        }
+      if (!mqttRef.current) { clearInterval(statePoller); statePollerRef.current = null; return; }
+      const s = mqttRef.current.state;
+      setMqttState(s);
+      if (s !== 'connecting') {
+        clearInterval(statePoller);
+        statePollerRef.current = null;
       }
-    }, 2000);
-    // FIX: Stocker la référence pour permettre le cleanup en cas de démontage
+    }, 1000);
     statePollerRef.current = statePoller;
   }, [identity, handleIncomingDM, handleIncomingForum, handleIncomingRouteMessage, handlePeerPresence, handleForumAnnouncement]);
 

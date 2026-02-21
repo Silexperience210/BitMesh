@@ -488,6 +488,14 @@ export default function ChatScreen() {
   }, [convId, sendAudio]);
 
   const handleMicPressIn = useCallback(async () => {
+    // FIX: Vérifier MQTT AVANT l'enregistrement pour éviter d'enregistrer pour rien
+    if (mqttState !== 'connected') {
+      Alert.alert(
+        'Connexion requise',
+        'Les messages vocaux nécessitent une connexion Internet (MQTT).\nVérifiez votre connexion et réessayez.'
+      );
+      return;
+    }
     const granted = await requestAudioPermissions();
     if (!granted) {
       Alert.alert('Permission requise', 'L\'accès au microphone est nécessaire pour envoyer des messages vocaux.');

@@ -167,7 +167,10 @@ export function subscribeMesh(
   if (!instance.handlers.has(topic)) {
     instance.handlers.set(topic, []);
   }
-  instance.handlers.get(topic)!.push(handler);
+  // FIX: Éviter les handlers dupliqués (important lors de la reconnexion)
+  const existing = instance.handlers.get(topic)!;
+  if (existing.includes(handler)) return;
+  existing.push(handler);
 
   if (instance.client && instance.state === 'connected') {
     instance.client.subscribe(topic, { qos }, (err) => {
@@ -242,7 +245,16 @@ export function subscribePattern(
   if (!instance.patternHandlers.has(pattern)) {
     instance.patternHandlers.set(pattern, []);
   }
-  instance.patternHandlers.get(pattern)!.push(handler);
+  // FIX: Éviter les handlers dupliqués (reconnexion)
+  const existing = instance.patternHandlers.get(pattern)!;
+  if (existing.includes(handler)) {
+    // Handler déjà enregistré, juste re-subscribe au broker si connecté
+    if (instance.client && instance.state === 'connected') {
+      instance.client.subscribe(pattern, { qos });
+    }
+    return;
+  }
+  existing.push(handler);
 
   if (instance.client && instance.state === 'connected') {
     instance.client.subscribe(pattern, { qos }, (err) => {
