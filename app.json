@@ -28,13 +28,14 @@
       },
       "package": "app.rork.meshpay_lora_messaging_btc",
       "permissions": [
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "BLUETOOTH",
-        "BLUETOOTH_ADMIN",
-        "BLUETOOTH_SCAN",
-        "BLUETOOTH_CONNECT",
-        "INTERNET"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.INTERNET",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "web": {
@@ -74,21 +75,23 @@
       ]
     ],
     "updates": {
-      "url": "https://u.expo.dev/c0df5ac6-4941-43b2-bafb-bbbb2bb9b3ad",
+      "url": "https://u.expo.dev/d3863e7f-06e3-4670-9545-60471cc35e76",
       "enabled": true,
       "fallbackToCacheTimeout": 0,
       "checkAutomatically": "ON_LOAD"
     },
-    "runtimeVersion": {
-      "policy": "appVersion"
-    },
+    "runtimeVersion": "1.0.1",
     "experiments": {
       "typedRoutes": true
     },
     "extra": {
+      "router": {
+        "origin": "https://rork.com/"
+      },
       "eas": {
-        "projectId": "c0df5ac6-4941-43b2-bafb-bbbb2bb9b3ad"
+        "projectId": "d3863e7f-06e3-4670-9545-60471cc35e76"
       }
-    }
+    },
+    "owner": "silexperience"
   }
 }
