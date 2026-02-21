@@ -521,7 +521,7 @@ export default function ChatScreen() {
     } catch {
       Alert.alert('Erreur', 'Impossible de démarrer l\'enregistrement.');
     }
-  }, [handleMicPressOut]);
+  }, [handleMicPressOut, mqttState]);
 
   const renderMessage = useCallback(
     ({ item }: { item: StoredMessage }) => (

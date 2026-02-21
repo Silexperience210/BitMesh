@@ -408,8 +408,8 @@ function GatewayStatusBanner() {
 
   if (!gatewayState.isActive) return null;
 
-  const stats = mockGatewayStats;
-  const recentJobs = mockGatewayRelayLog.slice(0, 3);
+  const stats = gatewayState.stats;
+  const recentJobs = gatewayState.relayJobs.slice(0, 3);
   const glowOpacity = pulseAnim.interpolate({
     inputRange: [0, 1],
     outputRange: [0.3, 0.8],
