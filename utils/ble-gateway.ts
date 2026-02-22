@@ -176,13 +176,16 @@ export class BleGatewayClient {
 
   // ── Connect ───────────────────────────────────────────────
 
-  async connect(deviceId: string): Promise<void> {
+  async connect(deviceId: string, timeoutMs = 10000): Promise<void> {
     console.log(`[BleGateway] Connecting to ${deviceId}...`);
 
-    this.device = await this.manager.connectToDevice(deviceId, {
-      autoConnect: true,
-      requestMTU: 512,
-    });
+    // autoConnect:false = connexion directe avec timeout (autoConnect:true peut bloquer indéfiniment)
+    this.device = await Promise.race([
+      this.manager.connectToDevice(deviceId, { autoConnect: false, requestMTU: 512 }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Connection timeout — device not reachable')), timeoutMs)
+      ),
+    ]);
     console.log(`[BleGateway] Connected to "${this.device.name}"`);
 
     await this.device.discoverAllServicesAndCharacteristics();
