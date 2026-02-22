@@ -165,11 +165,29 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Scanne les gateways BLE disponibles
+   * Scanne les gateways BLE disponibles.
+   * Si le client n'est pas encore initialisé (BT était off au démarrage),
+   * on re-tente l'initialisation avant de lancer le scan.
    */
   const scanForGateways = async () => {
+    // Re-init si le client n'est pas prêt (BT off au démarrage, permissions tardives…)
     if (!clientRef.current) {
-      throw new Error('BLE not initialized');
+      try {
+        if (Platform.OS === 'android') {
+          await requestAndroidPermissions();
+        }
+        const client = getBleGatewayClient();
+        await client.initialize();
+        clientRef.current = client;
+        client.onDeviceInfo((info) => {
+          setState((prev) => ({ ...prev, deviceInfo: info }));
+        });
+        setState((prev) => ({ ...prev, error: null }));
+      } catch (initErr: any) {
+        const msg = initErr.message || 'Bluetooth non disponible';
+        setState((prev) => ({ ...prev, error: msg }));
+        throw new Error(msg);
+      }
     }
 
     setState((prev) => ({ ...prev, scanning: true, availableDevices: [], error: null }));
@@ -195,6 +213,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         scanning: false,
         error: error.message || 'Scan failed',
       }));
+      throw error;
     }
   };
 

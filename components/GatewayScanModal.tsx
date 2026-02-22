@@ -11,6 +11,7 @@ import {
   TouchableOpacity,
   FlatList,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { Bluetooth, X, Wifi, CheckCircle2 } from 'lucide-react-native';
 import Colors from '@/constants/colors';
@@ -23,14 +24,18 @@ interface GatewayScanModalProps {
 }
 
 export default function GatewayScanModal({ visible, onClose }: GatewayScanModalProps) {
-  const { scanning, availableDevices, connected, device, scanForGateways, connectToGateway } =
+  const { scanning, availableDevices, connected, device, error, scanForGateways, connectToGateway } =
     useBle();
 
   const handleScan = async () => {
     try {
       await scanForGateways();
-    } catch (error) {
-      console.error('Scan error:', error);
+    } catch (err: any) {
+      Alert.alert(
+        'Scan impossible',
+        err.message || 'Vérifiez que le Bluetooth est activé et les permissions accordées.',
+        [{ text: 'OK' }]
+      );
     }
   };
 
@@ -86,6 +91,13 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
               </>
             )}
           </TouchableOpacity>
+
+          {/* Erreur BLE */}
+          {error && !scanning && (
+            <View style={styles.errorBanner}>
+              <Text style={styles.errorText}>⚠ {error}</Text>
+            </View>
+          )}
 
           {/* Liste des devices */}
           <View style={styles.listContainer}>
@@ -210,6 +222,20 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.background,
+  },
+  errorBanner: {
+    backgroundColor: `${Colors.red}20`,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: `${Colors.red}40`,
+  },
+  errorText: {
+    color: Colors.red,
+    fontSize: 13,
+    fontWeight: '600',
   },
   listContainer: {
     flex: 1,
