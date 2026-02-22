@@ -1021,8 +1021,9 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       try {
         plaintext = decryptForum(wire.enc, channelName);
       } catch {
-        // Forum public sans chiffrement (rétrocompat)
-        plaintext = wire.enc as unknown as string;
+        // Déchiffrement impossible — ignorer le message
+        console.warn('[Forum] Message non déchiffrable, ignoré');
+        return;
       }
 
       const isMine = wire.from === identity.nodeId;

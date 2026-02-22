@@ -10,7 +10,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice } from '@/utils/ble-gateway';
+import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice, BleDeviceInfo } from '@/utils/ble-gateway';
 import { type MeshCorePacket } from '@/utils/meshcore-protocol';
 import { getMessageRetryService } from '@/services/MessageRetryService';
 import { getBackgroundBleService } from '@/services/BackgroundBleService';
@@ -21,6 +21,7 @@ interface BleState {
   connected: boolean;
   loraActive: boolean;  // true = au moins un paquet LoRa reçu/envoyé avec succès
   device: BleGatewayDevice | null;
+  deviceInfo: BleDeviceInfo | null;  // Infos parsées depuis SelfInfo (AppStart response)
   scanning: boolean;
   availableDevices: BleGatewayDevice[];
   error: string | null;
@@ -50,6 +51,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     connected: false,
     loraActive: false,
     device: null,
+    deviceInfo: null,
     scanning: false,
     availableDevices: [],
     error: null,
@@ -70,6 +72,10 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         const client = getBleGatewayClient();
         await client.initialize();
         clientRef.current = client;
+
+        client.onDeviceInfo((info) => {
+          setState((prev) => ({ ...prev, deviceInfo: info }));
+        });
 
         console.log('[BleProvider] BLE initialized');
 

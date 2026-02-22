@@ -30,7 +30,8 @@ import {
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
-import { meshStats, mockGatewayStats, mockGatewayRelayLog } from '@/mocks/data';
+import { meshStats } from '@/mocks/data';
+import { type BleDeviceInfo } from '@/utils/ble-gateway';
 import { useMessages } from '@/providers/MessagesProvider';
 import { useRouter } from 'expo-router';
 import { type RadarPeer, formatDistance } from '@/utils/radar';
@@ -47,6 +48,14 @@ import { useUsbSerial } from '@/providers/UsbSerialProvider';
 
 type ViewMode = 'radar' | 'list';
 type FilterMode = 'all' | 'online';
+
+function formatFreq(hz: number): string {
+  return hz >= 1_000_000 ? `${(hz / 1_000_000).toFixed(1)} MHz` : `${hz} Hz`;
+}
+
+function formatBw(hz: number): string {
+  return hz >= 1000 ? `${hz / 1000} kHz` : `${hz} Hz`;
+}
 
 function ScanButton({ isScanning, onPress }: { isScanning: boolean; onPress: () => void }) {
   const rotateAnim = useRef(new Animated.Value(0)).current;
@@ -88,8 +97,9 @@ function ScanButton({ isScanning, onPress }: { isScanning: boolean; onPress: () 
 }
 
 
-function StatsRow({ peers, mqttConnected }: { peers: RadarPeer[]; mqttConnected: boolean }) {
+function StatsRow({ peers, mqttConnected, deviceInfo }: { peers: RadarPeer[]; mqttConnected: boolean; deviceInfo: BleDeviceInfo | null }) {
   const onlineCount = peers.filter(p => p.online).length;
+  const freqLabel = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : meshStats.frequency;
 
   return (
     <View style={styles.statsRow}>
@@ -112,34 +122,39 @@ function StatsRow({ peers, mqttConnected }: { peers: RadarPeer[]; mqttConnected:
       </View>
       <View style={styles.statChip}>
         <View style={[styles.statDot, { backgroundColor: Colors.textMuted }]} />
-        <Text style={styles.statChipValue}>{meshStats.frequency}</Text>
+        <Text style={styles.statChipValue}>{freqLabel}</Text>
         <Text style={styles.statChipLabel}>Freq</Text>
       </View>
     </View>
   );
 }
 
-function RadioBand() {
+function RadioBand({ deviceInfo }: { deviceInfo: BleDeviceInfo | null }) {
+  const freq = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : meshStats.frequency;
+  const sf   = deviceInfo ? `SF${deviceInfo.radioSf}` : meshStats.spreadFactor;
+  const bw   = deviceInfo ? formatBw(deviceInfo.radioBwHz) : meshStats.bandwidth;
+  const tx   = deviceInfo ? `${deviceInfo.txPower} dBm` : meshStats.txPower;
+
   return (
     <View style={styles.radioBand}>
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>FREQ</Text>
-        <Text style={styles.radioValue}>{meshStats.frequency}</Text>
+        <Text style={styles.radioValue}>{freq}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>SF</Text>
-        <Text style={styles.radioValue}>{meshStats.spreadFactor}</Text>
+        <Text style={styles.radioValue}>{sf}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>BW</Text>
-        <Text style={styles.radioValue}>{meshStats.bandwidth}</Text>
+        <Text style={styles.radioValue}>{bw}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>TX</Text>
-        <Text style={styles.radioValue}>{meshStats.txPower}</Text>
+        <Text style={styles.radioValue}>{tx}</Text>
       </View>
     </View>
   );
@@ -581,7 +596,7 @@ export default function MeshScreen() {
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity } = useMessages();
-  const { connected: bleConnected, device: bleDevice } = useBle();
+  const { connected: bleConnected, device: bleDevice, deviceInfo } = useBle();
 
   const filteredPeers = useMemo(() => {
     switch (filter) {
@@ -635,8 +650,8 @@ export default function MeshScreen() {
 
       {!isInternetOnly && (
         <>
-          <StatsRow peers={radarPeers} mqttConnected={mqttState === 'connected'} />
-          <RadioBand />
+          <StatsRow peers={radarPeers} mqttConnected={mqttState === 'connected'} deviceInfo={deviceInfo} />
+          <RadioBand deviceInfo={deviceInfo} />
         </>
       )}
 
