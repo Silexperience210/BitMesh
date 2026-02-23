@@ -197,12 +197,14 @@ export class BleGatewayClient {
       }
     );
 
-    // Scan sans filtre UUID (plus fiable sur Android)
+    // Scan sans filtre UUID, mode agressif pour Android 12+
     await BleManager.scan({
       serviceUUIDs: [],
       seconds: timeoutMs / 1000,
       allowDuplicates: false,
-    });
+      scanMode: 2,   // SCAN_MODE_LOW_LATENCY — le plus rapide
+      matchMode: 1,  // MATCH_MODE_AGGRESSIVE — détecte les signaux faibles
+    } as any);
 
     await new Promise((res) => setTimeout(res, timeoutMs));
     await BleManager.stopScan();

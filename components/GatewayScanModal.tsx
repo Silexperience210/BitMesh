@@ -89,7 +89,7 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
           console.log('📱 TROUVÉ:', name, device.id, device.rssi);
         });
 
-      await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false });
+      await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
 
       setTimeout(() => {
         sub.remove();
