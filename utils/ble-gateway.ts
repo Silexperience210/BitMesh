@@ -176,7 +176,10 @@ export class BleGatewayClient {
     await new Promise((res) => setTimeout(res, 200));
 
     // v12 TurboModule API — plus de NativeEventEmitter
+    console.log('[BleGateway] Enregistrement du listener onDiscoverPeripheral...');
     const listener = BleManager.onDiscoverPeripheral((peripheral: any) => {
+      console.log('[BleGateway] RAW DEVICE DETECTED:', peripheral.id, peripheral.name, peripheral.rssi);
+      
       const name: string =
         peripheral.name ||
         peripheral.advertising?.localName ||
@@ -190,7 +193,7 @@ export class BleGatewayClient {
         displayName.startsWith('MeshCore-') ||
         displayName.startsWith('Whisper-');
 
-      console.log(`[BleGateway] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
+      console.log(`[BleGateway] Device trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
 
       onDeviceFound({
         id: peripheral.id,
