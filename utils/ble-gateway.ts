@@ -29,6 +29,7 @@
  */
 
 import BleManager from 'react-native-ble-manager';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 import {
   MESHCORE_BLE,
   type MeshCorePacket,
@@ -175,9 +176,10 @@ export class BleGatewayClient {
     } catch (_) {}
     await new Promise((res) => setTimeout(res, 200));
 
-    // v12 TurboModule API — plus de NativeEventEmitter
-    console.log('[BleGateway] Enregistrement du listener onDiscoverPeripheral...');
-    const listener = BleManager.onDiscoverPeripheral((peripheral: any) => {
+    // Utilisation de NativeEventEmitter (plus fiable sur Android 14+)
+    console.log('[BleGateway] Enregistrement du listener NativeEventEmitter...');
+    const emitter = new NativeEventEmitter(NativeModules.BleManager);
+    const listener = emitter.addListener('BleManagerDiscoverPeripheral', (peripheral: any) => {
       console.log('[BleGateway] RAW DEVICE DETECTED:', peripheral.id, peripheral.name, peripheral.rssi);
       
       const name: string =
@@ -268,8 +270,8 @@ export class BleGatewayClient {
     await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
     console.log('[BleGateway] Notifications TX activées (6e400003)');
 
-    // Écouter les données entrantes — v12 TurboModule API
-    const notifListener = BleManager.onDidUpdateValueForCharacteristic((data: any) => {
+    // Écouter les données entrantes — NativeEventEmitter (plus fiable)
+    const notifListener = emitter.addListener('BleManagerDidUpdateValueForCharacteristic', (data: any) => {
       if (data.peripheral !== deviceId) return;
       if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
       this.handleFrame(new Uint8Array(data.value));
@@ -277,7 +279,7 @@ export class BleGatewayClient {
     this.listeners.push(notifListener);
 
     // Écouter déconnexion
-    const discListener = BleManager.onDisconnectPeripheral((data: any) => {
+    const discListener = emitter.addListener('BleManagerDisconnectPeripheral', (data: any) => {
       if (data.peripheral === deviceId) {
         console.log('[BleGateway] Device déconnecté');
         this.connectedId = null;
