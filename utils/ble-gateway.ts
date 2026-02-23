@@ -152,8 +152,12 @@ export class BleGatewayClient {
     );
 
     // Scan sans filtre UUID (plus fiable sur Android)
-    // API: scan(serviceUUIDs[], seconds, allowDuplicates, options?)
-    await BleManager.scan([], timeoutMs / 1000, false);
+    // API v12+: scan(scanningOptions: ScanOptions) — objet unique, pas args positionnels
+    await BleManager.scan({
+      serviceUUIDs: [],
+      seconds: timeoutMs / 1000,
+      allowDuplicates: false,
+    });
 
     await new Promise((res) => setTimeout(res, timeoutMs));
     await BleManager.stopScan();

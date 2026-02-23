@@ -47,4 +47,5 @@ node_modules
 # Android signing credentials (sensible)
 bitmesh.keystore
 credentials.json
-build_apk.ps1*.apk
+build_apk.ps1
+*.apk
