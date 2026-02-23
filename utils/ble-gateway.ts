@@ -1,29 +1,33 @@
 /**
- * BLE Gateway Client — MeshCore Companion Protocol (corrected)
+ * BLE Gateway Client — MeshCore Companion Protocol
  *
- * Source de vérité : meshcore-open (Flutter officiel) + meshcore-cli (Python)
- * https://github.com/zjs81/meshcore-open
- * https://github.com/meshcore-dev/meshcore-cli
+ * Bibliothèque : react-native-ble-manager (v12+)
+ * Avantage clé vs react-native-ble-plx : createBond() explicite +
+ * événement BleManagerBondingComplete → bonding MITM fiable.
+ *
+ * Source de vérité :
+ *   https://github.com/zjs81/meshcore-open  (Flutter officiel)
+ *   https://github.com/meshcore-dev/MeshCore/src/helpers/esp32/SerialBLEInterface.cpp
  *
  * ╔══════════════════════════════════════════════════════════════════════╗
- * ║  PROTOCOLE BLE — IMPORTANT                                          ║
- * ║  Pour BLE, chaque write/notification est UN frame complet.          ║
- * ║  PAS de framing bytes [0x3c/0x3e][len] comme en USB/Serial.         ║
- * ║  Write  → device : [cmd][payload...]                                 ║
- * ║  Notify ← device : [code][data...]                                  ║
+ * ║  PROTOCOLE BLE — Nordic UART Service (NUS)                          ║
+ * ║  Chaque write/notification = UN frame complet. Pas de framing USB.  ║
+ * ║  App → Device : [cmd][payload...]   sur 6e400002 (RX/write)         ║
+ * ║  Device → App : [code][data...]     sur 6e400003 (TX/notify)        ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  *
- * Séquence après connexion (cf. meshcore_connector.dart) :
- *   1. DeviceQuery  (cmd=22)  → respDeviceInfo (13)
- *   2. AppStart     (cmd=1)   → respSelfInfo   (5)   [public key, radio params]
- *   3. SetTime      (cmd=6)   (envoyé juste après réception SelfInfo)
- *   4. SendRawData  (cmd=25)  pour relayer les paquets BitMesh sur LoRa
- *
- * Les devices MeshCore Companion s'annoncent sous "MeshCore-XXXXXXXX"
- * (préfixe "MeshCore-" + nom du nœud ou adresse MAC).
+ * Séquence connexion (cf. meshcore_connector.dart) :
+ *   1. connect() + requestMTU(185)
+ *   2. retrieveServices()
+ *   3. createBond()  ← NOUVEAU : bonding explicite avant toute écriture
+ *   4. startNotification() sur TX (6e400003)
+ *   5. DeviceQuery  (cmd=22)
+ *   6. AppStart     (cmd=1)  → device répond SelfInfo (code=5)
+ *   7. SetTime      (cmd=6)  envoyé auto dans parseSelfInfo
  */
 
-import { BleManager, Device, State } from 'react-native-ble-plx';
+import BleManager from 'react-native-ble-manager';
+import { NativeEventEmitter, NativeModules } from 'react-native';
 import {
   MESHCORE_BLE,
   type MeshCorePacket,
@@ -31,35 +35,31 @@ import {
   decodeMeshCorePacket,
 } from './meshcore-protocol';
 
-// ── Nordic UART Service UUIDs ──────────────────────────────
-// Source : meshcore-open meshcore_connector.dart (confirmé)
+// ── Nordic UART Service UUIDs ──────────────────────────────────────────
+// Source : meshcore-open MeshCoreUuids + SerialBLEInterface.cpp (confirmés)
 const SERVICE_UUID = MESHCORE_BLE.SERVICE_UUID; // 6e400001-b5a3-f393-e0a9-e50e24dcca9e
-const TX_UUID      = MESHCORE_BLE.TX_CHAR_UUID; // 6e400002-... write (app → device)
-const RX_UUID      = MESHCORE_BLE.RX_CHAR_UUID; // 6e400003-... notify (device → app)
+const TX_UUID      = MESHCORE_BLE.TX_CHAR_UUID; // 6e400002  App → Device (WRITE)
+const RX_UUID      = MESHCORE_BLE.RX_CHAR_UUID; // 6e400003  Device → App (NOTIFY)
 
-// ── Command codes (app → device) ──────────────────────────
+// ── Command codes (App → Device) ──────────────────────────────────────
 const CMD_APP_START    = 1;   // Handshake principal
 const CMD_SET_TIME     = 6;   // Sync horloge après SelfInfo
 const CMD_DEVICE_QUERY = 22;  // Premier message (version protocole)
 const CMD_SEND_RAW     = 25;  // Broadcast raw bytes sur LoRa
 
-// ── Response / push codes (device → app) ──────────────────
+// ── Response / push codes (Device → App) ──────────────────────────────
 const RESP_OK          = 0;
-const RESP_SELF_INFO   = 5;   // Réponse à AppStart : public key, radio params, nom
-const RESP_DEVICE_INFO = 13;  // Réponse à DeviceQuery : firmware, model
-const PUSH_RAW_DATA    = 0x84; // Push non-sollicité : données LoRa reçues
+const RESP_SELF_INFO   = 5;   // Public key, radio params, nom
+const RESP_DEVICE_INFO = 13;  // Firmware/model
+const PUSH_RAW_DATA    = 0x84; // Données LoRa reçues
 
-// Protocole BLE version (envoyé dans DeviceQuery)
 const APP_PROTOCOL_VERSION = 3;
+const RAW_PUSH_HEADER_SIZE = 3; // [snr:int8][rssi:int8][reserved:uint8]
 
-// Taille de l'en-tête RawData push : [snr:int8][rssi:int8][reserved:uint8]
-const RAW_PUSH_HEADER_SIZE = 3;
+// MTU device = 172 → ATT data max = 172 - 3 = 169 bytes
+const BLE_MAX_WRITE = 169;
 
-// Device MAX_FRAME_SIZE = 172. MTU négocié = min(requestMTU, 172).
-// Max ATT data = MTU - 3 overhead = 172 - 3 = 169 bytes.
-const BLE_CHUNK_SIZE = 169;
-
-// ── Interfaces publiques ───────────────────────────────────
+// ── Types publics ──────────────────────────────────────────────────────
 
 export interface BleGatewayDevice {
   id: string;
@@ -77,233 +77,284 @@ export interface BleGatewayState {
 
 export interface BleDeviceInfo {
   name: string;
-  publicKey: string;   // hex string 64 chars (32 bytes)
+  publicKey: string;   // hex 64 chars (32 bytes)
   txPower: number;     // dBm
-  radioFreqHz: number; // Hz, ex: 868000000
-  radioBwHz: number;   // Hz, ex: 125000
-  radioSf: number;     // ex: 12
-  radioCr: number;     // ex: 5
-  advLat: number;      // degrés
-  advLon: number;      // degrés
+  radioFreqHz: number; // Hz
+  radioBwHz: number;   // Hz
+  radioSf: number;
+  radioCr: number;
+  advLat: number;
+  advLon: number;
 }
 
 type MessageHandler = (packet: MeshCorePacket) => void;
 
-// ── BleGatewayClient ──────────────────────────────────────
+// ── BleGatewayClient ──────────────────────────────────────────────────
 
 export class BleGatewayClient {
-  private manager: BleManager;
-  private device: Device | null = null;
+  private connectedId: string | null = null;
   private messageHandler: MessageHandler | null = null;
   private deviceInfo: BleDeviceInfo | null = null;
   private deviceInfoCallback: ((info: BleDeviceInfo) => void) | null = null;
+  private listeners: ReturnType<NativeEventEmitter['addListener']>[] = [];
+  private emitter: NativeEventEmitter;
 
   constructor() {
-    this.manager = new BleManager();
+    this.emitter = new NativeEventEmitter(NativeModules.BleManager);
   }
 
-  // ── Initialization ──────────────────────────────────────
+  // ── Initialisation ────────────────────────────────────────────────
 
   async initialize(): Promise<void> {
-    const state = await this.manager.state();
-    console.log('[BleGateway] BLE state:', state);
-    if (state !== State.PoweredOn) {
-      throw new Error('Bluetooth is not enabled');
-    }
+    await BleManager.start({ showAlert: false });
+    console.log('[BleGateway] BleManager démarré');
   }
 
-  // ── Scan ────────────────────────────────────────────────
+  // ── Scan ──────────────────────────────────────────────────────────
 
   /**
-   * Scan BLE actif (scanMode=LowLatency) — montre TOUS les devices.
-   *
-   * Les devices MeshCore Companion s'annoncent sous "MeshCore-XXXXXXXX".
-   * Le nom est dans le scan response packet → nécessite active scan.
-   * On montre aussi les devices sans nom (null) pour ne rien manquer.
+   * Scan BLE actif — montre TOUS les appareils (filtre par nom ensuite).
+   * meshcore-open scanne sans filtre de service UUID (plus fiable sur Android
+   * car certains firmware mettent le UUID dans le scan response, pas l'ADV).
    */
   async scanForGateways(
     onDeviceFound: (device: BleGatewayDevice) => void,
-    timeoutMs: number = 10000
+    timeoutMs = 10000
   ): Promise<void> {
-    console.log('[BleGateway] Scan actif (LowLatency, tous devices)...');
+    console.log('[BleGateway] Scan BLE actif...');
     const seen = new Set<string>();
 
-    return new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.manager.stopDeviceScan();
-        console.log(`[BleGateway] Scan terminé — ${seen.size} device(s)`);
-        resolve();
-      }, timeoutMs);
+    const listener = this.emitter.addListener(
+      'BleManagerDiscoverPeripheral',
+      (peripheral: any) => {
+        const name: string =
+          peripheral.name ||
+          peripheral.advertising?.localName ||
+          '';
 
-      this.manager.startDeviceScan(
-        null,                                    // pas de filtre UUID (Android peu fiable)
-        { allowDuplicates: false, scanMode: 2 }, // scanMode 2 = LowLatency = active scan
-        (error, device) => {
-          if (error) {
-            clearTimeout(timeout);
-            this.manager.stopDeviceScan();
-            reject(error);
-            return;
-          }
+        if (seen.has(peripheral.id) && !name) return;
+        seen.add(peripheral.id);
 
-          if (!device) return;
-          // Mise à jour si on reçoit le nom pour un device déjà vu (scan response tardif)
-          if (seen.has(device.id) && !device.name) return;
+        const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
+        const isMeshCore =
+          displayName.startsWith('MeshCore-') ||
+          displayName.startsWith('Whisper-');
 
-          seen.add(device.id);
-          const displayName = device.name || `BLE Device (${device.id.slice(0, 8)})`;
-          console.log(`[BleGateway] Trouvé: "${displayName}" (${device.id}) RSSI ${device.rssi}`);
+        console.log(`[BleGateway] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
 
-          // Identifier les Companion MeshCore par préfixe (source: meshcore-open)
-          const isMeshCore =
-            displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-');
-          const lname = displayName.toLowerCase();
-          const type: 'gateway' | 'companion' = isMeshCore
-            ? 'companion'
-            : lname.includes('gateway') || lname.includes('relay') || lname.includes('gw')
-              ? 'gateway'
-              : 'companion';
+        onDeviceFound({
+          id: peripheral.id,
+          name: displayName,
+          rssi: peripheral.rssi || -100,
+          type: isMeshCore ? 'companion' : 'gateway',
+        });
+      }
+    );
 
-          onDeviceFound({
-            id: device.id,
-            name: displayName,
-            rssi: device.rssi || -100,
-            type,
-          });
-        }
-      );
-    });
+    // Scan sans filtre UUID (plus fiable sur Android)
+    await BleManager.scan([], timeoutMs / 1000, false, {
+      scanMode: 2, // SCAN_MODE_LOW_LATENCY = active scan
+      matchMode: 1,
+      numOfMatches: 3,
+    } as any);
+
+    await new Promise((res) => setTimeout(res, timeoutMs));
+    await BleManager.stopScan();
+    listener.remove();
+    console.log(`[BleGateway] Scan terminé — ${seen.size} device(s)`);
   }
 
   stopScan(): void {
-    this.manager.stopDeviceScan();
+    BleManager.stopScan();
   }
 
-  // ── Connect ─────────────────────────────────────────────
+  // ── Connect ──────────────────────────────────────────────────────
 
   /**
-   * Connexion + handshake MeshCore Companion.
+   * Connexion + bonding explicite + handshake MeshCore.
    *
-   * Source de vérité : meshcore_connector.dart (meshcore-open Flutter officiel)
-   * https://github.com/zjs81/meshcore-open
+   * Séquence identique à meshcore_connector.dart :
+   *   connect → requestMTU → retrieveServices → createBond → startNotification
+   *   → DeviceQuery → AppStart → (SelfInfo → SetTime auto)
    *
-   * ⚠️  BONDING MITM :
-   *   Les deux caractéristiques ont PERM_*_ENC_MITM.
-   *   deviceConnected = true dans le firmware SEULEMENT après onAuthenticationComplete().
-   *
-   * ⚠️  PIÈGE CRITIQUE — monitorCharacteristicForService :
-   *   Si la souscription échoue (auth error), react-native-ble-plx ne re-tente pas.
-   *   → Après bonding, les notifications sont silencieuses (device répond mais on n'écoute plus).
-   *   → Fix : auto-retry de subscribeToRx() sur erreur auth (comme Flutter setNotifyValue x3).
-   *
-   * Séquence (identique à meshcore_connector.dart) :
-   *   1. connect(mtu=null) + requestMtu(185) séparé
-   *   2. discoverServices → trouver UART service + characteristics
-   *   3. setNotifyValue(true) sur TX char (6e400003) — avec retry auto
-   *   4. DeviceQuery (cmd=22) + AppStart (cmd=1) — avec retry bonding
-   *   5. Attendre SelfInfo (code=5) → SetTime auto dans parseSelfInfo
+   * createBond() = LA différence clé :
+   *   1. Android affiche le dialogue "Couplage avec MeshCore-XXX"
+   *   2. Utilisateur entre le PIN (défaut : 123456)
+   *   3. L'événement BleManagerBondingComplete confirme le succès
+   *   4. SEULEMENT APRÈS → on envoie les commandes
    */
   async connect(deviceId: string, timeoutMs = 60000): Promise<void> {
     console.log(`[BleGateway] Connexion à ${deviceId}...`);
 
-    // ── Étape 1 : connexion BLE link layer (timeout 15s, pas de MTU ici) ──
-    // Flutter : device.connect(timeout: 15s, mtu: null)
-    this.device = await Promise.race([
-      this.manager.connectToDevice(deviceId, { autoConnect: false }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Timeout connexion — device hors portée')), 15000)
-      ),
-    ]);
-    console.log(`[BleGateway] Connecté à "${this.device.name}"`);
+    // ── 1. Connexion BLE (link layer) ──
+    await BleManager.connect(deviceId);
+    this.connectedId = deviceId;
+    console.log('[BleGateway] Connecté');
 
-    // ── Étape 2 : MTU séparé (Flutter : requestMtu(185), ignorer erreur) ──
+    // ── 2. MTU 185 (comme meshcore-open) ──
     try {
-      await this.device.requestMTU(185);
-      console.log('[BleGateway] MTU 185 négocié');
+      const mtu = await BleManager.requestMTU(deviceId, 185);
+      console.log(`[BleGateway] MTU négocié : ${mtu}`);
     } catch {
-      console.log('[BleGateway] MTU request ignoré (device max 172)');
+      console.log('[BleGateway] MTU request ignoré');
     }
 
-    // ── Étape 3 : découverte des services ──
-    await this.device.discoverAllServicesAndCharacteristics();
-    console.log('[BleGateway] Services découverts');
-
-    // Vérifier la présence du Nordic UART Service (NUS)
-    const services = await this.device.services();
-    const hasUart = services.some(
-      (s) => s.uuid.toLowerCase() === SERVICE_UUID.toLowerCase()
+    // ── 3. Découverte des services ──
+    const services = await BleManager.retrieveServices(deviceId) as any;
+    const hasUart = (services.services as string[])?.some(
+      (s: string) => s.toLowerCase() === SERVICE_UUID.toLowerCase()
     );
     if (!hasUart) {
-      const name = this.device.name ?? deviceId;
-      await this.device.cancelConnection();
-      this.device = null;
+      await BleManager.disconnect(deviceId);
+      this.connectedId = null;
       throw new Error(
-        `"${name}" n'a pas le service Nordic UART (NUS). ` +
-        'Vérifiez que ce device tourne le firmware MeshCore Companion (variante BLE).'
+        'Service Nordic UART non trouvé. Vérifiez que c\'est bien un firmware MeshCore Companion BLE.'
       );
     }
+    console.log('[BleGateway] Nordic UART Service trouvé');
 
-    // ── Étape 4 : activer les notifications TX (6e400003) ──
-    // Flutter : setNotifyValue(true) avec 3 tentatives × 500ms
-    // CRITIQUE : si auth error → on re-tente automatiquement dans subscribeToRx().
-    // Après bonding, la souscription est réétablie automatiquement.
-    this.subscribeToRx();
+    // ── 4. Bonding EXPLICITE — c'est la clé ──────────────────────
+    // createBond() déclenche le dialogue PIN Android et attend BleManagerBondingComplete.
+    // Sans ça, les writes sur caractéristiques MITM sont rejetés silencieusement.
+    await this.createBondExplicit(deviceId, 60000);
 
-    // ── Étape 5 : DeviceQuery (cmd=22) ──
-    // Premier write → déclenche GATT_INSUFFICIENT_AUTH (133)
-    // → Android ouvre le dialogue PIN → utilisateur entre 123456
-    // → sendWithBondingRetry patiente et retente jusqu'à bonding terminé
-    await this.sendWithBondingRetry(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
+    // ── 5. Activer notifications TX (Device → App) ──
+    await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
+    console.log('[BleGateway] Notifications TX activées (6e400003)');
+
+    // Écouter les données entrantes
+    const notifListener = this.emitter.addListener(
+      'BleManagerDidUpdateValueForCharacteristic',
+      (data: any) => {
+        if (data.peripheral !== deviceId) return;
+        if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
+        // data.value = number[]
+        this.handleFrame(new Uint8Array(data.value));
+      }
+    );
+    this.listeners.push(notifListener);
+
+    // Écouter déconnexion
+    const discListener = this.emitter.addListener(
+      'BleManagerDisconnectPeripheral',
+      (data: any) => {
+        if (data.peripheral === deviceId) {
+          console.log('[BleGateway] Device déconnecté');
+          this.connectedId = null;
+        }
+      }
+    );
+    this.listeners.push(discListener);
+
+    // ── 6. DeviceQuery (cmd=22) ──
+    await this.sendFrame(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
     console.log('[BleGateway] DeviceQuery envoyé');
     await new Promise((res) => setTimeout(res, 400));
 
-    // ── Étape 6 : AppStart (cmd=1) ──
-    // Flutter : [1][appVer=1][reserved×6]["MeshCoreOpen\0"]
+    // ── 7. AppStart (cmd=1) ──
     const appName = 'BitMesh\0';
     const appNameBytes = new TextEncoder().encode(appName);
     const appStartPayload = new Uint8Array(1 + 6 + appNameBytes.length);
     appStartPayload[0] = 0x01; // app version
     // bytes 1-6 : reserved (0x00)
     appStartPayload.set(appNameBytes, 7);
-    await this.sendWithBondingRetry(CMD_APP_START, appStartPayload);
-    console.log('[BleGateway] AppStart envoyé — en attente SelfInfo (code=5)...');
+    await this.sendFrame(CMD_APP_START, appStartPayload);
+    console.log('[BleGateway] AppStart envoyé — attente SelfInfo (code=5)...');
 
-    // SelfInfo → SetTime envoyé automatiquement dans parseSelfInfo
-    // Attendre jusqu'à 5s (Flutter _waitForSelfInfo timeout = 3s × 2 essais)
+    // SetTime envoyé automatiquement dans parseSelfInfo après réception
     await new Promise((res) => setTimeout(res, 5000));
     console.log('[BleGateway] Handshake terminé');
   }
 
-  // ── Disconnect ───────────────────────────────────────────
+  // ── Bonding explicite ────────────────────────────────────────────
+
+  /**
+   * createBond() → dialogue PIN Android → BleManagerBondingComplete.
+   *
+   * Si le device est déjà bondé, createBond() peut :
+   *   - Retourner immédiatement (déjà bondé)
+   *   - Émettre BondingComplete avec status success
+   *   - Throw une erreur "already bonded" → on résout quand même
+   *
+   * timeout: 60s pour laisser le temps d'entrer le PIN.
+   */
+  private async createBondExplicit(deviceId: string, timeoutMs: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      let resolved = false;
+      const done = (err?: Error) => {
+        if (resolved) return;
+        resolved = true;
+        bondListener.remove();
+        clearTimeout(timer);
+        if (err) reject(err);
+        else resolve();
+      };
+
+      const timer = setTimeout(() => {
+        console.warn('[BleGateway] Bonding timeout (60s) — tentative de continuer...');
+        done(); // Timeout → on essaie quand même
+      }, timeoutMs);
+
+      const bondListener = this.emitter.addListener(
+        'BleManagerBondingComplete',
+        (data: any) => {
+          if (data.peripheral !== deviceId) return;
+          if (data.status === 'success') {
+            console.log('[BleGateway] Bonding réussi');
+            done();
+          } else {
+            console.warn('[BleGateway] Bonding status:', data.status);
+            done(new Error(`Bonding échoué : ${data.status}. Vérifiez le PIN (défaut : 123456).`));
+          }
+        }
+      );
+
+      console.log('[BleGateway] createBond() — entrez le PIN dans le dialogue Android...');
+      BleManager.createBond(deviceId)
+        .then(() => {
+          // createBond() resolved → peut signifier "déjà bondé" ou "bondé maintenant"
+          // On attend BleManagerBondingComplete pour confirmation, sinon timeout 3s
+          setTimeout(() => done(), 3000);
+        })
+        .catch((err: any) => {
+          const msg = String(err?.message ?? err ?? '').toLowerCase();
+          if (msg.includes('already') || msg.includes('bonded') || msg.includes('11')) {
+            console.log('[BleGateway] Device déjà bondé');
+            done();
+          } else {
+            done(new Error(msg));
+          }
+        });
+    });
+  }
+
+  // ── Disconnect ──────────────────────────────────────────────────
 
   async disconnect(): Promise<void> {
-    if (this.device) {
+    this.listeners.forEach((l) => l.remove());
+    this.listeners = [];
+    if (this.connectedId) {
       console.log('[BleGateway] Déconnexion...');
-      await this.device.cancelConnection().catch(() => {});
-      this.device = null;
-      console.log('[BleGateway] Déconnecté');
+      await BleManager.disconnect(this.connectedId).catch(() => {});
+      this.connectedId = null;
     }
   }
 
-  // ── Send BitMesh packet ──────────────────────────────────
+  // ── Envoyer paquet BitMesh ───────────────────────────────────────
 
-  /**
-   * Envoie un paquet BitMesh via LoRa (broadcast).
-   * BLE frame : [cmd=25][path_len=0][packet_bytes...]
-   */
   async sendPacket(packet: MeshCorePacket): Promise<void> {
-    if (!this.device) throw new Error('Non connecté à un device MeshCore');
+    if (!this.connectedId) throw new Error('Non connecté à un device MeshCore');
 
     const encoded = encodeMeshCorePacket(packet);
     const payload = new Uint8Array(1 + encoded.length);
     payload[0] = 0x00; // path_length = 0 (broadcast)
     payload.set(encoded, 1);
 
-    console.log(`[BleGateway] sendPacket type=${packet.type} → SendRaw (${encoded.length}B)`);
+    console.log(`[BleGateway] sendPacket type=${packet.type} (${encoded.length}B)`);
     await this.sendFrame(CMD_SEND_RAW, payload);
   }
 
-  // ── Handlers publics ─────────────────────────────────────
+  // ── Handlers publics ────────────────────────────────────────────
 
   onMessage(handler: MessageHandler): void {
     this.messageHandler = handler;
@@ -318,130 +369,57 @@ export class BleGatewayClient {
   }
 
   isConnected(): boolean {
-    return this.device !== null;
+    return this.connectedId !== null;
   }
 
   getConnectedDevice(): BleGatewayDevice | null {
-    if (!this.device) return null;
-    return {
-      id: this.device.id,
-      name: this.device.name || 'Unknown',
-      rssi: this.device.rssi || -100,
-    };
+    if (!this.connectedId) return null;
+    return { id: this.connectedId, name: 'MeshCore', rssi: -70 };
   }
 
   async destroy(): Promise<void> {
     await this.disconnect();
-    this.manager.destroy();
   }
 
-  // ── Privé : RX subscription ──────────────────────────────
-
-  /**
-   * S'abonne aux notifications BLE (TX characteristic, 6e400003).
-   *
-   * PROTOCOLE BLE : chaque notification = frame complet [code][data...]
-   * Source : meshcore_connector.dart — setNotifyValue(true) + onValueReceived.listen()
-   *
-   * ⚠️  AUTO-RETRY CRITIQUE :
-   *   Si monitorCharacteristicForService échoue avec GATT_INSUFFICIENT_AUTH (133),
-   *   c'est parce que le bonding n'est pas encore terminé.
-   *   Flutter fait 3 tentatives avec délais progressifs (500ms, 1000ms, 1500ms).
-   *   On fait pareil : on se re-souscrit automatiquement après un délai.
-   *   Sans ça, après bonding réussi, le device répond mais on n'écoute plus rien.
-   */
-  private subscribeToRx(attempt = 0): void {
-    if (!this.device) return;
-    const MAX_ATTEMPTS = 5;
-
-    this.device.monitorCharacteristicForService(
-      SERVICE_UUID,
-      RX_UUID,
-      (error, characteristic) => {
-        if (error) {
-          const msg = String(error?.reason ?? error?.message ?? error ?? '').toLowerCase();
-          const isAuthErr =
-            msg.includes('133') ||
-            msg.includes('insufficient') ||
-            msg.includes('authentication') ||
-            msg.includes('bonding') ||
-            msg.includes('encrypt') ||
-            msg.includes('15');
-
-          if (isAuthErr && attempt < MAX_ATTEMPTS) {
-            const delay = 500 + attempt * 500; // 500ms, 1s, 1.5s, 2s, 2.5s
-            console.log(
-              `[BleGateway] Auth requis pour notifications (tentative ${attempt + 1}/${MAX_ATTEMPTS}), ` +
-              `réessai dans ${delay}ms...`
-            );
-            setTimeout(() => this.subscribeToRx(attempt + 1), delay);
-          } else if (!msg.includes('cancelled') && !msg.includes('disconnected')) {
-            console.error(`[BleGateway] Erreur RX (tentative ${attempt + 1}):`, msg);
-          }
-          return;
-        }
-
-        if (!characteristic?.value) return;
-        const bytes = this.b64ToBytes(characteristic.value);
-        this.handleFrame(bytes);
-      }
-    );
-
-    if (attempt === 0) {
-      console.log('[BleGateway] Souscription notifications TX (6e400003)...');
-    }
-  }
-
-  // ── Privé : Frame handler ────────────────────────────────
+  // ── Privé : Frame handler ───────────────────────────────────────
 
   private handleFrame(data: Uint8Array): void {
     if (data.length === 0) return;
-
     const code = data[0];
     const payload = data.slice(1);
-
     console.log(`[BleGateway] Frame reçu code=0x${code.toString(16)} (${payload.length}B)`);
 
     switch (code) {
       case RESP_SELF_INFO:
         this.parseSelfInfo(payload);
         break;
-
       case RESP_DEVICE_INFO:
-        console.log('[BleGateway] DeviceInfo reçu (firmware/model)');
+        console.log('[BleGateway] DeviceInfo reçu');
         break;
-
       case RESP_OK:
-        // ACK générique (ex: après SendRawData)
         break;
-
       case PUSH_RAW_DATA:
-        // Push LoRa : [snr:int8][rssi:int8][reserved:uint8][bitMeshPacket...]
         if (payload.length > RAW_PUSH_HEADER_SIZE) {
           const snr  = (payload[0] << 24 >> 24) / 4;
           const rssi = payload[1] << 24 >> 24;
           const raw  = payload.slice(RAW_PUSH_HEADER_SIZE);
-          console.log(`[BleGateway] RawData push SNR:${snr} RSSI:${rssi} (${raw.length}B)`);
+          console.log(`[BleGateway] RawData SNR:${snr} RSSI:${rssi} (${raw.length}B)`);
           this.deliverRawPacket(raw);
         }
         break;
-
       default:
         console.log(`[BleGateway] Code non géré 0x${code.toString(16)}`);
-        break;
     }
   }
 
-  // ── Privé : SelfInfo parser ──────────────────────────────
+  // ── Privé : SelfInfo parser ─────────────────────────────────────
 
   /**
-   * Parse SelfInfo (code=5) — source : meshcore-open parseSelfInfo()
-   *
-   * Layout (little-endian) :
+   * Layout SelfInfo (code=5) — source : meshcore-open parseSelfInfo()
    *   [0]      type       (1B)
    *   [1]      txPower    (1B)
    *   [2]      maxTxPower (1B)
-   *   [3]      flags      (1B)   ← octet manquant dans notre ancienne version !
+   *   [3]      flags      (1B)
    *   [4..35]  publicKey  (32B)
    *   [36..39] advLat     (int32 LE)
    *   [40..43] advLon     (int32 LE)
@@ -450,68 +428,47 @@ export class BleGatewayClient {
    *   [52..55] radioBw    (uint32 LE, Hz)
    *   [56]     radioSf    (uint8)
    *   [57]     radioCr    (uint8)
-   *   [58+]    name       (UTF-8 C-string, null-terminated)
+   *   [58+]    name       (UTF-8, null-terminated)
    */
   private parseSelfInfo(payload: Uint8Array): void {
     if (payload.length < 58) {
-      console.warn('[BleGateway] SelfInfo trop court:', payload.length, 'bytes');
+      console.warn('[BleGateway] SelfInfo trop court:', payload.length);
       return;
     }
-
     const view = new DataView(payload.buffer, payload.byteOffset);
-    let offset = 0;
+    let off = 0;
 
-    /* type    */ offset += 1;
-    const txPower = payload[offset++];
-    /* maxTxPow */ offset += 1;
-    /* flags    */ offset += 1; // octet supplémentaire (présent dans meshcore-open)
+    /* type */      off++;
+    const txPower = payload[off++];
+    /* maxTx */     off++;
+    /* flags */     off++;
 
-    const pubkeyBytes = payload.slice(offset, offset + 32);
-    const publicKey   = Array.from(pubkeyBytes)
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    offset += 32; // → offset 36
+    const pubkeyBytes = payload.slice(off, off + 32); off += 32;
+    const publicKey   = Array.from(pubkeyBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
 
-    const advLatRaw = view.getInt32(offset, true);  offset += 4; // → 40
-    const advLonRaw = view.getInt32(offset, true);  offset += 4; // → 44
+    const advLatRaw = view.getInt32(off, true);  off += 4;
+    const advLonRaw = view.getInt32(off, true);  off += 4;
+    off += 4; // reserved+manualAddContacts
 
-    /* reserved(3) + manualAddContacts(1) */ offset += 4; // → 48
+    const radioFreqHz = view.getUint32(off, true); off += 4;
+    const radioBwHz   = view.getUint32(off, true); off += 4;
+    const radioSf     = payload[off++];
+    const radioCr     = payload[off++];
 
-    const radioFreqHz = view.getUint32(offset, true); offset += 4; // → 52
-    const radioBwHz   = view.getUint32(offset, true); offset += 4; // → 56
-    const radioSf     = payload[offset++];                          // → 57
-    const radioCr     = payload[offset++];                          // → 58
-
-    // name = C-string UTF-8 à partir de l'offset 58
-    const nameRaw = payload.slice(offset);
-    const name = new TextDecoder()
-      .decode(nameRaw)
-      .replace(/\0/g, '')
-      .trim() || this.device?.name || 'Unknown';
+    const nameRaw = payload.slice(off);
+    const name = new TextDecoder().decode(nameRaw).replace(/\0/g, '').trim() || 'MeshCore';
 
     const info: BleDeviceInfo = {
-      name, publicKey, txPower,
-      radioFreqHz, radioBwHz, radioSf, radioCr,
+      name, publicKey, txPower, radioFreqHz, radioBwHz, radioSf, radioCr,
       advLat: advLatRaw / 1e7,
       advLon: advLonRaw / 1e7,
     };
-
     this.deviceInfo = info;
-    console.log('[BleGateway] SelfInfo reçu:', {
-      name: info.name,
-      pubkey: info.publicKey.slice(0, 16) + '...',
-      freq: info.radioFreqHz,
-      sf: info.radioSf,
-      txPower: info.txPower,
-    });
+    console.log('[BleGateway] SelfInfo:', { name, freq: radioFreqHz, sf: radioSf, txPower });
 
-    if (this.deviceInfoCallback) {
-      this.deviceInfoCallback(info);
-    }
+    if (this.deviceInfoCallback) this.deviceInfoCallback(info);
 
-    // ── Étape 3 : SetTime (cmd=6) ──────────────────────────
-    // Obligatoire après SelfInfo (cf. meshcore_connector.dart)
-    // Format : [timestamp: uint32 LE]
+    // SetTime (cmd=6) — obligatoire après SelfInfo
     const ts = Math.floor(Date.now() / 1000);
     const timeBuf = new Uint8Array(4);
     new DataView(timeBuf.buffer).setUint32(0, ts, true);
@@ -530,105 +487,34 @@ export class BleGatewayClient {
     }
   }
 
-  // ── Privé : BLE write ────────────────────────────────────
+  // ── Privé : BLE write ───────────────────────────────────────────
 
   /**
-   * sendWithBondingRetry — write avec gestion du bonding Android.
-   *
-   * Le firmware exige ESP_LE_AUTH_REQ_SC_MITM_BOND sur les deux caractéristiques.
-   * Quand l'app tente d'écrire sans être bondée :
-   *   • L'ESP32 renvoie GATT_INSUFFICIENT_AUTHENTICATION
-   *   • Android détecte ce code et ouvre automatiquement le dialogue de couplage
-   *   • L'utilisateur entre le PIN (défaut 123456)
-   *   • Le bonding se termine en tâche de fond
-   *   • On doit RETENTER l'écriture manuellement
-   *
-   * Intervalles : 4s, 6s, 8s, 10s → jusqu'à ~28s d'attente max.
-   */
-  private async sendWithBondingRetry(cmd: number, payload: Uint8Array): Promise<void> {
-    const RETRY_DELAYS = [4000, 6000, 8000, 10000];
-    let lastErr: any;
-
-    for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
-      try {
-        await this.sendFrame(cmd, payload);
-        if (attempt > 0) {
-          console.log(`[BleGateway] cmd=${cmd} OK après ${attempt} tentative(s) de bonding`);
-        }
-        return;
-      } catch (err: any) {
-        lastErr = err;
-        const msg = String(err?.reason ?? err?.message ?? err ?? '').toLowerCase();
-        const isAuthErr =
-          msg.includes('133')           || // Android GATT_ERROR / INSUFFICIENT_AUTH
-          msg.includes('15')            || // GATT_AUTH_FAIL
-          msg.includes('insufficient')  ||
-          msg.includes('authentication') ||
-          msg.includes('bonding')       ||
-          msg.includes('pairing')       ||
-          msg.includes('encrypt');
-
-        if (isAuthErr && attempt < RETRY_DELAYS.length) {
-          const wait = RETRY_DELAYS[attempt];
-          console.log(
-            `[BleGateway] Appairage BLE requis (cmd=${cmd}, tentative ${attempt + 1}/${RETRY_DELAYS.length}). ` +
-            `Entrez le PIN dans le dialogue Android. Prochain essai dans ${wait / 1000}s...`
-          );
-          await new Promise((res) => setTimeout(res, wait));
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw lastErr;
-  }
-
-  /**
-   * Envoie un frame BLE au device.
-   *
-   * PROTOCOLE BLE : pas de framing bytes [0x3c][len].
-   * On écrit directement [cmd][payload...] dans la caractéristique TX.
-   * Source : "For BLE - a frame is simply a single characteristic value."
+   * Write WITH response sur 6e400002 (device RX char, PROPERTY_WRITE).
+   * Le firmware n'a pas PROPERTY_WRITE_WITHOUT_RESPONSE → write sans réponse ignoré.
    */
   private async sendFrame(cmd: number, payload: Uint8Array): Promise<void> {
-    if (!this.device) throw new Error('Non connecté');
+    if (!this.connectedId) throw new Error('Non connecté');
 
-    // BLE frame = [cmd][payload...] — sans entête USB
     const frame = new Uint8Array(1 + payload.length);
     frame[0] = cmd;
     frame.set(payload, 1);
 
-    await this.writeBle(frame);
-  }
-
-  private async writeBle(data: Uint8Array): Promise<void> {
-    if (!this.device) throw new Error('Non connecté');
-
-    for (let offset = 0; offset < data.length; offset += BLE_CHUNK_SIZE) {
-      const chunk = data.slice(offset, offset + BLE_CHUNK_SIZE);
-      await this.device.writeCharacteristicWithResponseForService(
+    // Découper en chunks si nécessaire
+    for (let offset = 0; offset < frame.length; offset += BLE_MAX_WRITE) {
+      const chunk = Array.from(frame.slice(offset, offset + BLE_MAX_WRITE));
+      await BleManager.write(
+        this.connectedId,
         SERVICE_UUID,
-        TX_UUID,
-        this.bytesToB64(chunk)
+        TX_UUID,    // 6e400002 = App → Device
+        chunk,
+        BLE_MAX_WRITE
       );
     }
   }
-
-  // ── Privé : Base64 ───────────────────────────────────────
-
-  private bytesToB64(data: Uint8Array): string {
-    return btoa(Array.from(data).map((b) => String.fromCharCode(b)).join(''));
-  }
-
-  private b64ToBytes(b64: string): Uint8Array {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
-  }
 }
 
-// ── Singleton ─────────────────────────────────────────────
+// ── Singleton ───────────────────────────────────────────────────────
 
 let _instance: BleGatewayClient | null = null;
 
