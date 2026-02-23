@@ -178,8 +178,8 @@ export class BleGatewayClient {
 
     // Utilisation de NativeEventEmitter (plus fiable sur Android 14+)
     console.log('[BleGateway] Enregistrement du listener NativeEventEmitter...');
-    const emitter = new NativeEventEmitter(NativeModules.BleManager);
-    const listener = emitter.addListener('BleManagerDiscoverPeripheral', (peripheral: any) => {
+    const scanEmitter = new NativeEventEmitter(NativeModules.BleManager);
+    const listener = scanEmitter.addListener('BleManagerDiscoverPeripheral', (peripheral: any) => {
       console.log('[BleGateway] RAW DEVICE DETECTED:', peripheral.id, peripheral.name, peripheral.rssi);
       
       const name: string =
@@ -271,7 +271,8 @@ export class BleGatewayClient {
     console.log('[BleGateway] Notifications TX activées (6e400003)');
 
     // Écouter les données entrantes — NativeEventEmitter (plus fiable)
-    const notifListener = emitter.addListener('BleManagerDidUpdateValueForCharacteristic', (data: any) => {
+    const connEmitter = new NativeEventEmitter(NativeModules.BleManager);
+    const notifListener = connEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', (data: any) => {
       if (data.peripheral !== deviceId) return;
       if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
       this.handleFrame(new Uint8Array(data.value));
@@ -279,7 +280,7 @@ export class BleGatewayClient {
     this.listeners.push(notifListener);
 
     // Écouter déconnexion
-    const discListener = emitter.addListener('BleManagerDisconnectPeripheral', (data: any) => {
+    const discListener = connEmitter.addListener('BleManagerDisconnectPeripheral', (data: any) => {
       if (data.peripheral === deviceId) {
         console.log('[BleGateway] Device déconnecté');
         this.connectedId = null;
