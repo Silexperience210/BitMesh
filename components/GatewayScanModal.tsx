@@ -13,10 +13,18 @@ import {
   ActivityIndicator,
   Alert,
 } from 'react-native';
-import { Bluetooth, X, Wifi, CheckCircle2 } from 'lucide-react-native';
+import { Bluetooth, X, Wifi, CheckCircle2, Radio } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useBle } from '@/providers/BleProvider';
 import { type BleGatewayDevice } from '@/utils/ble-gateway';
+
+const CHANNEL_OPTIONS = [
+  { idx: 0, label: 'Public (ch0)', icon: '🌐' },
+  { idx: 1, label: 'Privé 1 (ch1)', icon: '🔒' },
+  { idx: 2, label: 'Privé 2 (ch2)', icon: '🔒' },
+  { idx: 3, label: 'Privé 3 (ch3)', icon: '🔒' },
+  { idx: 4, label: 'Privé 4 (ch4)', icon: '🔒' },
+];
 
 interface GatewayScanModalProps {
   visible: boolean;
@@ -24,8 +32,10 @@ interface GatewayScanModalProps {
 }
 
 export default function GatewayScanModal({ visible, onClose }: GatewayScanModalProps) {
-  const { scanning, availableDevices, connected, device, error, scanForGateways, connectToGateway } =
+  const { scanning, availableDevices, connected, device, error, scanForGateways, connectToGateway, currentChannel, setChannel } =
     useBle();
+
+  const [showChannelPicker, setShowChannelPicker] = React.useState(false);
 
   const handleScan = async () => {
     try {
@@ -76,6 +86,48 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
               <Text style={styles.connectedText}>
                 Connecté à {device.name}
               </Text>
+            </View>
+          )}
+
+          {/* Sélecteur de channel (visible uniquement si connecté) */}
+          {connected && (
+            <View style={styles.channelRow}>
+              <Radio size={16} color={Colors.textMuted} />
+              <Text style={styles.channelLabel}>Channel actif :</Text>
+              <View style={[styles.channelBadge, { backgroundColor: currentChannel === 0 ? `${Colors.green}20` : `${Colors.purple}20` }]}>
+                <Text style={[styles.channelText, { color: currentChannel === 0 ? Colors.green : Colors.purple }]}>
+                  {currentChannel === 0 ? '🌐 Public (ch0)' : `🔒 Privé (ch${currentChannel})`}
+                </Text>
+              </View>
+              <TouchableOpacity onPress={() => setShowChannelPicker(v => !v)}>
+                <Text style={styles.channelChange}>Changer →</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
+          {/* Picker de channel */}
+          {connected && showChannelPicker && (
+            <View style={styles.channelPickerContainer}>
+              {CHANNEL_OPTIONS.map(opt => (
+                <TouchableOpacity
+                  key={opt.idx}
+                  style={[
+                    styles.channelOption,
+                    currentChannel === opt.idx && styles.channelOptionActive,
+                  ]}
+                  onPress={() => {
+                    setChannel(opt.idx);
+                    setShowChannelPicker(false);
+                  }}
+                >
+                  <Text style={[
+                    styles.channelOptionText,
+                    currentChannel === opt.idx && styles.channelOptionTextActive,
+                  ]}>
+                    {opt.icon} {opt.label}
+                  </Text>
+                </TouchableOpacity>
+              ))}
             </View>
           )}
 
@@ -302,6 +354,56 @@ const styles = StyleSheet.create({
     color: Colors.red,
     fontSize: 13,
     fontWeight: '600',
+  },
+  channelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 12,
+    flexWrap: 'wrap',
+  },
+  channelLabel: {
+    fontSize: 13,
+    color: Colors.textMuted,
+  },
+  channelBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  channelText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  channelChange: {
+    fontSize: 13,
+    color: Colors.accent,
+    fontWeight: '600',
+  },
+  channelPickerContainer: {
+    backgroundColor: Colors.surface,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    marginBottom: 14,
+    overflow: 'hidden',
+  },
+  channelOption: {
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  channelOptionActive: {
+    backgroundColor: `${Colors.accent}20`,
+  },
+  channelOptionText: {
+    fontSize: 14,
+    color: Colors.textSecondary,
+  },
+  channelOptionTextActive: {
+    color: Colors.accent,
+    fontWeight: '700',
   },
   listContainer: {
     flex: 1,

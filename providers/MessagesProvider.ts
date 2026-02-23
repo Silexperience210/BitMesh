@@ -60,12 +60,10 @@ import {
   extractTextFromPacket,
   uint64ToNodeId,
   nodeIdToUint64,
-  encodeEncryptedPayload,
   decodeEncryptedPayload,
   createKeyAnnouncePacket,
   extractPubkeyFromAnnounce,
   extractPosition,
-  createPingPacket,
 } from '@/utils/meshcore-protocol';
 // Import Cashu validation
 import { verifyCashuToken, generateTokenId } from '@/utils/cashu';
@@ -193,15 +191,13 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     };
   }, [mnemonic, identity]);
 
-  // Envoyer un PING BLE dès que la connexion BLE est établie + identité dispo
-  // → permet à BleProvider de confirmer loraActive=true si le device répond
+  // Annoncer notre présence dans le mesh dès que BLE est connecté
   useEffect(() => {
     if (ble.connected && identity) {
-      const pingPacket = createPingPacket(identity.nodeId);
-      ble.sendPacket(pingPacket).catch(() => {
-        // Silencieux — le PING est un test optionnel
+      ble.sendSelfAdvert().catch(() => {
+        // Silencieux — déjà envoyé dans connect()
       });
-      console.log('[MeshCore] PING envoyé pour vérifier relay LoRa');
+      console.log('[MeshCore] SelfAdvert envoyé (présence dans mesh annoncée)');
     }
   }, [ble.connected, identity]);
 
@@ -600,11 +596,61 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
       console.log('[MeshCore] Connexion BLE établie, enregistrement handler');
       ble.onPacket(handleIncomingMeshCorePacket);
 
-      // ✅ Envoyer notre clé publique en broadcast pour que les pairs puissent nous chiffrer des messages
+      // KEY_ANNOUNCE pour les pairs qui utilisent le protocole binaire custom
       const keyAnnounce = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
       ble.sendPacket(keyAnnounce)
         .then(() => console.log('[MeshCore] KEY_ANNOUNCE envoyé (broadcast)'))
         .catch(err => console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err));
+
+      // Enregistrer handler pour messages natifs MeshCore Companion (CMD_SEND_TXT_MSG / CMD_SEND_CHAN_MSG)
+      ble.onBleMessage((msg) => {
+        const contact = ble.meshContacts.find(c => c.pubkeyPrefix === msg.senderPubkeyPrefix);
+        const fromNodeId = contact
+          ? `MESH-${msg.senderPubkeyPrefix.slice(0, 8).toUpperCase()}`
+          : `BLE-${msg.senderPubkeyPrefix || 'UNKNOWN'}`;
+        const convId = msg.type === 'channel'
+          ? `forum:ch${msg.channelIdx ?? 0}`
+          : fromNodeId;
+
+        const storedMsg: StoredMessage = {
+          id: generateMsgId(),
+          conversationId: convId,
+          fromNodeId,
+          text: msg.text,
+          type: 'text',
+          timestamp: msg.timestamp * 1000,
+          isMine: false,
+          status: 'received',
+        };
+
+        saveMessage(storedMsg).catch(console.error);
+
+        setMessagesByConv(prev => ({
+          ...prev,
+          [convId]: [...(prev[convId] ?? []), storedMsg],
+        }));
+
+        setConversations(prev => {
+          const exists = prev.find(c => c.id === convId);
+          if (!exists) {
+            const newConv: StoredConversation = {
+              id: convId,
+              name: contact?.name ?? fromNodeId,
+              isForum: msg.type === 'channel',
+              lastMessage: msg.text.slice(0, 50),
+              lastMessageTime: storedMsg.timestamp,
+              unreadCount: 1,
+              online: true,
+            };
+            saveConversation(newConv).catch(console.error);
+            return [newConv, ...prev];
+          }
+          return prev.map(c => c.id === convId
+            ? { ...c, lastMessage: msg.text.slice(0, 50), lastMessageTime: storedMsg.timestamp, unreadCount: c.unreadCount + 1 }
+            : c
+          );
+        });
+      });
     }
   }, [ble.connected, identity, handleIncomingMeshCorePacket]);
 
@@ -1271,33 +1317,24 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     const isForum = convId.startsWith('forum:');
 
     // **Transport hybride : BLE (LoRa) prioritaire, fallback MQTT**
-    // Si BLE connecté ET c'est un DM (pas un forum) → utiliser protocole MeshCore binaire
+    // Si BLE connecté ET c'est un DM → utiliser protocole natif MeshCore Companion
+    // Le firmware gère le chiffrement E2E et le routing multi-hop
     if (ble.connected && isDM && !isForum) {
       try {
-        // ✅ FIX: Encoder le payload chiffré au lieu du texte en clair
-        const encryptedPayload = encodeEncryptedPayload(enc);
-
-        // Créer paquet MeshCore TEXT binaire avec payload chiffré
-        // Utiliser un ID unique basé sur timestamp + compteur
-        const messageId = (Date.now() % 0xFFFFFFFF);
-        
-        const packet: MeshCorePacket = {
-          version: 0x01,
-          type: MeshCoreMessageType.TEXT,
-          flags: MeshCoreFlags.ENCRYPTED,
-          ttl: 10,
-          messageId,
-          fromNodeId: nodeIdToUint64(id.nodeId),
-          toNodeId: nodeIdToUint64(convId),
-          timestamp: Math.floor(Date.now() / 1000),
-          subMeshId: 0,
-          payload: encryptedPayload,
-        };
-
-        await ble.sendPacket(packet);
-        console.log('[MeshCore] Paquet chiffré envoyé via BLE → LoRa:', convId);
+        // Chercher le contact MeshCore correspondant au convId
+        const meshContact = ble.meshContacts.find(c =>
+          convId.toUpperCase().includes(c.pubkeyPrefix.slice(0, 8).toUpperCase())
+        );
+        if (meshContact) {
+          await ble.sendDirectMessage(meshContact.pubkeyHex, text);
+          console.log('[MeshCore] DM natif envoyé via BLE → LoRa:', meshContact.name);
+        } else {
+          // Fallback : envoyer sur le channel courant (ch0 = public)
+          await ble.sendChannelMessage(text);
+          console.log('[MeshCore] Message envoyé via channel BLE ch' + ble.currentChannel);
+        }
       } catch (err) {
-        console.error('[MeshCore] Erreur envoi BLE, fallback MQTT:', err);
+        console.error('[MeshCore] Erreur envoi BLE natif, fallback MQTT:', err);
         // Fallback MQTT si BLE échoue
         if (mqttRef.current && meshRouterRef.current) {
           const meshMsg = meshRouterRef.current.createMessage(convId, enc, id.pubkeyHex, type as 'text' | 'cashu' | 'btc_tx');

@@ -3,14 +3,21 @@
  *
  * Gère la connexion BLE au gateway ESP32 LoRa
  * Expose l'état BLE et les fonctions scan/connect/disconnect
- * 
- * V2.0: Utilise MessageRetryService pour persistance des messages
+ *
+ * V3.0: Protocole natif MeshCore Companion (CMD_SEND_TXT_MSG, channels, contacts)
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { BleGatewayClient, getBleGatewayClient, BleGatewayDevice, BleDeviceInfo } from '@/utils/ble-gateway';
+import {
+  BleGatewayClient,
+  getBleGatewayClient,
+  BleGatewayDevice,
+  BleDeviceInfo,
+  MeshCoreContact,
+  MeshCoreIncomingMsg,
+} from '@/utils/ble-gateway';
 import { type MeshCorePacket } from '@/utils/meshcore-protocol';
 import { getMessageRetryService } from '@/services/MessageRetryService';
 import { getBackgroundBleService } from '@/services/BackgroundBleService';
@@ -21,10 +28,12 @@ interface BleState {
   connected: boolean;
   loraActive: boolean;  // true = au moins un paquet LoRa reçu/envoyé avec succès
   device: BleGatewayDevice | null;
-  deviceInfo: BleDeviceInfo | null;  // Infos parsées depuis SelfInfo (AppStart response)
+  deviceInfo: BleDeviceInfo | null;
   scanning: boolean;
   availableDevices: BleGatewayDevice[];
   error: string | null;
+  currentChannel: number;          // 0=public, 1-N=privé chiffré
+  meshContacts: MeshCoreContact[]; // contacts syncés du device MeshCore
 }
 
 interface BleContextValue extends BleState {
@@ -33,7 +42,14 @@ interface BleContextValue extends BleState {
   disconnectGateway: () => Promise<void>;
   sendPacket: (packet: MeshCorePacket, timeoutMs?: number) => Promise<void>;
   onPacket: (handler: (packet: MeshCorePacket) => void) => void;
-  confirmLoraActive: () => void;  // Appelé par MessagesProvider après réception d'un paquet BLE
+  confirmLoraActive: () => void;
+  // Protocole natif MeshCore Companion
+  sendDirectMessage: (pubkeyHex: string, text: string) => Promise<void>;
+  sendChannelMessage: (text: string) => Promise<void>; // utilise currentChannel
+  setChannel: (idx: number) => void;
+  syncContacts: () => Promise<void>;
+  sendSelfAdvert: () => Promise<void>;
+  onBleMessage: (cb: (msg: MeshCoreIncomingMsg) => void) => void;
 }
 
 const BleContext = createContext<BleContextValue | null>(null);
@@ -55,16 +71,17 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     scanning: false,
     availableDevices: [],
     error: null,
+    currentChannel: 0,
+    meshContacts: [],
   });
 
   const clientRef = useRef<BleGatewayClient | null>(null);
   const retryServiceRef = useRef(getMessageRetryService());
+  const incomingMessageCallbackRef = useRef<((msg: MeshCoreIncomingMsg) => void) | null>(null);
 
   useEffect(() => {
-    // Initialiser le client BLE
     const initBle = async () => {
       try {
-        // Demander les permissions BLE sur Android
         if (Platform.OS === 'android') {
           await requestAndroidPermissions();
         }
@@ -75,6 +92,34 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
         client.onDeviceInfo((info) => {
           setState((prev) => ({ ...prev, deviceInfo: info }));
+        });
+
+        // Callback : message direct ou channel reçu via firmware natif
+        client.onIncomingMessage((msg) => {
+          setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
+          incomingMessageCallbackRef.current?.(msg);
+        });
+
+        // Callback : nœud découvert via PUSH_ADVERT
+        client.onContactDiscovered((contact) => {
+          setState((prev) => ({
+            ...prev,
+            meshContacts: [
+              ...prev.meshContacts.filter(c => c.pubkeyHex !== contact.pubkeyHex),
+              contact,
+            ],
+          }));
+        });
+
+        // Callback : liste complète des contacts chargée depuis le device
+        client.onContacts((contacts) => {
+          console.log(`[BleProvider] ${contacts.length} contacts chargés depuis device`);
+          setState((prev) => ({ ...prev, meshContacts: contacts }));
+        });
+
+        // Callback : confirmation ACK reçu
+        client.onSendConfirmed((ackCode, rtt) => {
+          console.log(`[BleProvider] Message confirmé ACK:${ackCode} RTT:${rtt}ms`);
         });
 
         console.log('[BleProvider] BLE initialized');
@@ -90,7 +135,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
             console.log('[BleProvider] Auto-reconnect réussi:', device?.name);
           }
         } catch (reconnectErr) {
-          // Silencieux — l'appareil n'est peut-être pas à portée
           console.log('[BleProvider] Auto-reconnect échoué (appareil hors portée)');
         }
       } catch (error: any) {
@@ -104,7 +148,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
     initBle();
 
-    // Cleanup au démontage
     return () => {
       if (clientRef.current) {
         clientRef.current.disconnect().catch(console.error);
@@ -113,33 +156,22 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  /**
-   * Démarre le service de retry et le background service quand BLE se reconnecte
-   */
   useEffect(() => {
     if (state.connected) {
-      // Démarrer le service de retry
       retryServiceRef.current.start();
-      
-      // Enregistrer le background service
       getBackgroundBleService().register().catch(console.error);
-      
       console.log('[BleProvider] Services démarrés');
     } else {
       retryServiceRef.current.stop();
     }
   }, [state.connected]);
 
-  /**
-   * Demande les permissions BLE sur Android
-   */
   const requestAndroidPermissions = async () => {
     if (Platform.OS !== 'android') return;
 
     const apiLevel = Platform.Version;
 
     if (apiLevel >= 31) {
-      // Android 12+ (API 31+)
       const granted = await PermissionsAndroid.requestMultiple([
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
         PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
@@ -153,7 +185,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         throw new Error('BLE permissions not granted');
       }
     } else {
-      // Android <12
       const granted = await PermissionsAndroid.request(
         PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
       );
@@ -164,13 +195,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /**
-   * Scanne les gateways BLE disponibles.
-   * Si le client n'est pas encore initialisé (BT était off au démarrage),
-   * on re-tente l'initialisation avant de lancer le scan.
-   */
   const scanForGateways = async () => {
-    // Re-init si le client n'est pas prêt (BT off au démarrage, permissions tardives…)
     if (!clientRef.current) {
       try {
         if (Platform.OS === 'android') {
@@ -201,10 +226,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
           ...prev,
           availableDevices: [...foundDevices],
         }));
-      }, 10000); // 10s scan
+      }, 10000);
 
       setState((prev) => ({ ...prev, scanning: false }));
-
       console.log(`[BleProvider] Scan complete: ${foundDevices.length} devices found`);
     } catch (error: any) {
       console.error('[BleProvider] Scan error:', error);
@@ -217,9 +241,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /**
-   * Connecte à un gateway
-   */
   const connectToGateway = async (deviceId: string) => {
     if (!clientRef.current) {
       throw new Error('BLE not initialized');
@@ -228,13 +249,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, error: null }));
 
     try {
-      // Indiquer dans l'UI que l'appairage BLE peut prendre du temps
-      setState((prev) => ({
-        ...prev,
-        error: null,
-        // On réutilise le champ error pour afficher une info non-fatale
-      }));
-
       await clientRef.current.connect(deviceId);
 
       const device = clientRef.current.getConnectedDevice();
@@ -243,16 +257,14 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         ...prev,
         connected: true,
         device,
+        meshContacts: [], // Reset contacts, seront rechargés via getContacts()
       }));
 
-      // Persister l'ID pour auto-reconnect au prochain démarrage
       await AsyncStorage.setItem(BLE_LAST_DEVICE_KEY, deviceId);
-
       console.log(`[BleProvider] Connected to ${device?.name}`);
     } catch (error: any) {
       console.error('[BleProvider] Connection error:', error);
       const msg: string = error?.message ?? String(error);
-      // Donner un message utile si c'est un problème d'appairage
       const isAuthErr =
         msg.includes('133') ||
         msg.includes('insufficient') ||
@@ -262,24 +274,16 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       const displayMsg = isAuthErr
         ? 'Appairage BLE requis. Allez dans Paramètres → Bluetooth, supprimez "MeshCore-..." puis relancez. PIN : 123456'
         : msg || 'Connection failed';
-      setState((prev) => ({
-        ...prev,
-        error: displayMsg,
-      }));
+      setState((prev) => ({ ...prev, error: displayMsg }));
       throw error;
     }
   };
 
-  /**
-   * Déconnecte du gateway
-   */
   const disconnectGateway = async () => {
     if (!clientRef.current) return;
 
     try {
       await clientRef.current.disconnect();
-
-      // Effacer l'ID persisté (déconnexion volontaire = pas de reconnect)
       await AsyncStorage.removeItem(BLE_LAST_DEVICE_KEY);
 
       setState((prev) => ({
@@ -287,6 +291,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         connected: false,
         loraActive: false,
         device: null,
+        meshContacts: [],
+        currentChannel: 0,
       }));
 
       console.log('[BleProvider] Disconnected');
@@ -299,13 +305,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /**
-   * Envoie un paquet MeshCore via BLE → LoRa avec timeout
-   * Si déconnecté, ajoute à la file d'attente persistante
-   */
   const sendPacket = async (packet: MeshCorePacket, timeoutMs = 10000) => {
     if (!clientRef.current || !state.connected) {
-      // Si déconnecté, ajouter à la file persistante
       const msgId = `pending-${Date.now()}`;
       await retryServiceRef.current.queueMessage(msgId, packet);
       console.log(`[BleProvider] Message mis en file d'attente persistante: ${msgId}`);
@@ -313,15 +314,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // Timeout pour éviter le blocage
       await Promise.race([
         clientRef.current.sendPacket(packet),
-        new Promise((_, reject) => 
+        new Promise((_, reject) =>
           setTimeout(() => reject(new Error('BLE timeout')), timeoutMs)
         )
       ]);
     } catch (error) {
-      // En cas d'erreur, mettre en file d'attente pour retry
       const msgId = `retry-${Date.now()}`;
       await retryServiceRef.current.queueMessage(msgId, packet);
       console.log(`[BleProvider] Échec envoi, message en file d'attente: ${msgId}`);
@@ -329,25 +328,51 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /**
-   * Enregistre un handler pour les paquets entrants
-   * Wrappé pour marquer loraActive=true dès le premier paquet reçu
-   */
   const onPacket = (handler: (packet: MeshCorePacket) => void) => {
     if (clientRef.current) {
       clientRef.current.onMessage((packet) => {
-        // Premier paquet reçu = confirmation que le relay LoRa fonctionne
         setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
         handler(packet);
       });
     }
   };
 
-  /**
-   * Marque explicitement LoRa comme actif (appelé par MessagesProvider après envoi/réception BLE)
-   */
   const confirmLoraActive = () => {
     setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
+  };
+
+  // ── Protocole natif MeshCore Companion ─────────────────────────
+
+  const sendDirectMessage = async (pubkeyHex: string, text: string) => {
+    if (!clientRef.current || !state.connected) throw new Error('BLE non connecté');
+    const prefix6 = new Uint8Array(Buffer.from(pubkeyHex.slice(0, 12), 'hex'));
+    await clientRef.current.sendDirectMessage(prefix6, text);
+    setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
+  };
+
+  const sendChannelMessage = async (text: string) => {
+    if (!clientRef.current || !state.connected) throw new Error('BLE non connecté');
+    await clientRef.current.sendChannelMessage(state.currentChannel, text);
+    setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
+  };
+
+  const setChannel = (idx: number) => {
+    setState((prev) => ({ ...prev, currentChannel: idx }));
+    console.log(`[BleProvider] Channel → ch${idx}`);
+  };
+
+  const syncContacts = async () => {
+    if (!clientRef.current || !state.connected) return;
+    await clientRef.current.getContacts();
+  };
+
+  const sendSelfAdvert = async () => {
+    if (!clientRef.current || !state.connected) return;
+    await clientRef.current.sendSelfAdvert(1);
+  };
+
+  const onBleMessage = (cb: (msg: MeshCoreIncomingMsg) => void) => {
+    incomingMessageCallbackRef.current = cb;
   };
 
   const contextValue: BleContextValue = {
@@ -358,6 +383,12 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     sendPacket,
     onPacket,
     confirmLoraActive,
+    sendDirectMessage,
+    sendChannelMessage,
+    setChannel,
+    syncContacts,
+    sendSelfAdvert,
+    onBleMessage,
   };
 
   return <BleContext.Provider value={contextValue}>{children}</BleContext.Provider>;
