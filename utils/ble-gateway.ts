@@ -167,6 +167,14 @@ export class BleGatewayClient {
     console.log('[BleGateway] Scan BLE actif...');
     const seen = new Set<string>();
 
+    // Réinitialiser BleManager et stopper tout scan précédent
+    // (nécessaire si un scan précédent s'est terminé sans stopScan() explicite)
+    await BleManager.start({ showAlert: false });
+    try {
+      await BleManager.stopScan();
+    } catch (_) {}
+    await new Promise((res) => setTimeout(res, 200));
+
     // v12 TurboModule API — plus de NativeEventEmitter
     const listener = BleManager.onDiscoverPeripheral((peripheral: any) => {
       const name: string =

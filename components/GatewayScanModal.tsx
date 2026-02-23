@@ -89,8 +89,9 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
       await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
 
-      setTimeout(() => {
+      setTimeout(async () => {
         sub.remove();
+        try { await BleManager.stopScan(); } catch (_) {}
         console.log('=== Scan terminé ===', found.length, 'device(s)');
         Alert.alert(
           `${found.length} device(s) trouvé(s)`,
