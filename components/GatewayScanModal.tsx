@@ -61,15 +61,25 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
       await BleManager.start({ showAlert: false });
       console.log('✅ BleManager démarré');
 
-      const state = await BleManager.checkState();
-      console.log('📡 BLE State:', state);
+      const bleState = await BleManager.checkState();
+      console.log('📡 BLE State:', bleState);
 
-      if (state !== 'on') {
-        Alert.alert('Bluetooth éteint', `État détecté : ${state}\nAllumez le Bluetooth.`);
+      if (bleState !== 'on') {
+        Alert.alert('Bluetooth éteint', `État : ${bleState}\nAllumez le Bluetooth.`);
         return;
       }
 
-      console.log('🔍 Scan pendant 5 secondes...');
+      // Vérifier permissions
+      const { PermissionsAndroid, Platform } = require('react-native');
+      let permStatus = 'N/A';
+      if (Platform.OS === 'android' && Platform.Version >= 31) {
+        const scan = await PermissionsAndroid.check('android.permission.BLUETOOTH_SCAN');
+        const connect = await PermissionsAndroid.check('android.permission.BLUETOOTH_CONNECT');
+        permStatus = `SCAN=${scan ? '✅' : '❌'} CONNECT=${connect ? '✅' : '❌'}`;
+        console.log('🔐 Permissions:', permStatus);
+      }
+
+      console.log('🔍 Scan 5s (neverForLocation)...');
       const found: any[] = [];
 
       const sub = new NativeEventEmitter(NativeModules.BleManager)
@@ -86,7 +96,8 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         console.log('=== Scan terminé ===', found.length, 'device(s)');
         Alert.alert(
           `${found.length} device(s) trouvé(s)`,
-          found.map(d => `• ${d.name}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device détecté'
+          `Permissions: ${permStatus}\n\n` +
+          (found.map(d => `• ${d.name}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device détecté')
         );
       }, 5500);
     } catch (err: any) {
