@@ -9,7 +9,6 @@
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
-import * as Location from 'expo-location';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   BleGatewayClient,
@@ -197,22 +196,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   const scanForGateways = async () => {
-    // 🔴 CRUCIAL Android 14+: Vérifier que la localisation est activée
-    if (Platform.OS === 'android') {
-      const locationEnabled = await Location.hasServicesEnabledAsync();
-      if (!locationEnabled) {
-        Alert.alert(
-          'Localisation requise',
-          'Android 14+ nécessite la localisation activée pour scanner les devices BLE.',
-          [
-            { text: 'Annuler', style: 'cancel' },
-            { text: 'Activer', onPress: () => Location.enableNetworkProviderAsync() }
-          ]
-        );
-        return;
-      }
-    }
-    
+    // Note: BLUETOOTH_SCAN avec neverForLocation dans AndroidManifest.xml
+    // permet de scanner sans localisation activée (comme MeshCore natif)
     if (!clientRef.current) {
       try {
         if (Platform.OS === 'android') {
