@@ -4,7 +4,7 @@
  * Transport: MQTT uniquement (trop volumineux pour LoRa)
  */
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 export const AUDIO_MAX_DURATION_MS = 30000; // 30 secondes max
 
@@ -77,7 +77,7 @@ export async function playAudioBase64(
   });
 
   // Écrire le fichier temporaire pour la lecture
-  const tmpUri = FileSystem.cacheDirectory + `voice_${Date.now()}.m4a`;
+  const tmpUri = (FileSystem.cacheDirectory ?? '') + `voice_${Date.now()}.m4a`;
   await FileSystem.writeAsStringAsync(tmpUri, base64, {
     encoding: FileSystem.EncodingType.Base64,
   });

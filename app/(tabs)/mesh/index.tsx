@@ -481,7 +481,7 @@ function GatewayStatusBanner() {
             return (
               <View key={job.id} style={styles.gwJobRow}>
                 <View style={[styles.gwJobDot, { backgroundColor: color }]} />
-                <Text style={styles.gwJobText} numberOfLines={1}>{job.detail}</Text>
+                <Text style={styles.gwJobText} numberOfLines={1}>{job.payload}</Text>
                 <View style={[
                   styles.gwJobStatusDot,
                   { backgroundColor: job.status === 'completed' ? Colors.green : job.status === 'failed' ? Colors.red : Colors.yellow },

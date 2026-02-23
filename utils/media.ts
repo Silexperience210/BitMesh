@@ -9,7 +9,7 @@
 
 import * as ImagePicker from 'expo-image-picker';
 import * as ImageManipulator from 'expo-image-manipulator';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 
 // Limite taille GIF (400 KB)
 const MAX_GIF_BYTES = 400 * 1024;
