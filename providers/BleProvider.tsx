@@ -10,6 +10,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { Platform, PermissionsAndroid, Alert } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import BleManager from 'react-native-ble-manager';
 import {
   BleGatewayClient,
   getBleGatewayClient,
@@ -196,8 +197,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   const scanForGateways = async () => {
-    // Note: BLUETOOTH_SCAN avec neverForLocation dans AndroidManifest.xml
-    // permet de scanner sans localisation activée (comme MeshCore natif)
+    // Initialiser le client si nécessaire (pour connect/disconnect)
     if (!clientRef.current) {
       try {
         if (Platform.OS === 'android') {
@@ -209,7 +209,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         client.onDeviceInfo((info) => {
           setState((prev) => ({ ...prev, deviceInfo: info }));
         });
-        setState((prev) => ({ ...prev, error: null }));
       } catch (initErr: any) {
         const msg = initErr.message || 'Bluetooth non disponible';
         setState((prev) => ({ ...prev, error: msg }));
@@ -220,18 +219,84 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, scanning: true, availableDevices: [], error: null }));
 
     try {
-      const foundDevices: BleGatewayDevice[] = [];
+      // ── Même logique que le debug button qui fonctionne ──────────────
+      await BleManager.start({ showAlert: false });
 
-      await clientRef.current.scanForGateways((device) => {
-        foundDevices.push(device);
-        setState((prev) => ({
-          ...prev,
-          availableDevices: [...foundDevices],
-        }));
-      }, 10000);
+      const bleState = await BleManager.checkState();
+      if (bleState !== 'on') {
+        throw new Error(`Bluetooth éteint (état: ${bleState}). Allumez le Bluetooth et réessayez.`);
+      }
 
+      // Arrêter tout scan précédent
+      try { await BleManager.stopScan(); } catch (_) {}
+      await new Promise((res) => setTimeout(res, 300));
+
+      const found: BleGatewayDevice[] = [];
+      const seen = new Set<string>();
+
+      // v12 TurboModule API — directement depuis BleProvider (sans passer par BleGatewayClient)
+      const listener = BleManager.onDiscoverPeripheral((peripheral: any) => {
+        if (seen.has(peripheral.id)) return;
+        seen.add(peripheral.id);
+
+        const name: string = peripheral.name || peripheral.advertising?.localName || '';
+        const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
+        const isMeshCore =
+          displayName.startsWith('MeshCore-') ||
+          displayName.startsWith('Whisper-');
+
+        const device: BleGatewayDevice = {
+          id: peripheral.id,
+          name: displayName,
+          rssi: peripheral.rssi || -100,
+          type: isMeshCore ? 'companion' : 'gateway',
+        };
+
+        found.push(device);
+        setState((prev) => ({ ...prev, availableDevices: [...found] }));
+        console.log(`[BleProvider] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
+      });
+
+      await BleManager.scan({
+        serviceUUIDs: [],
+        seconds: 10,
+        allowDuplicates: false,
+        scanMode: 2,   // SCAN_MODE_LOW_LATENCY
+        matchMode: 1,  // MATCH_MODE_AGGRESSIVE
+      } as any);
+
+      await new Promise((res) => setTimeout(res, 10000));
+
+      listener.remove();
+      try { await BleManager.stopScan(); } catch (_) {}
+
+      // Fallback : getDiscoveredPeripherals() si les events n'ont pas tiré
+      if (found.length === 0) {
+        try {
+          const peripherals: any[] = await BleManager.getDiscoveredPeripherals();
+          for (const p of peripherals) {
+            if (!seen.has(p.id)) {
+              seen.add(p.id);
+              const name: string = p.name || p.advertising?.localName || '';
+              const displayName = name || `BLE (${p.id.slice(0, 8)})`;
+              found.push({
+                id: p.id,
+                name: displayName,
+                rssi: p.rssi || -100,
+                type: displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-')
+                  ? 'companion' : 'gateway',
+              });
+            }
+          }
+          if (found.length > 0) {
+            setState((prev) => ({ ...prev, availableDevices: [...found] }));
+            console.log(`[BleProvider] Fallback getDiscoveredPeripherals: ${found.length} trouvés`);
+          }
+        } catch (_) {}
+      }
+
+      console.log(`[BleProvider] Scan terminé — ${found.length} device(s)`);
       setState((prev) => ({ ...prev, scanning: false }));
-      console.log(`[BleProvider] Scan complete: ${foundDevices.length} devices found`);
     } catch (error: any) {
       console.error('[BleProvider] Scan error:', error);
       setState((prev) => ({
