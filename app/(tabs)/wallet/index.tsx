@@ -1251,7 +1251,7 @@ export default function WalletScreen() {
     queryFn: async () => {
       if (!walletInfo?.firstReceiveAddress) return null;
       console.log('[Wallet] Fetching BTC balance from', mempoolUrl);
-      return fetchAddressBalance(mempoolUrl, walletInfo.firstReceiveAddress);
+      return fetchAddressBalance(walletInfo.firstReceiveAddress, mempoolUrl);
     },
     enabled: isInitialized && !!walletInfo?.firstReceiveAddress,
     refetchInterval: 60000,

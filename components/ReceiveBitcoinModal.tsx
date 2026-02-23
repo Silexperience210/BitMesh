@@ -3,7 +3,7 @@
  * Affiche l'adresse Bitcoin avec QR code scannable
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,13 @@ export default function ReceiveBitcoinModal({
 }: ReceiveBitcoinModalProps) {
   const [copied, setCopied] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState(address);
+
+  // Sync when address prop becomes available (Modal stays mounted even when hidden)
+  useEffect(() => {
+    if (address) {
+      setSelectedAddress(address);
+    }
+  }, [address]);
 
   const handleCopy = async () => {
     try {
@@ -73,16 +80,22 @@ export default function ReceiveBitcoinModal({
             {/* QR Code */}
             <View style={styles.qrContainer}>
               <View style={styles.qrWrapper}>
-                <QRCode
-                  value={selectedAddress}
-                  size={220}
-                  backgroundColor={Colors.surface}
-                  color={Colors.text}
-                  logo={require('@/assets/images/icon.png')}
-                  logoSize={40}
-                  logoBackgroundColor={Colors.surface}
-                  logoBorderRadius={8}
-                />
+                {selectedAddress ? (
+                  <QRCode
+                    value={selectedAddress}
+                    size={220}
+                    backgroundColor={Colors.surface}
+                    color={Colors.text}
+                    logo={require('@/assets/images/icon.png')}
+                    logoSize={40}
+                    logoBackgroundColor={Colors.surface}
+                    logoBorderRadius={8}
+                  />
+                ) : (
+                  <View style={styles.qrPlaceholder}>
+                    <Text style={styles.qrPlaceholderText}>Chargement...</Text>
+                  </View>
+                )}
               </View>
             </View>
 
@@ -217,6 +230,16 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: Colors.border,
+  },
+  qrPlaceholder: {
+    width: 220,
+    height: 220,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  qrPlaceholderText: {
+    color: Colors.textMuted,
+    fontSize: 14,
   },
   addressContainer: {
     marginBottom: 16,
