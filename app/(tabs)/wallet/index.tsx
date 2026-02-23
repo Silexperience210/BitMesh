@@ -1659,17 +1659,20 @@ const styles = StyleSheet.create({
   // ✅ NOUVEAU : Styles pour le solde Cashu
   cashuBalanceRow: {
     alignItems: 'center',
+    justifyContent: 'center',
     marginVertical: 16,
   },
   cashuBalanceAmount: {
     color: Colors.cyan,
     fontSize: 32,
     fontWeight: '700' as const,
+    textAlign: 'center',
   },
   cashuBalanceLabel: {
     color: Colors.textMuted,
     fontSize: 12,
     marginTop: 4,
+    textAlign: 'center',
   },
   // ✅ NOUVEAU : Styles pour le modal MELT
   meltModalContainer: {
@@ -1683,11 +1686,13 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 8,
+    textAlign: 'center',
   },
   meltModalDesc: {
     color: Colors.textSecondary,
     fontSize: 14,
     marginBottom: 16,
+    textAlign: 'center',
   },
   meltInput: {
     backgroundColor: Colors.surface,
@@ -2130,11 +2135,13 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700' as const,
     marginBottom: 4,
+    textAlign: 'center',
   },
   mintQuoteDesc: {
     color: Colors.textMuted,
     fontSize: 12,
     marginBottom: 12,
+    textAlign: 'center',
   },
   mintQuoteInput: {
     backgroundColor: Colors.surfaceLight,
