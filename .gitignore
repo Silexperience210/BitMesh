@@ -48,3 +48,5 @@ node_modules
 bitmesh.keystore
 credentials.json
 build_apk.ps1
+
+android/

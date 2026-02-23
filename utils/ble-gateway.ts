@@ -152,11 +152,13 @@ export class BleGatewayClient {
     );
 
     // Scan sans filtre UUID (plus fiable sur Android)
-    await BleManager.scan([], timeoutMs / 1000, false, {
-      scanMode: 2, // SCAN_MODE_LOW_LATENCY = active scan
-      matchMode: 1,
-      numOfMatches: 3,
-    } as any);
+    await BleManager.scan({
+      serviceUUIDs: [],
+      seconds: timeoutMs / 1000,
+      scanMode: 2 as any,
+      matchMode: 1 as any,
+      numberOfMatches: 3 as any,
+    });
 
     await new Promise((res) => setTimeout(res, timeoutMs));
     await BleManager.stopScan();
