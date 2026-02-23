@@ -184,45 +184,51 @@ export class BleGatewayClient {
   /**
    * Connexion + handshake MeshCore Companion.
    *
-   * ⚠️  Le firmware impose ESP_LE_AUTH_REQ_SC_MITM_BOND :
-   *     les deux caractéristiques (RX + TX) ont PERM_*_ENC_MITM.
-   *     deviceConnected n'est true qu'APRÈS onAuthenticationComplete().
-   *     → Notre app doit gérer le bonding Android :
-   *       1. Le premier write déclenche GATT_INSUFFICIENT_AUTHENTICATION (133).
-   *       2. Android ouvre le dialogue PIN automatiquement.
-   *       3. L'utilisateur entre le PIN (défaut : 123456).
-   *       4. Bonding terminé → on RETENTE la commande.
+   * Source de vérité : meshcore_connector.dart (meshcore-open Flutter officiel)
+   * https://github.com/zjs81/meshcore-open
    *
-   * Séquence :
-   *   1. connect() + discoverServices
-   *   2. subscribe notifications RX (déclenche aussi le bonding)
-   *   3. DeviceQuery  (cmd=22, proto_ver=3)  ← avec retry bonding
-   *   4. AppStart     (cmd=1,  app_ver=1, reserved×6, "BitMesh\0")  ← avec retry
-   *   5. SetTime      (cmd=6) — envoyé automatiquement à réception SelfInfo
+   * ⚠️  BONDING MITM :
+   *   Les deux caractéristiques ont PERM_*_ENC_MITM.
+   *   deviceConnected = true dans le firmware SEULEMENT après onAuthenticationComplete().
+   *
+   * ⚠️  PIÈGE CRITIQUE — monitorCharacteristicForService :
+   *   Si la souscription échoue (auth error), react-native-ble-plx ne re-tente pas.
+   *   → Après bonding, les notifications sont silencieuses (device répond mais on n'écoute plus).
+   *   → Fix : auto-retry de subscribeToRx() sur erreur auth (comme Flutter setNotifyValue x3).
+   *
+   * Séquence (identique à meshcore_connector.dart) :
+   *   1. connect(mtu=null) + requestMtu(185) séparé
+   *   2. discoverServices → trouver UART service + characteristics
+   *   3. setNotifyValue(true) sur TX char (6e400003) — avec retry auto
+   *   4. DeviceQuery (cmd=22) + AppStart (cmd=1) — avec retry bonding
+   *   5. Attendre SelfInfo (code=5) → SetTime auto dans parseSelfInfo
    */
   async connect(deviceId: string, timeoutMs = 60000): Promise<void> {
     console.log(`[BleGateway] Connexion à ${deviceId}...`);
 
-    // ── Étape 0 : connexion BLE (link layer, timeout 15s) ──
-    try {
-      this.device = await Promise.race([
-        this.manager.connectToDevice(deviceId, {
-          autoConnect: false,
-          requestMTU: 172, // device MAX_FRAME_SIZE = 172
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout connexion — device hors portée')), 15000)
-        ),
-      ]);
-    } catch (err: any) {
-      throw err;
-    }
+    // ── Étape 1 : connexion BLE link layer (timeout 15s, pas de MTU ici) ──
+    // Flutter : device.connect(timeout: 15s, mtu: null)
+    this.device = await Promise.race([
+      this.manager.connectToDevice(deviceId, { autoConnect: false }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Timeout connexion — device hors portée')), 15000)
+      ),
+    ]);
     console.log(`[BleGateway] Connecté à "${this.device.name}"`);
 
+    // ── Étape 2 : MTU séparé (Flutter : requestMtu(185), ignorer erreur) ──
+    try {
+      await this.device.requestMTU(185);
+      console.log('[BleGateway] MTU 185 négocié');
+    } catch {
+      console.log('[BleGateway] MTU request ignoré (device max 172)');
+    }
+
+    // ── Étape 3 : découverte des services ──
     await this.device.discoverAllServicesAndCharacteristics();
     console.log('[BleGateway] Services découverts');
 
-    // Vérifier la présence du Nordic UART Service
+    // Vérifier la présence du Nordic UART Service (NUS)
     const services = await this.device.services();
     const hasUart = services.some(
       (s) => s.uuid.toLowerCase() === SERVICE_UUID.toLowerCase()
@@ -232,24 +238,27 @@ export class BleGatewayClient {
       await this.device.cancelConnection();
       this.device = null;
       throw new Error(
-        `"${name}" n'a pas le service Nordic UART. ` +
+        `"${name}" n'a pas le service Nordic UART (NUS). ` +
         'Vérifiez que ce device tourne le firmware MeshCore Companion (variante BLE).'
       );
     }
 
-    // Abonner aux notifications AVANT d'envoyer quoi que ce soit.
-    // (monitorCharacteristicForService peut aussi déclencher le bonding sur Android)
+    // ── Étape 4 : activer les notifications TX (6e400003) ──
+    // Flutter : setNotifyValue(true) avec 3 tentatives × 500ms
+    // CRITIQUE : si auth error → on re-tente automatiquement dans subscribeToRx().
+    // Après bonding, la souscription est réétablie automatiquement.
     this.subscribeToRx();
 
-    // ── Étape 1 : DeviceQuery (cmd=22) ──
-    // Le premier write peut déclencher GATT_ERROR 133 (INSUFFICIENT_AUTH).
-    // Android montre alors le dialogue de bonding → l'utilisateur entre le PIN.
-    // sendWithBondingRetry() détecte ce code et patiente jusqu'à 30s en retentant.
+    // ── Étape 5 : DeviceQuery (cmd=22) ──
+    // Premier write → déclenche GATT_INSUFFICIENT_AUTH (133)
+    // → Android ouvre le dialogue PIN → utilisateur entre 123456
+    // → sendWithBondingRetry patiente et retente jusqu'à bonding terminé
     await this.sendWithBondingRetry(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
     console.log('[BleGateway] DeviceQuery envoyé');
     await new Promise((res) => setTimeout(res, 400));
 
-    // ── Étape 2 : AppStart (cmd=1) ──
+    // ── Étape 6 : AppStart (cmd=1) ──
+    // Flutter : [1][appVer=1][reserved×6]["MeshCoreOpen\0"]
     const appName = 'BitMesh\0';
     const appNameBytes = new TextEncoder().encode(appName);
     const appStartPayload = new Uint8Array(1 + 6 + appNameBytes.length);
@@ -257,10 +266,11 @@ export class BleGatewayClient {
     // bytes 1-6 : reserved (0x00)
     appStartPayload.set(appNameBytes, 7);
     await this.sendWithBondingRetry(CMD_APP_START, appStartPayload);
-    console.log('[BleGateway] AppStart envoyé — en attente SelfInfo...');
+    console.log('[BleGateway] AppStart envoyé — en attente SelfInfo (code=5)...');
 
-    // Attendre SelfInfo (code=5) — SetTime envoyé automatiquement dans parseSelfInfo
-    await new Promise((res) => setTimeout(res, 1000));
+    // SelfInfo → SetTime envoyé automatiquement dans parseSelfInfo
+    // Attendre jusqu'à 5s (Flutter _waitForSelfInfo timeout = 3s × 2 essais)
+    await new Promise((res) => setTimeout(res, 5000));
     console.log('[BleGateway] Handshake terminé');
   }
 
@@ -328,32 +338,58 @@ export class BleGatewayClient {
   // ── Privé : RX subscription ──────────────────────────────
 
   /**
-   * S'abonne aux notifications BLE.
+   * S'abonne aux notifications BLE (TX characteristic, 6e400003).
    *
-   * PROTOCOLE BLE : chaque notification EST un frame complet [code][data...]
-   * Pas de framing bytes (0x3e/longueur), contrairement à USB/Serial.
-   * Source : "For BLE - a frame is simply a single characteristic value."
-   *          — Companion Radio Protocol wiki (meshcore-dev/MeshCore)
+   * PROTOCOLE BLE : chaque notification = frame complet [code][data...]
+   * Source : meshcore_connector.dart — setNotifyValue(true) + onValueReceived.listen()
+   *
+   * ⚠️  AUTO-RETRY CRITIQUE :
+   *   Si monitorCharacteristicForService échoue avec GATT_INSUFFICIENT_AUTH (133),
+   *   c'est parce que le bonding n'est pas encore terminé.
+   *   Flutter fait 3 tentatives avec délais progressifs (500ms, 1000ms, 1500ms).
+   *   On fait pareil : on se re-souscrit automatiquement après un délai.
+   *   Sans ça, après bonding réussi, le device répond mais on n'écoute plus rien.
    */
-  private subscribeToRx(): void {
+  private subscribeToRx(attempt = 0): void {
     if (!this.device) return;
+    const MAX_ATTEMPTS = 5;
 
     this.device.monitorCharacteristicForService(
       SERVICE_UUID,
       RX_UUID,
       (error, characteristic) => {
         if (error) {
-          console.error('[BleGateway] Erreur RX:', error);
+          const msg = String(error?.reason ?? error?.message ?? error ?? '').toLowerCase();
+          const isAuthErr =
+            msg.includes('133') ||
+            msg.includes('insufficient') ||
+            msg.includes('authentication') ||
+            msg.includes('bonding') ||
+            msg.includes('encrypt') ||
+            msg.includes('15');
+
+          if (isAuthErr && attempt < MAX_ATTEMPTS) {
+            const delay = 500 + attempt * 500; // 500ms, 1s, 1.5s, 2s, 2.5s
+            console.log(
+              `[BleGateway] Auth requis pour notifications (tentative ${attempt + 1}/${MAX_ATTEMPTS}), ` +
+              `réessai dans ${delay}ms...`
+            );
+            setTimeout(() => this.subscribeToRx(attempt + 1), delay);
+          } else if (!msg.includes('cancelled') && !msg.includes('disconnected')) {
+            console.error(`[BleGateway] Erreur RX (tentative ${attempt + 1}):`, msg);
+          }
           return;
         }
-        if (!characteristic?.value) return;
 
+        if (!characteristic?.value) return;
         const bytes = this.b64ToBytes(characteristic.value);
-        // Chaque notification BLE = un frame complet : [code][data...]
         this.handleFrame(bytes);
       }
     );
-    console.log('[BleGateway] Abonné aux notifications RX');
+
+    if (attempt === 0) {
+      console.log('[BleGateway] Souscription notifications TX (6e400003)...');
+    }
   }
 
   // ── Privé : Frame handler ────────────────────────────────
