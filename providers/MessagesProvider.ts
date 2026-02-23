@@ -146,6 +146,8 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
   const [discoveredForums, setDiscoveredForums] = useState<ForumAnnouncement[]>([]);
   // FIX #1: Deduplication — Set des IDs de messages récents (max 200)
   const recentMsgIds = useRef<Set<string>>(new Set());
+  // Buffer paquets chiffrés reçus avant de connaître la pubkey du sender
+  const pendingEncryptedPackets = useRef<Map<string, MeshCorePacket[]>>(new Map());
   // FIX: Cache des handlers forum (même référence sur reconnexion → dedup fonctionne)
   const forumHandlerRefs = useRef<Map<string, MessageHandler>>(new Map());
   const addToDedup = (id: string) => {
@@ -319,8 +321,41 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
         if (pubkey) {
           const fromNodeId = uint64ToNodeId(packet.fromNodeId);
           console.log('[MeshCore] Pubkey reçue via KEY_ANNOUNCE:', fromNodeId, pubkey.slice(0, 20) + '...');
-          // Mettre à jour la conversation avec la pubkey
           updateConversationPubkey(fromNodeId, pubkey);
+
+          // Retry des paquets bufferisés en attente de cette pubkey
+          const buffered = pendingEncryptedPackets.current.get(fromNodeId);
+          if (buffered && buffered.length > 0) {
+            pendingEncryptedPackets.current.delete(fromNodeId);
+            console.log(`[MeshCore] Retry ${buffered.length} paquet(s) bufferisé(s) pour ${fromNodeId}`);
+            for (const bufferedPkt of buffered) {
+              try {
+                const enc = decodeEncryptedPayload(bufferedPkt.payload);
+                if (!enc) continue;
+                const plaintext = decryptDM(enc, identity.privkeyBytes, pubkey);
+                const msgId = `mc-${bufferedPkt.messageId}`;
+                const msg: StoredMessage = {
+                  id: msgId,
+                  conversationId: fromNodeId,
+                  fromNodeId,
+                  fromPubkey: pubkey,
+                  text: plaintext,
+                  type: 'text',
+                  timestamp: bufferedPkt.timestamp * 1000,
+                  isMine: false,
+                  status: 'delivered',
+                };
+                saveMessage(msg);
+                updateConversationLastMessage(fromNodeId, plaintext.slice(0, 50), msg.timestamp, true);
+                setMessagesByConv(prev => ({
+                  ...prev,
+                  [fromNodeId]: [...(prev[fromNodeId] ?? []), msg],
+                }));
+              } catch (retryErr) {
+                console.error('[MeshCore] Erreur retry paquet bufferisé:', retryErr);
+              }
+            }
+          }
         }
         return;
       }
@@ -343,8 +378,13 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           // Récupérer la pubkey du sender depuis nos conversations
           const conv = conversations.find(c => c.id === fromNodeId);
           if (!conv?.peerPubkey) {
-            console.error('[MeshCore] Impossible de déchiffrer: pubkey du sender inconnue');
-            // ✅ Envoyer une demande de KEY_ANNOUNCE
+            // Buffer le paquet — sera retraité quand KEY_ANNOUNCE arrivera
+            const existing = pendingEncryptedPackets.current.get(fromNodeId) ?? [];
+            if (existing.length < 5) {
+              pendingEncryptedPackets.current.set(fromNodeId, [...existing, packet]);
+              console.warn(`[MeshCore] Pubkey inconnue pour ${fromNodeId} — paquet bufferisé (${existing.length + 1}/5)`);
+            }
+            // Envoyer KEY_ANNOUNCE pour demander la pubkey
             try {
               const { createKeyAnnouncePacket } = await import('@/utils/meshcore-protocol');
               const requestPacket = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
@@ -1491,7 +1531,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
     }
     // FIX BUG 5: autoriser l'envoi via BLE même si MQTT déconnecté
     if (!ble.connected && mqttRef.current?.state !== 'connected') {
-      throw new Error('Non connecté au réseau MQTT');
+      throw new Error('Non connecté — activez le Bluetooth (LoRa) ou vérifiez votre connexion MQTT');
     }
 
     // ✅ Validation taille message

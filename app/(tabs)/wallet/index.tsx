@@ -1364,6 +1364,12 @@ export default function WalletScreen() {
             currency={settings.fiatCurrency}
             onReceivePress={() => setShowReceiveModal(true)}
           />
+          {balanceQuery.isError && !balanceQuery.isLoading && (
+            <View style={styles.errorBar}>
+              <AlertTriangle size={14} color={Colors.red} />
+              <Text style={styles.errorBarText}>Balance indisponible (Mempool hors ligne). Tirez pour réessayer.</Text>
+            </View>
+          )}
 
           <View style={styles.quickActions}>
             <TouchableOpacity

@@ -126,7 +126,11 @@ export class BleGatewayClient {
     onDeviceFound: (device: BleGatewayDevice) => void,
     timeoutMs: number = 10000
   ): Promise<void> {
-    console.log('[BleGateway] Starting BLE scan (no name filter)...');
+    // MeshCore Companion firmware puts the device name in the BLE scan response packet,
+    // not in the main advertising packet. We therefore show ALL devices (including unnamed
+    // ones) so the user can identify their node, and we use ScanMode.LowLatency (2) which
+    // triggers active scanning on Android (sends scan requests to retrieve scan responses).
+    console.log('[BleGateway] Starting BLE scan (all devices, active mode)...');
     const seen = new Set<string>();
 
     return new Promise((resolve, reject) => {
@@ -137,8 +141,8 @@ export class BleGatewayClient {
       }, timeoutMs);
 
       this.manager.startDeviceScan(
-        null,                          // no service UUID filter (unreliable on Android)
-        { allowDuplicates: false },
+        null,              // no UUID filter — unreliable on Android + allows custom board names
+        { allowDuplicates: false, scanMode: 2 }, // scanMode 2 = LowLatency / active scan
         (error, device) => {
           if (error) {
             clearTimeout(timeout);
@@ -147,12 +151,18 @@ export class BleGatewayClient {
             return;
           }
 
-          // Skip unnamed / already seen devices
-          if (!device || !device.name || seen.has(device.id)) return;
+          // Skip null devices and already-seen IDs.
+          // Do NOT filter on device.name: MeshCore Companion may advertise the name only
+          // in the scan response (retrieved via active scan), so the first callback for a
+          // given device can have device.name === null.  We update the entry if we see the
+          // same device again with a name.
+          if (!device) return;
+          if (seen.has(device.id) && !device.name) return; // already shown, no new info
 
           seen.add(device.id);
-          const lname = device.name.toLowerCase();
-          console.log(`[BleGateway] Found: "${device.name}" (${device.id}), RSSI ${device.rssi}`);
+          const displayName = device.name || `Device BLE (${device.id.slice(0, 8)})`;
+          const lname = displayName.toLowerCase();
+          console.log(`[BleGateway] Found: "${displayName}" (${device.id}), RSSI ${device.rssi}`);
 
           const type: 'gateway' | 'companion' =
             lname.includes('gateway') || lname.includes('gw') || lname.includes('relay')
@@ -161,7 +171,7 @@ export class BleGatewayClient {
 
           onDeviceFound({
             id: device.id,
-            name: device.name,
+            name: displayName,
             rssi: device.rssi || -100,
             type,
           });
@@ -180,12 +190,32 @@ export class BleGatewayClient {
     console.log(`[BleGateway] Connecting to ${deviceId}...`);
 
     // autoConnect:false = connexion directe avec timeout (autoConnect:true peut bloquer indéfiniment)
-    this.device = await Promise.race([
-      this.manager.connectToDevice(deviceId, { autoConnect: false, requestMTU: 512 }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Connection timeout — device not reachable')), timeoutMs)
-      ),
-    ]);
+    try {
+      this.device = await Promise.race([
+        this.manager.connectToDevice(deviceId, { autoConnect: false, requestMTU: 512 }),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Connection timeout — device not reachable')), timeoutMs)
+        ),
+      ]);
+    } catch (err: any) {
+      // MeshCore Companion requires BLE pairing with PIN (default: 123456).
+      // If Android rejects the connection with "Insufficient Authentication" or similar,
+      // give the user a clear actionable message.
+      const msg: string = err?.message ?? String(err);
+      if (
+        msg.includes('133') ||           // GATT_ERROR 133 (common Android BLE failure)
+        msg.includes('Authentication') ||
+        msg.includes('auth') ||
+        msg.includes('pairing')
+      ) {
+        throw new Error(
+          'Connexion refusée — le device MeshCore exige un appairage BLE.\n' +
+          'Dans les paramètres Bluetooth Android, supprimez le device "MeshCore" ' +
+          'existant puis reconnectez. Le PIN par défaut est 123456.'
+        );
+      }
+      throw err;
+    }
     console.log(`[BleGateway] Connected to "${this.device.name}"`);
 
     await this.device.discoverAllServicesAndCharacteristics();
@@ -201,8 +231,8 @@ export class BleGatewayClient {
       await this.device.cancelConnection();
       this.device = null;
       throw new Error(
-        `Device "${name}" does not expose Nordic UART service. ` +
-        'Make sure it runs MeshCore Companion firmware.'
+        `"${name}" n'expose pas le service Nordic UART. ` +
+        'Vérifiez que ce device tourne le firmware MeshCore Companion (BLE variant).'
       );
     }
 

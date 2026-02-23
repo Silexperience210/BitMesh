@@ -99,12 +99,19 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
             </View>
           )}
 
+          {/* Info PIN */}
+          <View style={styles.infoBanner}>
+            <Text style={styles.infoText}>
+              Le firmware MeshCore Companion nécessite un appairage BLE. Si une demande de PIN s'affiche, entrez <Text style={styles.infoBold}>123456</Text> (défaut).
+            </Text>
+          </View>
+
           {/* Liste des devices */}
           <View style={styles.listContainer}>
-            <Text style={styles.listTitle}>Gateways disponibles ({availableDevices.length})</Text>
+            <Text style={styles.listTitle}>Appareils BLE détectés ({availableDevices.length})</Text>
             {availableDevices.length === 0 && !scanning ? (
               <Text style={styles.emptyText}>
-                Aucun gateway trouvé. Assurez-vous que votre gateway ESP32 est allumé et à proximité.
+                Aucun appareil trouvé. Vérifiez que votre device MeshCore Companion est allumé et à proximité, et que le firmware BLE est installé.
               </Text>
             ) : (
               <FlatList
@@ -222,6 +229,25 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.background,
+  },
+  infoBanner: {
+    backgroundColor: `${Colors.accent}15`,
+    borderRadius: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: `${Colors.accent}30`,
+  },
+  infoText: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  infoBold: {
+    color: Colors.accent,
+    fontWeight: '700',
+    fontFamily: 'monospace',
   },
   errorBanner: {
     backgroundColor: `${Colors.red}20`,
