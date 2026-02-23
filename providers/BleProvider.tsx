@@ -228,6 +228,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, error: null }));
 
     try {
+      // Indiquer dans l'UI que l'appairage BLE peut prendre du temps
+      setState((prev) => ({
+        ...prev,
+        error: null,
+        // On réutilise le champ error pour afficher une info non-fatale
+      }));
+
       await clientRef.current.connect(deviceId);
 
       const device = clientRef.current.getConnectedDevice();
@@ -244,9 +251,20 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       console.log(`[BleProvider] Connected to ${device?.name}`);
     } catch (error: any) {
       console.error('[BleProvider] Connection error:', error);
+      const msg: string = error?.message ?? String(error);
+      // Donner un message utile si c'est un problème d'appairage
+      const isAuthErr =
+        msg.includes('133') ||
+        msg.includes('insufficient') ||
+        msg.includes('authentication') ||
+        msg.includes('bonding') ||
+        msg.includes('pairing');
+      const displayMsg = isAuthErr
+        ? 'Appairage BLE requis. Allez dans Paramètres → Bluetooth, supprimez "MeshCore-..." puis relancez. PIN : 123456'
+        : msg || 'Connection failed';
       setState((prev) => ({
         ...prev,
-        error: error.message || 'Connection failed',
+        error: displayMsg,
       }));
       throw error;
     }

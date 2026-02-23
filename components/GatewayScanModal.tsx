@@ -39,12 +39,18 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
     }
   };
 
+  const [connecting, setConnecting] = React.useState(false);
+
   const handleConnect = async (deviceId: string) => {
+    setConnecting(true);
     try {
       await connectToGateway(deviceId);
       onClose(); // Fermer le modal après connexion
-    } catch (error) {
-      console.error('Connection error:', error);
+    } catch (err) {
+      console.error('Connection error:', err);
+      // L'erreur est affichée via ble.error (BleProvider)
+    } finally {
+      setConnecting(false);
     }
   };
 
@@ -92,19 +98,32 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
             )}
           </TouchableOpacity>
 
+          {/* Appairage en cours */}
+          {connecting && (
+            <View style={styles.bondingBanner}>
+              <ActivityIndicator size="small" color={Colors.accent} style={{ marginRight: 8 }} />
+              <Text style={styles.bondingText}>
+                Appairage BLE en cours...{'\n'}
+                <Text style={styles.bondingBold}>Entrez le PIN dans le dialogue Android (défaut : 123456)</Text>
+              </Text>
+            </View>
+          )}
+
           {/* Erreur BLE */}
-          {error && !scanning && (
+          {error && !scanning && !connecting && (
             <View style={styles.errorBanner}>
               <Text style={styles.errorText}>⚠ {error}</Text>
             </View>
           )}
 
           {/* Info PIN */}
-          <View style={styles.infoBanner}>
-            <Text style={styles.infoText}>
-              Le firmware MeshCore Companion nécessite un appairage BLE. Si une demande de PIN s'affiche, entrez <Text style={styles.infoBold}>123456</Text> (défaut).
-            </Text>
-          </View>
+          {!connecting && (
+            <View style={styles.infoBanner}>
+              <Text style={styles.infoText}>
+                PIN BLE par défaut : <Text style={styles.infoBold}>123456</Text>
+              </Text>
+            </View>
+          )}
 
           {/* Liste des devices */}
           <View style={styles.listContainer}>
@@ -229,6 +248,27 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.background,
+  },
+  bondingBanner: {
+    backgroundColor: `${Colors.accent}20`,
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: `${Colors.accent}50`,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  bondingText: {
+    color: Colors.accent,
+    fontSize: 13,
+    lineHeight: 20,
+    flex: 1,
+  },
+  bondingBold: {
+    fontWeight: '700',
+    color: Colors.accent,
   },
   infoBanner: {
     backgroundColor: `${Colors.accent}15`,

@@ -55,8 +55,9 @@ const APP_PROTOCOL_VERSION = 3;
 // Taille de l'en-tête RawData push : [snr:int8][rssi:int8][reserved:uint8]
 const RAW_PUSH_HEADER_SIZE = 3;
 
-// Chunk BLE max safe (MTU 185 - 3 ATT overhead = 182, on utilise 180 pour marge)
-const BLE_CHUNK_SIZE = 180;
+// Device MAX_FRAME_SIZE = 172. MTU négocié = min(requestMTU, 172).
+// Max ATT data = MTU - 3 overhead = 172 - 3 = 169 bytes.
+const BLE_CHUNK_SIZE = 169;
 
 // ── Interfaces publiques ───────────────────────────────────
 
@@ -183,39 +184,37 @@ export class BleGatewayClient {
   /**
    * Connexion + handshake MeshCore Companion.
    *
-   * Séquence (d'après meshcore_connector.dart) :
+   * ⚠️  Le firmware impose ESP_LE_AUTH_REQ_SC_MITM_BOND :
+   *     les deux caractéristiques (RX + TX) ont PERM_*_ENC_MITM.
+   *     deviceConnected n'est true qu'APRÈS onAuthenticationComplete().
+   *     → Notre app doit gérer le bonding Android :
+   *       1. Le premier write déclenche GATT_INSUFFICIENT_AUTHENTICATION (133).
+   *       2. Android ouvre le dialogue PIN automatiquement.
+   *       3. L'utilisateur entre le PIN (défaut : 123456).
+   *       4. Bonding terminé → on RETENTE la commande.
+   *
+   * Séquence :
    *   1. connect() + discoverServices
-   *   2. subscribe notifications RX
-   *   3. DeviceQuery  (cmd=22, proto_ver=3)
-   *   4. AppStart     (cmd=1,  app_ver=1, reserved×6, "BitMesh\0")
-   *   5. SetTime      (cmd=6,  timestamp_LE32) — envoyé auto à réception SelfInfo
+   *   2. subscribe notifications RX (déclenche aussi le bonding)
+   *   3. DeviceQuery  (cmd=22, proto_ver=3)  ← avec retry bonding
+   *   4. AppStart     (cmd=1,  app_ver=1, reserved×6, "BitMesh\0")  ← avec retry
+   *   5. SetTime      (cmd=6) — envoyé automatiquement à réception SelfInfo
    */
-  async connect(deviceId: string, timeoutMs = 15000): Promise<void> {
+  async connect(deviceId: string, timeoutMs = 60000): Promise<void> {
     console.log(`[BleGateway] Connexion à ${deviceId}...`);
 
+    // ── Étape 0 : connexion BLE (link layer, timeout 15s) ──
     try {
-      // MTU 185 = valeur utilisée par meshcore-open (Flutter officiel)
       this.device = await Promise.race([
-        this.manager.connectToDevice(deviceId, { autoConnect: false, requestMTU: 185 }),
+        this.manager.connectToDevice(deviceId, {
+          autoConnect: false,
+          requestMTU: 172, // device MAX_FRAME_SIZE = 172
+        }),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Timeout connexion — device hors portée')), timeoutMs)
+          setTimeout(() => reject(new Error('Timeout connexion — device hors portée')), 15000)
         ),
       ]);
     } catch (err: any) {
-      const msg: string = err?.message ?? String(err);
-      if (
-        msg.includes('133') ||
-        msg.includes('Authentication') ||
-        msg.includes('auth') ||
-        msg.includes('pairing') ||
-        msg.includes('bonding')
-      ) {
-        throw new Error(
-          'Connexion refusée — appairage BLE requis.\n' +
-          'Dans les paramètres Bluetooth Android, supprimez le device "MeshCore-..." ' +
-          'existant, puis relancez. PIN par défaut : 123456.'
-        );
-      }
       throw err;
     }
     console.log(`[BleGateway] Connecté à "${this.device.name}"`);
@@ -238,29 +237,30 @@ export class BleGatewayClient {
       );
     }
 
-    // Abonner aux notifications AVANT d'envoyer quoi que ce soit
+    // Abonner aux notifications AVANT d'envoyer quoi que ce soit.
+    // (monitorCharacteristicForService peut aussi déclencher le bonding sur Android)
     this.subscribeToRx();
 
     // ── Étape 1 : DeviceQuery (cmd=22) ──
-    // Premier message obligatoire selon meshcore-open.
-    // Format BLE : [cmd=22][proto_ver=3]  (2 bytes, PAS de framing USB)
-    await this.sendFrame(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
+    // Le premier write peut déclencher GATT_ERROR 133 (INSUFFICIENT_AUTH).
+    // Android montre alors le dialogue de bonding → l'utilisateur entre le PIN.
+    // sendWithBondingRetry() détecte ce code et patiente jusqu'à 30s en retentant.
+    await this.sendWithBondingRetry(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
     console.log('[BleGateway] DeviceQuery envoyé');
-    await new Promise((res) => setTimeout(res, 300));
+    await new Promise((res) => setTimeout(res, 400));
 
     // ── Étape 2 : AppStart (cmd=1) ──
-    // Format : [ver=1][reserved×6][app_name\0]
     const appName = 'BitMesh\0';
     const appNameBytes = new TextEncoder().encode(appName);
     const appStartPayload = new Uint8Array(1 + 6 + appNameBytes.length);
-    appStartPayload[0] = 0x01;                  // app version
-    // bytes 1-6 : reserved (déjà 0x00)
+    appStartPayload[0] = 0x01; // app version
+    // bytes 1-6 : reserved (0x00)
     appStartPayload.set(appNameBytes, 7);
-    await this.sendFrame(CMD_APP_START, appStartPayload);
+    await this.sendWithBondingRetry(CMD_APP_START, appStartPayload);
     console.log('[BleGateway] AppStart envoyé — en attente SelfInfo...');
 
-    // Attendre SelfInfo (code=5) — SetTime est envoyé automatiquement dans parseSelfInfo
-    await new Promise((res) => setTimeout(res, 800));
+    // Attendre SelfInfo (code=5) — SetTime envoyé automatiquement dans parseSelfInfo
+    await new Promise((res) => setTimeout(res, 1000));
     console.log('[BleGateway] Handshake terminé');
   }
 
@@ -495,6 +495,57 @@ export class BleGatewayClient {
   }
 
   // ── Privé : BLE write ────────────────────────────────────
+
+  /**
+   * sendWithBondingRetry — write avec gestion du bonding Android.
+   *
+   * Le firmware exige ESP_LE_AUTH_REQ_SC_MITM_BOND sur les deux caractéristiques.
+   * Quand l'app tente d'écrire sans être bondée :
+   *   • L'ESP32 renvoie GATT_INSUFFICIENT_AUTHENTICATION
+   *   • Android détecte ce code et ouvre automatiquement le dialogue de couplage
+   *   • L'utilisateur entre le PIN (défaut 123456)
+   *   • Le bonding se termine en tâche de fond
+   *   • On doit RETENTER l'écriture manuellement
+   *
+   * Intervalles : 4s, 6s, 8s, 10s → jusqu'à ~28s d'attente max.
+   */
+  private async sendWithBondingRetry(cmd: number, payload: Uint8Array): Promise<void> {
+    const RETRY_DELAYS = [4000, 6000, 8000, 10000];
+    let lastErr: any;
+
+    for (let attempt = 0; attempt <= RETRY_DELAYS.length; attempt++) {
+      try {
+        await this.sendFrame(cmd, payload);
+        if (attempt > 0) {
+          console.log(`[BleGateway] cmd=${cmd} OK après ${attempt} tentative(s) de bonding`);
+        }
+        return;
+      } catch (err: any) {
+        lastErr = err;
+        const msg = String(err?.reason ?? err?.message ?? err ?? '').toLowerCase();
+        const isAuthErr =
+          msg.includes('133')           || // Android GATT_ERROR / INSUFFICIENT_AUTH
+          msg.includes('15')            || // GATT_AUTH_FAIL
+          msg.includes('insufficient')  ||
+          msg.includes('authentication') ||
+          msg.includes('bonding')       ||
+          msg.includes('pairing')       ||
+          msg.includes('encrypt');
+
+        if (isAuthErr && attempt < RETRY_DELAYS.length) {
+          const wait = RETRY_DELAYS[attempt];
+          console.log(
+            `[BleGateway] Appairage BLE requis (cmd=${cmd}, tentative ${attempt + 1}/${RETRY_DELAYS.length}). ` +
+            `Entrez le PIN dans le dialogue Android. Prochain essai dans ${wait / 1000}s...`
+          );
+          await new Promise((res) => setTimeout(res, wait));
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw lastErr;
+  }
 
   /**
    * Envoie un frame BLE au device.
