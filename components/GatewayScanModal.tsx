@@ -12,8 +12,11 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
+  NativeModules,
+  NativeEventEmitter,
 } from 'react-native';
-import { Bluetooth, X, Wifi, CheckCircle2, Radio } from 'lucide-react-native';
+import BleManager from 'react-native-ble-manager';
+import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useBle } from '@/providers/BleProvider';
 import { type BleGatewayDevice } from '@/utils/ble-gateway';
@@ -50,6 +53,47 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   };
 
   const [connecting, setConnecting] = React.useState(false);
+
+  const handleDebugBle = async () => {
+    try {
+      console.log('=== DEBUG BLE START ===');
+
+      await BleManager.start({ showAlert: false });
+      console.log('✅ BleManager démarré');
+
+      const state = await BleManager.checkState();
+      console.log('📡 BLE State:', state);
+
+      if (state !== 'on') {
+        Alert.alert('Bluetooth éteint', `État détecté : ${state}\nAllumez le Bluetooth.`);
+        return;
+      }
+
+      console.log('🔍 Scan pendant 5 secondes...');
+      const found: any[] = [];
+
+      const sub = new NativeEventEmitter(NativeModules.BleManager)
+        .addListener('BleManagerDiscoverPeripheral', (device) => {
+          const name = device.name || device.advertising?.localName || 'SANS NOM';
+          found.push({ name, id: device.id, rssi: device.rssi });
+          console.log('📱 TROUVÉ:', name, device.id, device.rssi);
+        });
+
+      await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false });
+
+      setTimeout(() => {
+        sub.remove();
+        console.log('=== Scan terminé ===', found.length, 'device(s)');
+        Alert.alert(
+          `${found.length} device(s) trouvé(s)`,
+          found.map(d => `• ${d.name}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device détecté'
+        );
+      }, 5500);
+    } catch (err: any) {
+      console.error('❌ ERREUR DEBUG BLE:', err);
+      Alert.alert('Erreur BLE', err.message);
+    }
+  };
 
   const handleConnect = async (deviceId: string) => {
     setConnecting(true);
@@ -148,6 +192,12 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
                 <Text style={styles.scanButtonText}>Démarrer le scan</Text>
               </>
             )}
+          </TouchableOpacity>
+
+          {/* Bouton DEBUG BLE — test scan brut sans BleProvider */}
+          <TouchableOpacity style={styles.debugButton} onPress={handleDebugBle}>
+            <Bug size={16} color={Colors.textMuted} />
+            <Text style={styles.debugButtonText}>Debug BLE brut (5s)</Text>
           </TouchableOpacity>
 
           {/* Appairage en cours */}
@@ -300,6 +350,21 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: Colors.background,
+  },
+  debugButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingVertical: 10,
+    marginBottom: 14,
+  },
+  debugButtonText: {
+    fontSize: 13,
+    color: Colors.textMuted,
   },
   bondingBanner: {
     backgroundColor: `${Colors.accent}20`,
