@@ -12,8 +12,6 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
-  NativeModules,
-  NativeEventEmitter,
 } from 'react-native';
 import BleManager from 'react-native-ble-manager';
 import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug } from 'lucide-react-native';
@@ -79,15 +77,15 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         console.log('🔐 Permissions:', permStatus);
       }
 
-      console.log('🔍 Scan 5s (neverForLocation)...');
+      console.log('🔍 Scan 5s — v12 TurboModule API...');
       const found: any[] = [];
 
-      const sub = new NativeEventEmitter(NativeModules.BleManager)
-        .addListener('BleManagerDiscoverPeripheral', (device) => {
-          const name = device.name || device.advertising?.localName || 'SANS NOM';
-          found.push({ name, id: device.id, rssi: device.rssi });
-          console.log('📱 TROUVÉ:', name, device.id, device.rssi);
-        });
+      // v12 : BleManager.onDiscoverPeripheral() remplace NativeEventEmitter
+      const sub = BleManager.onDiscoverPeripheral((device: any) => {
+        const name = device.name || device.advertising?.localName || 'SANS NOM';
+        found.push({ name, id: device.id, rssi: device.rssi });
+        console.log('📱 TROUVÉ:', name, device.id, device.rssi);
+      });
 
       await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
 

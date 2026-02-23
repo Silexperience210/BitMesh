@@ -29,7 +29,6 @@
  */
 
 import BleManager from 'react-native-ble-manager';
-import { NativeEventEmitter, NativeModules } from 'react-native';
 import {
   MESHCORE_BLE,
   type MeshCorePacket,
@@ -127,6 +126,7 @@ export interface MeshCoreIncomingMsg {
 }
 
 type MessageHandler = (packet: MeshCorePacket) => void;
+type BleSubscription = { remove: () => void };
 
 // ── BleGatewayClient ──────────────────────────────────────────────────
 
@@ -135,8 +135,7 @@ export class BleGatewayClient {
   private messageHandler: MessageHandler | null = null;
   private deviceInfo: BleDeviceInfo | null = null;
   private deviceInfoCallback: ((info: BleDeviceInfo) => void) | null = null;
-  private listeners: ReturnType<NativeEventEmitter['addListener']>[] = [];
-  private emitter: NativeEventEmitter;
+  private listeners: BleSubscription[] = [];
 
   // Callbacks pour le protocole natif MeshCore Companion
   private incomingMessageCallback: ((msg: MeshCoreIncomingMsg) => void) | null = null;
@@ -145,9 +144,7 @@ export class BleGatewayClient {
   private sendConfirmedCallback: ((ackCode: number, roundTripMs: number) => void) | null = null;
   private pendingContacts: MeshCoreContact[] = [];
 
-  constructor() {
-    this.emitter = new NativeEventEmitter(NativeModules.BleManager);
-  }
+  constructor() {}
 
   // ── Initialisation ────────────────────────────────────────────────
 
@@ -170,32 +167,30 @@ export class BleGatewayClient {
     console.log('[BleGateway] Scan BLE actif...');
     const seen = new Set<string>();
 
-    const listener = this.emitter.addListener(
-      'BleManagerDiscoverPeripheral',
-      (peripheral: any) => {
-        const name: string =
-          peripheral.name ||
-          peripheral.advertising?.localName ||
-          '';
+    // v12 TurboModule API — plus de NativeEventEmitter
+    const listener = BleManager.onDiscoverPeripheral((peripheral: any) => {
+      const name: string =
+        peripheral.name ||
+        peripheral.advertising?.localName ||
+        '';
 
-        if (seen.has(peripheral.id) && !name) return;
-        seen.add(peripheral.id);
+      if (seen.has(peripheral.id) && !name) return;
+      seen.add(peripheral.id);
 
-        const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
-        const isMeshCore =
-          displayName.startsWith('MeshCore-') ||
-          displayName.startsWith('Whisper-');
+      const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
+      const isMeshCore =
+        displayName.startsWith('MeshCore-') ||
+        displayName.startsWith('Whisper-');
 
-        console.log(`[BleGateway] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
+      console.log(`[BleGateway] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
 
-        onDeviceFound({
-          id: peripheral.id,
-          name: displayName,
-          rssi: peripheral.rssi || -100,
-          type: isMeshCore ? 'companion' : 'gateway',
-        });
-      }
-    );
+      onDeviceFound({
+        id: peripheral.id,
+        name: displayName,
+        rssi: peripheral.rssi || -100,
+        type: isMeshCore ? 'companion' : 'gateway',
+      });
+    });
 
     // Scan sans filtre UUID, mode agressif pour Android 12+
     await BleManager.scan({
@@ -262,27 +257,21 @@ export class BleGatewayClient {
     await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
     console.log('[BleGateway] Notifications TX activées (6e400003)');
 
-    // Écouter les données entrantes
-    const notifListener = this.emitter.addListener(
-      'BleManagerDidUpdateValueForCharacteristic',
-      (data: any) => {
-        if (data.peripheral !== deviceId) return;
-        if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
-        this.handleFrame(new Uint8Array(data.value));
-      }
-    );
+    // Écouter les données entrantes — v12 TurboModule API
+    const notifListener = BleManager.onDidUpdateValueForCharacteristic((data: any) => {
+      if (data.peripheral !== deviceId) return;
+      if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
+      this.handleFrame(new Uint8Array(data.value));
+    });
     this.listeners.push(notifListener);
 
     // Écouter déconnexion
-    const discListener = this.emitter.addListener(
-      'BleManagerDisconnectPeripheral',
-      (data: any) => {
-        if (data.peripheral === deviceId) {
-          console.log('[BleGateway] Device déconnecté');
-          this.connectedId = null;
-        }
+    const discListener = BleManager.onDisconnectPeripheral((data: any) => {
+      if (data.peripheral === deviceId) {
+        console.log('[BleGateway] Device déconnecté');
+        this.connectedId = null;
       }
-    );
+    });
     this.listeners.push(discListener);
 
     // ── 6. DeviceQuery (cmd=22) ──
@@ -342,19 +331,12 @@ export class BleGatewayClient {
         done();
       }, timeoutMs);
 
-      const bondListener = this.emitter.addListener(
-        'BleManagerBondingComplete',
-        (data: any) => {
-          if (data.peripheral !== deviceId) return;
-          if (data.status === 'success') {
-            console.log('[BleGateway] Bonding réussi');
-            done();
-          } else {
-            console.warn('[BleGateway] Bonding status:', data.status);
-            done(new Error(`Bonding échoué : ${data.status}. Vérifiez le PIN (défaut : 123456).`));
-          }
-        }
-      );
+      // v12 TurboModule API — onPeripheralDidBond remplace BleManagerBondingComplete
+      const bondListener = BleManager.onPeripheralDidBond((data: any) => {
+        if (data.id !== deviceId && data.peripheral !== deviceId) return;
+        console.log('[BleGateway] Bonding réussi (onPeripheralDidBond)');
+        done();
+      });
 
       console.log('[BleGateway] createBond() — entrez le PIN dans le dialogue Android...');
       BleManager.createBond(deviceId)
