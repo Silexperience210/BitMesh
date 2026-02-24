@@ -77,7 +77,7 @@ const PUSH_NEW_ADVERT       = 0x8A; // même format que RESP_CONTACT
 
 const APP_PROTOCOL_VERSION = 3;
 const RAW_PUSH_HEADER_SIZE = 3;
-const BLE_MAX_WRITE        = 169;
+const BLE_MAX_WRITE        = 182; // MTU 185 − 3 bytes overhead ATT
 
 // ── Types publics ──────────────────────────────────────────────────────
 
@@ -259,6 +259,9 @@ export class BleGatewayClient {
         await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
         notifySet = true;
         console.log(`[BleGateway] Notifications activées (attempt ${attempt + 1})`);
+        // Délai 500ms pour que le firmware active ses handlers avant la première commande
+        // (meshcore_connector.dart: Future.delayed(const Duration(milliseconds: 500)))
+        await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         console.log(`[BleGateway] startNotification ${attempt + 1}/3 échoué`);
         if (attempt === 2) throw e;
