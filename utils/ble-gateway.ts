@@ -225,10 +225,12 @@ export class BleGatewayClient {
     }
 
     // ── 3. Découverte services + check NUS UUID ──
+    // PeripheralInfo.serviceUUIDs = string[]   (chemin rapide)
+    // PeripheralInfo.services     = Service[]  = { uuid: string }[]  (fallback)
     const services = await BleManager.retrieveServices(deviceId) as any;
-    const hasUart = (services.services as string[])?.some(
-      (s: string) => s.toLowerCase() === SERVICE_UUID.toLowerCase()
-    );
+    const hasUart =
+      services.serviceUUIDs?.some((u: string) => u.toLowerCase() === SERVICE_UUID.toLowerCase()) ||
+      services.services?.some((s: any) => s.uuid?.toLowerCase() === SERVICE_UUID.toLowerCase());
     if (!hasUart) {
       await BleManager.disconnect(deviceId);
       this.connectedId = null;
