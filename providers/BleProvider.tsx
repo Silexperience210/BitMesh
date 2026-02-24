@@ -79,7 +79,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     const initBle = async () => {
       try {
         if (Platform.OS === 'android') {
-          await requestAndroidPermissions();
+          try {
+            await requestAndroidPermissions();
+          } catch (permErr) {
+            // Permissions refusées au démarrage — on continue quand même l'init BLE.
+            // Elles seront re-demandées lors du premier scan dans GatewayScanModal.
+            console.warn('[BleProvider] Permissions BLE non accordées au lancement:', permErr);
+          }
         }
 
         const client = getBleGatewayClient();

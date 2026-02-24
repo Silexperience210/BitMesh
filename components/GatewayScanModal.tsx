@@ -56,20 +56,28 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
   // ── Permissions Android ──────────────────────────────────────────
-  const requestPerms = async (): Promise<void> => {
-    if (Platform.OS !== 'android') return;
+  // Retourne true si les permissions BLE nécessaires sont accordées.
+  const requestPerms = async (): Promise<boolean> => {
+    if (Platform.OS !== 'android') return true;
     try {
       if (Platform.Version >= 31) {
-        await PermissionsAndroid.requestMultiple([
+        const granted = await PermissionsAndroid.requestMultiple([
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
           PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
         ]);
+        return (
+          granted['android.permission.BLUETOOTH_SCAN'] === 'granted' &&
+          granted['android.permission.BLUETOOTH_CONNECT'] === 'granted'
+        );
       } else {
-        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+        );
+        return granted === 'granted';
       }
-    } catch (_) {
-      // permissions déjà accordées ou erreur ignorée
+    } catch {
+      return true; // permissions déjà accordées (requestMultiple peut throw si déjà granted)
     }
   };
 
@@ -77,8 +85,15 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const runScan = async (debugMode: boolean) => {
     try {
       console.log('=== SCAN BLE START ===');
-      // Demander les permissions avant de scanner
-      await requestPerms();
+      // Demander et vérifier les permissions avant de scanner
+      const permsOk = await requestPerms();
+      if (!permsOk) {
+        Alert.alert(
+          'Permissions Bluetooth requises',
+          'Autorisez Bluetooth et Localisation dans :\nParamètres → Applications → BitMesh → Autorisations.'
+        );
+        return;
+      }
 
       await BleManager.start({ showAlert: false });
       const bleState = await BleManager.checkState();
@@ -152,6 +167,17 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const doConnect = async () => {
     if (!pendingDevice) return;
     setConnecting(true);
+
+    // BLUETOOTH_CONNECT requis pour createBond + connect sur Android 12+
+    const permsOk = await requestPerms();
+    if (!permsOk) {
+      Alert.alert(
+        'Permission Bluetooth requise',
+        'La permission BLUETOOTH_CONNECT est nécessaire pour se connecter.\nActivez-la dans Paramètres → Applications → BitMesh → Autorisations.'
+      );
+      setConnecting(false);
+      return;
+    }
 
     try {
       const pin = pinValue.trim();
