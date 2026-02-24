@@ -219,15 +219,19 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     setState((prev) => ({ ...prev, scanning: true, availableDevices: [], error: null }));
 
     try {
-      // Vérifier que BT est actif
       await BleManager.start({ showAlert: false });
       const bleState = await BleManager.checkState();
       if (bleState !== 'on') {
         throw new Error(`Bluetooth éteint (état: ${bleState}). Allumez le Bluetooth.`);
       }
 
+      // Stopper tout scan précédent pour éviter les conflits Android
+      try { await BleManager.stopScan(); } catch (_) {}
+      await new Promise((r) => setTimeout(r, 200));
+
       const found: BleGatewayDevice[] = [];
       const seen = new Set<string>();
+      const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
       const handlePeripheral = (peripheral: any) => {
         if (!peripheral?.id || seen.has(peripheral.id)) return;
@@ -235,64 +239,62 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         const name: string = peripheral.name || peripheral.advertising?.localName || '';
         const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
         const isMeshCore = displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-');
-        const device: BleGatewayDevice = {
+        found.push({
           id: peripheral.id,
           name: displayName,
           rssi: peripheral.rssi || -100,
           type: isMeshCore ? 'companion' : 'gateway',
-        };
-        found.push(device);
-        setState((prev) => ({ ...prev, availableDevices: [...found] }));
+        });
         console.log(`[BleProvider] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
+        // Différer setState hors du contexte du callback natif (comme le scan debug)
+        setTimeout(() => {
+          setState((prev) => ({ ...prev, availableDevices: [...found] }));
+        }, 0);
       };
 
-      // ── Stratégie 1 : UUID NUS filter (comme MeshMapper officiel) ─────
-      // MeshCore firmware T-Beam annonce toujours le service Nordic UART
-      // L'UUID filter = hardware-level filter Android → plus fiable, pas de throttle
-      const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-      console.log('[BleProvider] Scan NUS UUID filter (stratégie MeshMapper)...');
-      const listener1 = BleManager.onDiscoverPeripheral(handlePeripheral);
-      await BleManager.scan({
-        serviceUUIDs: [NUS_UUID],
-        seconds: 10,
-        allowDuplicates: false,
-        scanMode: 2,
-        matchMode: 1,
-      } as any);
-      await new Promise((res) => setTimeout(res, 10000));
-      listener1.remove();
-      try { await BleManager.stopScan(); } catch (_) {}
-      console.log(`[BleProvider] Scan NUS → ${found.length} device(s)`);
-
-      // ── Stratégie 2 : Scan universel (fallback si UUID filter trouve rien) ──
-      // Sur certains firmware l'UUID n'est pas dans l'ADV primary → fallback scan-all
-      if (found.length === 0) {
-        console.log('[BleProvider] Fallback scan universel (10s)...');
-        const listener2 = BleManager.onDiscoverPeripheral(handlePeripheral);
-        await BleManager.scan({
-          serviceUUIDs: [],
+      // ── Stratégie 1 : UUID NUS filter — même pattern exact que le scan debug ──
+      // setTimeout callback (non-bloquant) = pattern prouvé fonctionnel
+      console.log('[BleProvider] Scan NUS UUID (10s)...');
+      await new Promise<void>((resolve, reject) => {
+        const listener = BleManager.onDiscoverPeripheral(handlePeripheral);
+        BleManager.scan({
+          serviceUUIDs: [NUS_UUID],
           seconds: 10,
           allowDuplicates: false,
           scanMode: 2,
           matchMode: 1,
-        } as any);
-        await new Promise((res) => setTimeout(res, 10000));
-        listener2.remove();
-        try { await BleManager.stopScan(); } catch (_) {}
+        } as any).catch(reject);
+        setTimeout(() => {
+          listener.remove();
+          BleManager.stopScan().catch(() => {});
+          resolve();
+        }, 10500);
+      });
+      console.log(`[BleProvider] Scan NUS → ${found.length} device(s)`);
+
+      // ── Stratégie 2 : Scan universel si UUID filter vide ──
+      if (found.length === 0) {
+        console.log('[BleProvider] Fallback scan universel (8s)...');
+        await new Promise<void>((resolve, reject) => {
+          const listener2 = BleManager.onDiscoverPeripheral(handlePeripheral);
+          BleManager.scan({
+            serviceUUIDs: [],
+            seconds: 8,
+            allowDuplicates: false,
+            scanMode: 2,
+            matchMode: 1,
+          } as any).catch(reject);
+          setTimeout(() => {
+            listener2.remove();
+            BleManager.stopScan().catch(() => {});
+            resolve();
+          }, 8500);
+        });
         console.log(`[BleProvider] Scan universel → ${found.length} device(s)`);
       }
 
-      // ── Stratégie 3 : getDiscoveredPeripherals() (cache BleManager) ───
-      if (found.length === 0) {
-        try {
-          const cached: any[] = await BleManager.getDiscoveredPeripherals();
-          cached.forEach(handlePeripheral);
-          console.log(`[BleProvider] Cache BleManager → ${found.length} device(s)`);
-        } catch (_) {}
-      }
-
-      console.log(`[BleProvider] Scan terminé — ${found.length} device(s) au total`);
-      setState((prev) => ({ ...prev, scanning: false }));
+      console.log(`[BleProvider] Scan terminé — ${found.length} device(s)`);
+      setState((prev) => ({ ...prev, availableDevices: [...found], scanning: false }));
     } catch (error: any) {
       console.error('[BleProvider] Scan error:', error);
       setState((prev) => ({
