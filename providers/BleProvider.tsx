@@ -260,20 +260,20 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       };
 
       // ── Scan 1 : NUS UUID filter (10s) ──────────────────────────────────
-      // BleManager.scan() appelé SANS await (fire-and-forget, comme handleDebugBle)
-      // setInterval met à jour l'UI toutes les 500ms (pas dans le callback natif)
+      // IMPORTANT : await BleManager.scan() → identique à handleDebugBle
+      // Sans await, une erreur BLE serait avalée silencieusement (.catch warn)
       console.log('[Scan] NUS UUID 10s...');
       const l1 = BleManager.onDiscoverPeripheral(addDevice);
       const i1 = setInterval(() => {
         setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
       }, 500);
-      BleManager.scan({
+      await BleManager.scan({
         serviceUUIDs: [NUS_UUID],
         seconds: 10,
         allowDuplicates: false,
         scanMode: 2,
         matchMode: 1,
-      } as any).catch((e: any) => console.warn('[Scan] NUS scan error:', e));
+      } as any);
       await new Promise<void>((r) => setTimeout(r, 10500));
       clearInterval(i1);
       l1.remove();
@@ -287,13 +287,13 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         const i2 = setInterval(() => {
           setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
         }, 500);
-        BleManager.scan({
+        await BleManager.scan({
           serviceUUIDs: [],
           seconds: 8,
           allowDuplicates: false,
           scanMode: 2,
           matchMode: 1,
-        } as any).catch((e: any) => console.warn('[Scan] Universal scan error:', e));
+        } as any);
         await new Promise<void>((r) => setTimeout(r, 8500));
         clearInterval(i2);
         l2.remove();
