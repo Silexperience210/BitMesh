@@ -267,7 +267,14 @@ export class BleGatewayClient {
     console.log('[BleGateway] Nordic UART Service trouvé');
 
     // ── 4. Bonding EXPLICITE ──────────────────────────────────────
-    await this.createBondExplicit(deviceId, 15000);
+    // NOTE : meshcore-open (Flutter officiel) ne fait PAS de createBond() explicite.
+    // Android gère le bonding automatiquement si le firmware le demande.
+    // On tente le bonding soft : si déjà bondé ou non nécessaire → on continue.
+    try {
+      await this.createBondExplicit(deviceId, 5000);
+    } catch {
+      console.log('[BleGateway] Bonding skippé (non requis ou déjà bondé)');
+    }
 
     // ── 5. Activer notifications TX (Device → App) ──
     await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);

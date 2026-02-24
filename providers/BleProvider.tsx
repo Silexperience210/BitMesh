@@ -143,6 +143,11 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
           }
         } catch (reconnectErr) {
           console.log('[BleProvider] Auto-reconnect échoué — nettoyage');
+          // Forcer la déconnexion même si connectedId n'est pas encore set
+          // (BleManager.connect() peut encore tourner en background sinon)
+          if (lastDeviceId) {
+            BleManager.disconnect(lastDeviceId).catch(() => {});
+          }
           client.disconnect().catch(() => {});
         }
       } catch (error: any) {
