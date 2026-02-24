@@ -238,56 +238,47 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         throw new Error(`Bluetooth éteint (état: ${bleState}). Allumez le Bluetooth.`);
       }
 
-      // Stopper tout scan/connexion en cours pour libérer le BleManager
-      try { await BleManager.stopScan(); } catch (_) {}
-      await new Promise((r) => setTimeout(r, 300));
-
       const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-      // Map pour déduplication propre (pas de doublons par ID)
+      // Même structure exacte que handleDebugBle : Map locale, setState UNE SEULE FOIS à la fin.
+      // Pas de setState pendant le scan : avec newArch, setState depuis setInterval/callback
+      // natif peut être ignoré ou batché de façon inattendue.
       const found = new Map<string, BleGatewayDevice>();
 
       const addDevice = (peripheral: any) => {
         if (!peripheral?.id) return;
         const name: string = peripheral.name || peripheral.advertising?.localName || '';
         const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
-        found.set(peripheral.id, {
-          id: peripheral.id,
-          name: displayName,
-          rssi: peripheral.rssi || -100,
-          type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
-            ? 'companion' : 'gateway',
-        });
-        console.log(`[Scan] "${displayName}" ${peripheral.rssi}dBm`);
+        if (!found.has(peripheral.id)) {
+          found.set(peripheral.id, {
+            id: peripheral.id,
+            name: displayName,
+            rssi: peripheral.rssi || -100,
+            type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
+              ? 'companion' : 'gateway',
+          });
+          console.log(`[Scan] "${displayName}" ${peripheral.rssi}dBm`);
+        }
       };
 
-      // ── Scan 1 : NUS UUID filter (10s) ──────────────────────────────────
-      // IMPORTANT : await BleManager.scan() → identique à handleDebugBle
-      // Sans await, une erreur BLE serait avalée silencieusement (.catch warn)
-      console.log('[Scan] NUS UUID 10s...');
+      // ── Scan 1 : NUS UUID filter (8s) — identique à handleDebugBle ───────
+      console.log('[Scan] NUS UUID 8s...');
       const l1 = BleManager.onDiscoverPeripheral(addDevice);
-      const i1 = setInterval(() => {
-        setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
-      }, 500);
       await BleManager.scan({
         serviceUUIDs: [NUS_UUID],
-        seconds: 10,
+        seconds: 8,
         allowDuplicates: false,
         scanMode: 2,
         matchMode: 1,
       } as any);
-      await new Promise<void>((r) => setTimeout(r, 10500));
-      clearInterval(i1);
+      await new Promise<void>((r) => setTimeout(r, 8500));
       l1.remove();
-      BleManager.stopScan().catch(() => {});
+      try { await BleManager.stopScan(); } catch (_) {}
       console.log(`[Scan] NUS → ${found.size} device(s)`);
 
-      // ── Scan 2 : Universal fallback si rien trouvé (8s) ─────────────────
+      // ── Scan 2 : Universal fallback si rien trouvé (8s) ──────────────────
       if (found.size === 0) {
         console.log('[Scan] Fallback universel 8s...');
         const l2 = BleManager.onDiscoverPeripheral(addDevice);
-        const i2 = setInterval(() => {
-          setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
-        }, 500);
         await BleManager.scan({
           serviceUUIDs: [],
           seconds: 8,
@@ -296,12 +287,12 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
           matchMode: 1,
         } as any);
         await new Promise<void>((r) => setTimeout(r, 8500));
-        clearInterval(i2);
         l2.remove();
-        BleManager.stopScan().catch(() => {});
+        try { await BleManager.stopScan(); } catch (_) {}
         console.log(`[Scan] Universal → ${found.size} device(s)`);
       }
 
+      // setState UNE SEULE FOIS, comme le debug scan qui montre l'Alert à la fin
       setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()), scanning: false }));
     } catch (error: any) {
       console.error('[Scan] Error:', error);
