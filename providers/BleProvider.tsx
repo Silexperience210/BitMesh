@@ -127,8 +127,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
         // Auto-reconnect avec timeout court (8s max) pour ne pas bloquer le scan
         // Android interdit le scan pendant connect()/bonding → timeout impératif
+        let lastDeviceId: string | null = null;
         try {
-          const lastDeviceId = await AsyncStorage.getItem(BLE_LAST_DEVICE_KEY);
+          lastDeviceId = await AsyncStorage.getItem(BLE_LAST_DEVICE_KEY);
           if (lastDeviceId) {
             console.log('[BleProvider] Auto-reconnect à:', lastDeviceId);
             await Promise.race([
