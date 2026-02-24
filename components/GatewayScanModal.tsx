@@ -77,28 +77,33 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         console.log('🔐 Permissions:', permStatus);
       }
 
-      console.log('🔍 Scan 5s — v12 TurboModule API...');
-      const found: any[] = [];
+      console.log('🔍 Scan 8s — v12 TurboModule API (NUS UUID filter)...');
+      const found: Map<string, any> = new Map(); // déduplication par ID
 
-      // v12 : BleManager.onDiscoverPeripheral() remplace NativeEventEmitter
+      const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
       const sub = BleManager.onDiscoverPeripheral((device: any) => {
+        if (!device?.id) return;
         const name = device.name || device.advertising?.localName || 'SANS NOM';
-        found.push({ name, id: device.id, rssi: device.rssi });
-        console.log('📱 TROUVÉ:', name, device.id, device.rssi);
+        if (!found.has(device.id)) {
+          found.set(device.id, { name, id: device.id, rssi: device.rssi });
+          console.log('📱 TROUVÉ:', name, device.id, device.rssi);
+        }
       });
 
-      await BleManager.scan({ serviceUUIDs: [], seconds: 5, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
+      // UUID NUS filter d'abord (comme MeshMapper officiel)
+      await BleManager.scan({ serviceUUIDs: [NUS_UUID], seconds: 8, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
 
       setTimeout(async () => {
         sub.remove();
         try { await BleManager.stopScan(); } catch (_) {}
-        console.log('=== Scan terminé ===', found.length, 'device(s)');
+        const devices = Array.from(found.values());
+        console.log('=== Scan terminé ===', devices.length, 'device(s) uniques');
         Alert.alert(
-          `${found.length} device(s) trouvé(s)`,
-          `Permissions: ${permStatus}\n\n` +
-          (found.map(d => `• ${d.name}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device détecté')
+          `${devices.length} device(s) MeshCore trouvé(s)`,
+          `Permissions: ${permStatus}\nFiltre: NUS UUID\n\n` +
+          (devices.map(d => `• ${d.name}\n  ${d.id.slice(0, 17)}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device MeshCore détecté\n\nSi votre device a un nom custom,\nil faudra utiliser le scan universel')
         );
-      }, 5500);
+      }, 8500);
     } catch (err: any) {
       console.error('❌ ERREUR DEBUG BLE:', err);
       Alert.alert('Erreur BLE', err.message);
