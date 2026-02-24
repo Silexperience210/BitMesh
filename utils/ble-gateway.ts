@@ -25,7 +25,6 @@
  */
 
 import BleManager from 'react-native-ble-manager';
-import { NativeEventEmitter, NativeModules } from 'react-native';
 import {
   MESHCORE_BLE,
   type MeshCorePacket,
@@ -176,8 +175,7 @@ export class BleGatewayClient {
     try { await BleManager.stopScan(); } catch (_) {}
     await new Promise(res => setTimeout(res, 200));
 
-    const scanEmitter = new NativeEventEmitter(NativeModules.BleManager);
-    const listener = scanEmitter.addListener('BleManagerDiscoverPeripheral', (p: any) => {
+    const listener = BleManager.onDiscoverPeripheral((p: any) => {
       const name: string = p.name || p.advertising?.localName || '';
       if (seen.has(p.id) && !name) return;
       seen.add(p.id);
@@ -268,17 +266,15 @@ export class BleGatewayClient {
       }
     }
 
-    // ── 5. Listeners événements ──
-    const connEmitter = new NativeEventEmitter(NativeModules.BleManager);
-
-    const notifListener = connEmitter.addListener('BleManagerDidUpdateValueForCharacteristic', (data: any) => {
+    // ── 5. Listeners événements — API v12 TurboModule (pas NativeEventEmitter) ──
+    const notifListener = BleManager.onDidUpdateValueForCharacteristic((data) => {
       if (data.peripheral !== deviceId) return;
       if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
       this.handleFrame(new Uint8Array(data.value));
     });
     this.listeners.push(notifListener);
 
-    const discListener = connEmitter.addListener('BleManagerDisconnectPeripheral', (data: any) => {
+    const discListener = BleManager.onDisconnectPeripheral((data) => {
       if (data.peripheral !== deviceId) return;
       console.log('[BleGateway] Device déconnecté');
       this.connectedId = null;

@@ -112,15 +112,28 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
   const handleConnect = async (deviceId: string) => {
     setConnecting(true);
-    try {
-      await connectToGateway(deviceId);
-      onClose(); // Fermer le modal après connexion
-    } catch (err) {
-      console.error('Connection error:', err);
-      // L'erreur est affichée via ble.error (BleProvider)
-    } finally {
-      setConnecting(false);
-    }
+    // Prévenir l'utilisateur qu'un dialogue PIN peut apparaître
+    Alert.alert(
+      'Appairage Bluetooth',
+      'Android peut afficher un dialogue PIN.\nEntrez : 123456\n\nSi demandé, appuyez Autoriser/OK.',
+      [{ text: 'Compris', onPress: async () => {
+        try {
+          await connectToGateway(deviceId);
+          onClose();
+        } catch (err: any) {
+          setConnecting(false);
+          const msg: string = err?.message ?? String(err);
+          const isPairing = msg.includes('133') || msg.includes('pairing') ||
+            msg.includes('bonding') || msg.includes('authentication');
+          Alert.alert(
+            isPairing ? 'Appairage requis' : 'Connexion échouée',
+            isPairing
+              ? 'Allez dans Paramètres Android → Bluetooth, supprimez "MeshCore-..." puis réessayez.\nPIN : 123456'
+              : msg
+          );
+        }
+      }}]
+    );
   };
 
   return (
