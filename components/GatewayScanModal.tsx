@@ -12,6 +12,9 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
+  TextInput,
+  Platform,
+  PermissionsAndroid,
 } from 'react-native';
 import BleManager from 'react-native-ble-manager';
 import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug } from 'lucide-react-native';
@@ -38,13 +41,39 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const [showChannelPicker, setShowChannelPicker] = React.useState(false);
   const [localScanning, setLocalScanning] = React.useState(false);
   const [localDevices, setLocalDevices] = React.useState<BleGatewayDevice[]>([]);
+  const [connecting, setConnecting] = React.useState(false);
+  // Device sélectionné en attente de connexion
+  const [pendingDevice, setPendingDevice] = React.useState<BleGatewayDevice | null>(null);
+  // PIN saisie par l'utilisateur (défaut vide = pas de createBond forcé)
+  const [pinValue, setPinValue] = React.useState('');
 
   const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
-  // Scan unifié — code IDENTIQUE au debug qui fonctionne, juste setState à la fin
+  // ── Permissions Android ──────────────────────────────────────────
+  const requestPerms = async (): Promise<void> => {
+    if (Platform.OS !== 'android') return;
+    try {
+      if (Platform.Version >= 31) {
+        await PermissionsAndroid.requestMultiple([
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+        ]);
+      } else {
+        await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
+      }
+    } catch (_) {
+      // permissions déjà accordées ou erreur ignorée
+    }
+  };
+
+  // ── Scan unifié (même code debug et scan normal) ─────────────────
   const runScan = async (debugMode: boolean) => {
     try {
       console.log('=== SCAN BLE START ===');
+      // Demander les permissions avant de scanner
+      await requestPerms();
+
       await BleManager.start({ showAlert: false });
       const bleState = await BleManager.checkState();
       if (bleState !== 'on') {
@@ -54,21 +83,22 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
       setLocalScanning(true);
       setLocalDevices([]);
+      setPendingDevice(null);
       const found: Map<string, BleGatewayDevice> = new Map();
 
-      const sub = BleManager.onDiscoverPeripheral((device: any) => {
-        if (!device?.id) return;
-        const name: string = device.name || device.advertising?.localName || '';
-        const displayName = name || `BLE (${device.id.slice(0, 8)})`;
-        if (!found.has(device.id)) {
-          found.set(device.id, {
-            id: device.id,
+      const sub = BleManager.onDiscoverPeripheral((dev: any) => {
+        if (!dev?.id) return;
+        const name: string = dev.name || dev.advertising?.localName || '';
+        const displayName = name || `BLE (${dev.id.slice(0, 8)})`;
+        if (!found.has(dev.id)) {
+          found.set(dev.id, {
+            id: dev.id,
             name: displayName,
-            rssi: device.rssi || -100,
+            rssi: dev.rssi || -100,
             type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
               ? 'companion' : 'gateway',
           });
-          console.log('📱 TROUVÉ:', displayName, device.id, device.rssi);
+          console.log('📱 TROUVÉ:', displayName, dev.id, dev.rssi);
         }
       });
 
@@ -84,17 +114,21 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         setLocalScanning(false);
 
         if (debugMode) {
-          // Mode debug : Alert avec bouton "Connecter" en plus
-          Alert.alert(
-            `${devices.length} device(s) trouvé(s)`,
-            devices.map(d => `• ${d.name} (${d.rssi} dBm)`).join('\n') || 'Aucun device détecté',
-            devices.length > 0
-              ? [
-                  { text: 'Fermer', style: 'cancel' },
-                  { text: `Connecter → ${devices[0].name}`, onPress: () => handleConnect(devices[0].id) },
-                ]
-              : [{ text: 'OK' }]
-          );
+          if (devices.length > 0) {
+            Alert.alert(
+              `${devices.length} device(s) trouvé(s)`,
+              devices.map(d => `• ${d.name} (${d.rssi} dBm)`).join('\n'),
+              [
+                { text: 'Fermer', style: 'cancel' },
+                {
+                  text: `Connecter → ${devices[0].name}`,
+                  onPress: () => setPendingDevice(devices[0]),
+                },
+              ]
+            );
+          } else {
+            Alert.alert('Aucun device trouvé', 'Vérifiez que votre MeshCore est allumé et à proximité.');
+          }
         }
       }, 8500);
     } catch (err: any) {
@@ -105,35 +139,43 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   };
 
   const handleScan = () => runScan(false);
-
-  const [connecting, setConnecting] = React.useState(false);
-
   const handleDebugBle = () => runScan(true);
 
-  const handleConnect = async (deviceId: string) => {
+  // ── Connexion avec createBond + PIN ──────────────────────────────
+  const doConnect = async () => {
+    if (!pendingDevice) return;
     setConnecting(true);
-    // Prévenir l'utilisateur qu'un dialogue PIN peut apparaître
-    Alert.alert(
-      'Appairage Bluetooth',
-      'Android peut afficher un dialogue PIN.\nEntrez : 123456\n\nSi demandé, appuyez Autoriser/OK.',
-      [{ text: 'Compris', onPress: async () => {
+
+    try {
+      const pin = pinValue.trim();
+      if (pin) {
+        // PIN saisi manuellement → createBond programmatique (pas de dialogue Android)
+        console.log('[Connect] createBond avec PIN:', pin);
         try {
-          await connectToGateway(deviceId);
-          onClose();
-        } catch (err: any) {
-          setConnecting(false);
-          const msg: string = err?.message ?? String(err);
-          const isPairing = msg.includes('133') || msg.includes('pairing') ||
-            msg.includes('bonding') || msg.includes('authentication');
-          Alert.alert(
-            isPairing ? 'Appairage requis' : 'Connexion échouée',
-            isPairing
-              ? 'Allez dans Paramètres Android → Bluetooth, supprimez "MeshCore-..." puis réessayez.\nPIN : 123456'
-              : msg
-          );
+          await BleManager.createBond(pendingDevice.id, pin);
+          console.log('[Connect] Bond créé OK');
+        } catch (bondErr) {
+          // Certains devices ne requièrent pas de bond — on continue quand même
+          console.log('[Connect] createBond ignoré:', bondErr);
         }
-      }}]
-    );
+      }
+
+      await connectToGateway(pendingDevice.id);
+      setPendingDevice(null);
+      onClose();
+    } catch (err: any) {
+      const msg: string = err?.message ?? String(err);
+      const isPairing = msg.includes('133') || msg.includes('pairing') ||
+        msg.includes('bonding') || msg.includes('authentication');
+      Alert.alert(
+        isPairing ? 'Appairage requis' : 'Connexion échouée',
+        isPairing
+          ? 'Si Android montre un dialogue, entrez le PIN affiché par votre device.\nOu saisissez le PIN dans le champ et réessayez.'
+          : msg
+      );
+    } finally {
+      setConnecting(false);
+    }
   };
 
   return (
@@ -155,13 +197,11 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
           {connected && device && (
             <View style={styles.connectedBanner}>
               <CheckCircle2 size={20} color={Colors.green} />
-              <Text style={styles.connectedText}>
-                Connecté à {device.name}
-              </Text>
+              <Text style={styles.connectedText}>Connecté à {device.name}</Text>
             </View>
           )}
 
-          {/* Sélecteur de channel (visible uniquement si connecté) */}
+          {/* Sélecteur de channel */}
           {connected && (
             <View style={styles.channelRow}>
               <Radio size={16} color={Colors.textMuted} />
@@ -183,19 +223,10 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
               {CHANNEL_OPTIONS.map(opt => (
                 <TouchableOpacity
                   key={opt.idx}
-                  style={[
-                    styles.channelOption,
-                    currentChannel === opt.idx && styles.channelOptionActive,
-                  ]}
-                  onPress={() => {
-                    setChannel(opt.idx);
-                    setShowChannelPicker(false);
-                  }}
+                  style={[styles.channelOption, currentChannel === opt.idx && styles.channelOptionActive]}
+                  onPress={() => { setChannel(opt.idx); setShowChannelPicker(false); }}
                 >
-                  <Text style={[
-                    styles.channelOptionText,
-                    currentChannel === opt.idx && styles.channelOptionTextActive,
-                  ]}>
+                  <Text style={[styles.channelOptionText, currentChannel === opt.idx && styles.channelOptionTextActive]}>
                     {opt.icon} {opt.label}
                   </Text>
                 </TouchableOpacity>
@@ -203,39 +234,42 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
             </View>
           )}
 
-          {/* Bouton Scan */}
-          <TouchableOpacity
-            style={[styles.scanButton, localScanning && styles.scanButtonDisabled]}
-            onPress={handleScan}
-            disabled={localScanning}
-          >
-            {localScanning ? (
-              <>
-                <ActivityIndicator size="small" color={Colors.background} />
-                <Text style={styles.scanButtonText}>Scan en cours...</Text>
-              </>
-            ) : (
-              <>
-                <Wifi size={20} color={Colors.background} />
-                <Text style={styles.scanButtonText}>Démarrer le scan</Text>
-              </>
-            )}
-          </TouchableOpacity>
+          {/* Panel de connexion (apparaît quand un device est sélectionné) */}
+          {pendingDevice && !connecting && (
+            <View style={styles.connectPanel}>
+              <Text style={styles.connectTitle}>Connecter à {pendingDevice.name}</Text>
+              <View style={styles.pinRow}>
+                <Text style={styles.pinLabel}>PIN (optionnel) :</Text>
+                <TextInput
+                  style={styles.pinInput}
+                  value={pinValue}
+                  onChangeText={setPinValue}
+                  placeholder="Ex: 1234"
+                  placeholderTextColor={Colors.textMuted}
+                  keyboardType="numeric"
+                  maxLength={8}
+                />
+              </View>
+              <Text style={styles.pinHint}>
+                Laisser vide si le device ne demande pas de PIN.{'\n'}
+                Renseignez le PIN affiché par votre device MeshCore.
+              </Text>
+              <View style={styles.connectBtnRow}>
+                <TouchableOpacity style={styles.cancelBtn} onPress={() => setPendingDevice(null)}>
+                  <Text style={styles.cancelBtnText}>Annuler</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.connectBtn} onPress={doConnect}>
+                  <Text style={styles.connectBtnText}>Connecter</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
 
-          {/* Bouton DEBUG BLE — test scan brut sans BleProvider */}
-          <TouchableOpacity style={styles.debugButton} onPress={handleDebugBle}>
-            <Bug size={16} color={Colors.textMuted} />
-            <Text style={styles.debugButtonText}>Debug BLE brut (5s)</Text>
-          </TouchableOpacity>
-
-          {/* Appairage en cours */}
+          {/* Spinner connexion */}
           {connecting && (
             <View style={styles.bondingBanner}>
               <ActivityIndicator size="small" color={Colors.accent} style={{ marginRight: 8 }} />
-              <Text style={styles.bondingText}>
-                Appairage BLE en cours...{'\n'}
-                <Text style={styles.bondingBold}>Entrez le PIN dans le dialogue Android (défaut : 123456)</Text>
-              </Text>
+              <Text style={styles.bondingText}>Connexion en cours...</Text>
             </View>
           )}
 
@@ -246,13 +280,32 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
             </View>
           )}
 
-          {/* Info PIN */}
-          {!connecting && (
-            <View style={styles.infoBanner}>
-              <Text style={styles.infoText}>
-                PIN BLE par défaut : <Text style={styles.infoBold}>123456</Text>
-              </Text>
-            </View>
+          {/* Boutons scan */}
+          {!pendingDevice && !connecting && (
+            <>
+              <TouchableOpacity
+                style={[styles.scanButton, localScanning && styles.scanButtonDisabled]}
+                onPress={handleScan}
+                disabled={localScanning}
+              >
+                {localScanning ? (
+                  <>
+                    <ActivityIndicator size="small" color={Colors.background} />
+                    <Text style={styles.scanButtonText}>Scan en cours...</Text>
+                  </>
+                ) : (
+                  <>
+                    <Wifi size={20} color={Colors.background} />
+                    <Text style={styles.scanButtonText}>Démarrer le scan</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+
+              <TouchableOpacity style={styles.debugButton} onPress={handleDebugBle} disabled={localScanning}>
+                <Bug size={16} color={Colors.textMuted} />
+                <Text style={styles.debugButtonText}>Debug BLE (scan + alert + connecter)</Text>
+              </TouchableOpacity>
+            </>
           )}
 
           {/* Liste des devices */}
@@ -260,14 +313,14 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
             <Text style={styles.listTitle}>Appareils BLE détectés ({localDevices.length})</Text>
             {localDevices.length === 0 && !localScanning ? (
               <Text style={styles.emptyText}>
-                Aucun appareil trouvé. Vérifiez que votre device MeshCore Companion est allumé et à proximité, et que le firmware BLE est installé.
+                Aucun appareil trouvé. Vérifiez que votre device MeshCore est allumé et à proximité.
               </Text>
             ) : (
               <FlatList
                 data={localDevices}
                 keyExtractor={(item) => item.id}
                 renderItem={({ item }) => (
-                  <DeviceItem device={item} onConnect={handleConnect} />
+                  <DeviceItem device={item} onSelect={setPendingDevice} />
                 )}
                 style={styles.list}
               />
@@ -281,19 +334,16 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
 interface DeviceItemProps {
   device: BleGatewayDevice;
-  onConnect: (deviceId: string) => void;
+  onSelect: (device: BleGatewayDevice) => void;
 }
 
-function DeviceItem({ device, onConnect }: DeviceItemProps) {
-  const signalColor =
-    device.rssi > -70 ? Colors.green : device.rssi > -85 ? Colors.accent : Colors.red;
-
-  // ✅ NOUVEAU: Couleur et label selon le type
+function DeviceItem({ device, onSelect }: DeviceItemProps) {
+  const signalColor = device.rssi > -70 ? Colors.green : device.rssi > -85 ? Colors.accent : Colors.red;
   const typeColor = device.type === 'gateway' ? Colors.cyan : Colors.yellow;
   const typeLabel = device.type === 'gateway' ? 'Gateway' : 'Compagnon';
 
   return (
-    <TouchableOpacity style={styles.deviceItem} onPress={() => onConnect(device.id)}>
+    <TouchableOpacity style={styles.deviceItem} onPress={() => onSelect(device)}>
       <View style={styles.deviceInfo}>
         <Text style={styles.deviceName}>{device.name}</Text>
         <View style={styles.deviceMeta}>
@@ -305,9 +355,7 @@ function DeviceItem({ device, onConnect }: DeviceItemProps) {
       </View>
       <View style={styles.deviceRight}>
         <View style={[styles.signalBadge, { backgroundColor: `${signalColor}20` }]}>
-          <Text style={[styles.signalText, { color: signalColor }]}>
-            {device.rssi} dBm
-          </Text>
+          <Text style={[styles.signalText, { color: signalColor }]}>{device.rssi} dBm</Text>
         </View>
         <Bluetooth size={20} color={Colors.accent} />
       </View>
@@ -328,13 +376,13 @@ const styles = StyleSheet.create({
     paddingTop: 20,
     paddingBottom: 40,
     paddingHorizontal: 20,
-    maxHeight: '80%',
+    maxHeight: '85%',
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20,
+    marginBottom: 16,
   },
   headerLeft: {
     flexDirection: 'row',
@@ -354,12 +402,84 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     paddingHorizontal: 16,
     borderRadius: 8,
-    marginBottom: 16,
+    marginBottom: 12,
   },
   connectedText: {
     fontSize: 14,
     fontWeight: '600',
     color: Colors.green,
+  },
+  connectPanel: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.accent + '60',
+  },
+  connectTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: Colors.text,
+    marginBottom: 12,
+  },
+  pinRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  pinLabel: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    width: 110,
+  },
+  pinInput: {
+    flex: 1,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    color: Colors.text,
+    fontSize: 16,
+    fontFamily: 'monospace',
+  },
+  pinHint: {
+    fontSize: 11,
+    color: Colors.textMuted,
+    lineHeight: 16,
+    marginBottom: 12,
+  },
+  connectBtnRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  cancelBtn: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  cancelBtnText: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    fontWeight: '600',
+  },
+  connectBtn: {
+    flex: 2,
+    paddingVertical: 12,
+    borderRadius: 8,
+    backgroundColor: Colors.accent,
+    alignItems: 'center',
+  },
+  connectBtnText: {
+    fontSize: 14,
+    color: Colors.background,
+    fontWeight: '700',
   },
   scanButton: {
     flexDirection: 'row',
@@ -369,7 +489,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accent,
     paddingVertical: 16,
     borderRadius: 12,
-    marginBottom: 20,
+    marginBottom: 10,
   },
   scanButtonDisabled: {
     opacity: 0.6,
@@ -408,38 +528,15 @@ const styles = StyleSheet.create({
   bondingText: {
     color: Colors.accent,
     fontSize: 13,
-    lineHeight: 20,
+    fontWeight: '600',
     flex: 1,
-  },
-  bondingBold: {
-    fontWeight: '700',
-    color: Colors.accent,
-  },
-  infoBanner: {
-    backgroundColor: `${Colors.accent}15`,
-    borderRadius: 8,
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: `${Colors.accent}30`,
-  },
-  infoText: {
-    color: Colors.textMuted,
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  infoBold: {
-    color: Colors.accent,
-    fontWeight: '700',
-    fontFamily: 'monospace',
   },
   errorBanner: {
     backgroundColor: `${Colors.red}20`,
     borderRadius: 8,
     paddingVertical: 10,
     paddingHorizontal: 14,
-    marginBottom: 14,
+    marginBottom: 12,
     borderWidth: 1,
     borderColor: `${Colors.red}40`,
   },
@@ -478,7 +575,7 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     borderWidth: 1,
     borderColor: Colors.border,
-    marginBottom: 14,
+    marginBottom: 12,
     overflow: 'hidden',
   },
   channelOption: {
