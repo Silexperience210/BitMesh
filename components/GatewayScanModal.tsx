@@ -148,33 +148,44 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
     try {
       const pin = pinValue.trim();
-      // createBond systématique — MeshCore requiert l'appairage
-      // PIN défaut firmware = 123456 (platformio.ini: -D BLE_PIN_CODE=123456)
-      // Si le device a un écran il génère un PIN aléatoire → l'utilisateur le saisit ici
-      console.log('[Connect] createBond avec PIN:', pin || '(aucun)');
+      // PIN défaut firmware MeshCore = 123456 (-D BLE_PIN_CODE=123456 dans platformio.ini)
+      console.log('[Connect] createBond PIN:', pin || '(aucun)');
       try {
         await BleManager.createBond(pendingDevice.id, pin || null);
-        console.log('[Connect] Bond créé OK');
-      } catch (bondErr) {
-        // Bond déjà existant ou device "Just Works" → on continue
-        console.log('[Connect] createBond:', bondErr);
+        console.log('[Connect] Bond OK');
+      } catch (bondErr: any) {
+        const bMsg = String(bondErr).toLowerCase();
+        const isWrongPin =
+          bMsg.includes('133') || bMsg.includes('auth') ||
+          bMsg.includes('pin') || bMsg.includes('passkey');
+        if (isWrongPin) {
+          // PIN incorrect → garder le panneau ouvert pour que l'user corrige
+          Alert.alert('PIN incorrect', 'Vérifiez le PIN et réessayez.\nDéfaut MeshCore : 123456');
+          setConnecting(false);
+          return; // ne pas tenter la connexion GATT avec un bond raté
+        }
+        // Autre erreur bond (déjà bondé, Just Works…) → on continue
+        console.log('[Connect] createBond non bloquant:', bondErr);
       }
 
       await connectToGateway(pendingDevice.id);
+      // Succès : fermer le panneau et le modal
       setPendingDevice(null);
       onClose();
     } catch (err: any) {
+      // Erreur GATT → garder pendingDevice ouvert pour retry
       const msg: string = err?.message ?? String(err);
       const isPairing = msg.includes('133') || msg.includes('pairing') ||
         msg.includes('bonding') || msg.includes('authentication');
       Alert.alert(
-        isPairing ? 'Appairage requis' : 'Connexion échouée',
+        isPairing ? 'PIN incorrect ou bond expiré' : 'Connexion échouée',
         isPairing
-          ? 'Si Android montre un dialogue, entrez le PIN affiché par votre device.\nOu saisissez le PIN dans le champ et réessayez.'
-          : msg
+          ? 'Corrigez le PIN et réessayez.\nDéfaut MeshCore : 123456\n\nSi ça persiste : Paramètres Android → Bluetooth → supprimez "MeshCore-..." puis réessayez.'
+          : msg + '\n\nAppuyez sur Connecter pour réessayer.'
       );
     } finally {
       setConnecting(false);
+      // setPendingDevice(null) UNIQUEMENT en cas de succès (voir ci-dessus)
     }
   };
 
