@@ -11,6 +11,8 @@ import {
   TextInput,
   Alert,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { Radio, Plus, Wifi, Globe, Hash, User, X, Lock, Search } from 'lucide-react-native';
@@ -443,6 +445,11 @@ export default function MessagesScreen() {
   };
 
   return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
     <View style={styles.container}>
       <View style={styles.statusBar}>
         <View style={styles.statusLeft}>
@@ -515,6 +522,7 @@ export default function MessagesScreen() {
         mqttState={mqttState}
       />
     </View>
+    </KeyboardAvoidingView>
   );
 }
 

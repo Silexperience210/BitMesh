@@ -8,6 +8,10 @@ import {
   Animated,
   Modal,
   ActivityIndicator,
+  TextInput,
+  KeyboardAvoidingView,
+  Platform,
+  Alert,
 } from 'react-native';
 import {
   Radio,
@@ -27,6 +31,7 @@ import {
   UserCheck,
   MessageCircle,
   Star,
+  Send,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -99,7 +104,7 @@ function ScanButton({ isScanning, onPress }: { isScanning: boolean; onPress: () 
 
 function StatsRow({ peers, mqttConnected, deviceInfo }: { peers: RadarPeer[]; mqttConnected: boolean; deviceInfo: BleDeviceInfo | null }) {
   const onlineCount = peers.filter(p => p.online).length;
-  const freqLabel = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : meshStats.frequency;
+  const freqLabel = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : '--';
 
   return (
     <View style={styles.statsRow}>
@@ -130,31 +135,38 @@ function StatsRow({ peers, mqttConnected, deviceInfo }: { peers: RadarPeer[]; mq
 }
 
 function RadioBand({ deviceInfo }: { deviceInfo: BleDeviceInfo | null }) {
-  const freq = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : meshStats.frequency;
-  const sf   = deviceInfo ? `SF${deviceInfo.radioSf}` : meshStats.spreadFactor;
-  const bw   = deviceInfo ? formatBw(deviceInfo.radioBwHz) : meshStats.bandwidth;
-  const tx   = deviceInfo ? `${deviceInfo.txPower} dBm` : meshStats.txPower;
+  // Utilise les vraies valeurs du device, ou "--" si pas encore reçu
+  const freq = deviceInfo ? formatFreq(deviceInfo.radioFreqHz) : '--';
+  const sf   = deviceInfo ? `SF${deviceInfo.radioSf}` : '--';
+  const bw   = deviceInfo ? formatBw(deviceInfo.radioBwHz) : '--';
+  const tx   = deviceInfo ? `${deviceInfo.txPower} dBm` : '--';
+  const cr   = deviceInfo ? `4/${deviceInfo.radioCr}` : '--'; // Coding Rate: 4/5, 4/6, 4/7, 4/8
 
   return (
     <View style={styles.radioBand}>
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>FREQ</Text>
-        <Text style={styles.radioValue}>{freq}</Text>
+        <Text style={[styles.radioValue, !deviceInfo && styles.radioValuePlaceholder]}>{freq}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>SF</Text>
-        <Text style={styles.radioValue}>{sf}</Text>
+        <Text style={[styles.radioValue, !deviceInfo && styles.radioValuePlaceholder]}>{sf}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>BW</Text>
-        <Text style={styles.radioValue}>{bw}</Text>
+        <Text style={[styles.radioValue, !deviceInfo && styles.radioValuePlaceholder]}>{bw}</Text>
+      </View>
+      <View style={styles.radioDivider} />
+      <View style={styles.radioItem}>
+        <Text style={styles.radioLabel}>CR</Text>
+        <Text style={[styles.radioValue, !deviceInfo && styles.radioValuePlaceholder]}>{cr}</Text>
       </View>
       <View style={styles.radioDivider} />
       <View style={styles.radioItem}>
         <Text style={styles.radioLabel}>TX</Text>
-        <Text style={styles.radioValue}>{tx}</Text>
+        <Text style={[styles.radioValue, !deviceInfo && styles.radioValuePlaceholder]}>{tx}</Text>
       </View>
     </View>
   );
@@ -595,8 +607,37 @@ export default function MeshScreen() {
   const [selectedDeviceId, setSelectedDeviceId] = useState<number | null>(null);
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
-  const { radarPeers, mqttState, identity } = useMessages();
-  const { connected: bleConnected, device: bleDevice, deviceInfo, meshContacts: bleMeshContacts } = useBle();
+  const { radarPeers, mqttState, identity, sendMessage } = useMessages();
+  const { connected: bleConnected, device: bleDevice, deviceInfo, meshContacts: bleMeshContacts, sendChannelMessage, sendDirectMessage } = useBle();
+  
+  // Test message state
+  const [testMsg, setTestMsg] = useState('');
+  const [testRecipient, setTestRecipient] = useState('');
+  const [sendingTest, setSendingTest] = useState(false);
+  const [lastAck, setLastAck] = useState<{ackCode: number, rtt: number} | null>(null);
+
+  // Récupérer onSendConfirmed depuis le contexte BLE
+  const { onSendConfirmed } = useBle();
+
+  // Écouter les confirmations d'envoi (ACK)
+  useEffect(() => {
+    if (!bleConnected || !onSendConfirmed) return;
+    
+    const unsubscribe = onSendConfirmed((ackCode, rtt) => {
+      console.log(`[Mesh] Message confirmé par LoRa! ACK:${ackCode}, RTT:${rtt}ms`);
+      setLastAck({ackCode, rtt});
+      
+      // Afficher une notification si l'app est en foreground
+      Alert.alert('✅ Message confirmé', 
+        `Votre message a été transmis sur LoRa et confirmé par le réseau.\n\n` +
+        `ACK: ${ackCode}\n` +
+        `Temps aller-retour: ${rtt}ms`);
+    });
+    
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
+    };
+  }, [bleConnected, onSendConfirmed]);
 
   // Fusionner contacts BLE (MeshCore getContacts) + pairs MQTT sur le radar
   const allPeers = useMemo((): RadarPeer[] => {
@@ -651,6 +692,61 @@ export default function MeshScreen() {
     setShowDetail(false);
     setSelectedPeer(null);
   }, []);
+
+  const handleSendTestMessage = useCallback(async () => {
+    if (!testMsg.trim()) return;
+    setSendingTest(true);
+    
+    try {
+      if (testRecipient.trim()) {
+        // Envoi DM via LoRa natif (pas MQTT!)
+        // Chercher la clé publique du destinataire dans les contacts BLE
+        const recipientNodeId = testRecipient.trim().toUpperCase();
+        const contact = bleMeshContacts.find(c => 
+          c.pubkeyPrefix && recipientNodeId.includes(c.pubkeyPrefix.slice(0, 8).toUpperCase())
+        );
+        
+        if (!contact) {
+          Alert.alert('Contact inconnu', 
+            `Le destinataire ${recipientNodeId} n'est pas dans vos contacts BLE. ` +
+            'Veuillez d\'abord ajouter ce contact ou utiliser le broadcast (sans destinataire).');
+          setSendingTest(false);
+          return;
+        }
+        
+        console.log(`[TestMessage] Envoi DM à ${recipientNodeId} via LoRa`);
+        console.log(`[TestMessage] Clé publique: ${contact.pubkeyHex.slice(0, 20)}...`);
+        
+        await sendDirectMessage(contact.pubkeyHex, testMsg.trim());
+        
+        // Attendre un peu pour voir si on reçoit un ACK
+        setTimeout(() => {
+          Alert.alert('Message transmis', 
+            `Message envoyé à ${recipientNodeId} via LoRa. ` +
+            'Note: Le destinataire doit être à portée et avoir votre contact enregistré pour recevoir.');
+        }, 500);
+        
+      } else if (bleConnected) {
+        // Broadcast sur le canal actif
+        console.log(`[TestMessage] Envoi broadcast sur canal actif: "${testMsg.trim()}"`);
+        
+        await sendChannelMessage(testMsg.trim());
+        
+        Alert.alert('Message transmis', 
+          'Message envoyé en broadcast sur le canal LoRa actif. ' +
+          'Tous les nodes à portée recevront ce message.');
+      } else {
+        Alert.alert('Erreur', 'Connectez-vous à un device BLE pour envoyer via LoRa');
+      }
+      
+      setTestMsg('');
+    } catch (err: any) {
+      console.error('[TestMessage] Erreur:', err);
+      Alert.alert('Erreur envoi', err.message || 'Échec de l\'envoi');
+    } finally {
+      setSendingTest(false);
+    }
+  }, [testMsg, testRecipient, bleConnected, sendDirectMessage, sendChannelMessage, bleMeshContacts]);
 
   return (
     <View style={styles.screenContainer}>
@@ -731,6 +827,49 @@ export default function MeshScreen() {
               </TouchableOpacity>
             </View>
           )}
+        </View>
+      )}
+
+      {/* Section Test Message */}
+      {bleConnected && (
+        <View style={styles.testMessageSection}>
+          <Text style={styles.testMessageTitle}>🧪 Envoi Test</Text>
+          <TextInput
+            style={styles.testInput}
+            placeholder="Destinataire (NodeId, ex: MESH-XXXX) - laisser vide pour broadcast"
+            placeholderTextColor={Colors.textMuted}
+            value={testRecipient}
+            onChangeText={setTestRecipient}
+            autoCapitalize="characters"
+          />
+          <View style={styles.testInputRow}>
+            <TextInput
+              style={[styles.testInput, { flex: 1 }]}
+              placeholder="Message test..."
+              placeholderTextColor={Colors.textMuted}
+              value={testMsg}
+              onChangeText={setTestMsg}
+              multiline
+              maxLength={200}
+            />
+            <TouchableOpacity
+              style={[styles.testSendBtn, (!testMsg.trim() || sendingTest) && styles.testSendBtnDisabled]}
+              onPress={handleSendTestMessage}
+              disabled={!testMsg.trim() || sendingTest}
+              activeOpacity={0.7}
+            >
+              {sendingTest ? (
+                <ActivityIndicator size="small" color={Colors.background} />
+              ) : (
+                <Send size={18} color={Colors.background} />
+              )}
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.testHint}>
+            {testRecipient.trim() 
+              ? '→ Message privé au destinataire' 
+              : '→ Broadcast sur le canal LoRa actif'}
+          </Text>
         </View>
       )}
 
@@ -988,6 +1127,10 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 11,
     fontFamily: 'monospace',
+  },
+  radioValuePlaceholder: {
+    color: Colors.textMuted,
+    fontSize: 11,
     marginTop: 2,
   },
   radioDivider: {
@@ -1791,5 +1934,55 @@ const styles = StyleSheet.create({
     color: Colors.accent,
     fontSize: 15,
     fontWeight: '700',
+  },
+  // Test Message Section
+  testMessageSection: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    padding: 14,
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: Colors.border,
+  },
+  testMessageTitle: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    fontWeight: '700',
+    marginBottom: 10,
+  },
+  testInput: {
+    backgroundColor: Colors.background,
+    borderRadius: 8,
+    borderWidth: 0.5,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: Colors.text,
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  testInputRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'flex-start',
+  },
+  testSendBtn: {
+    backgroundColor: Colors.accent,
+    borderRadius: 8,
+    padding: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 48,
+    minHeight: 48,
+  },
+  testSendBtnDisabled: {
+    backgroundColor: Colors.textMuted,
+    opacity: 0.5,
+  },
+  testHint: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    marginTop: 4,
   },
 });

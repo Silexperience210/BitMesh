@@ -10,6 +10,8 @@ import {
   TextInput,
   Animated,
   ActivityIndicator,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {
   Radio,
@@ -1199,10 +1201,16 @@ export default function SettingsScreen() {
   }, []);
 
   return (
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
     >
       <View style={styles.profileCard}>
         <View style={styles.profileAvatar}>
@@ -1313,6 +1321,7 @@ export default function SettingsScreen() {
         onSeedScanned={handleSeedQRScanned}
       />
     </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
 

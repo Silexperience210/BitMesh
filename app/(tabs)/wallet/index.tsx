@@ -11,6 +11,8 @@ import {
   RefreshControl,
   Alert,
   TextInput,
+  KeyboardAvoidingView,
+  Platform,
 } from 'react-native';
 import {
   ArrowUpRight,
@@ -1338,10 +1340,16 @@ export default function WalletScreen() {
 
   return (
     <>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+    >
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
       showsVerticalScrollIndicator={false}
+      keyboardShouldPersistTaps="handled"
       refreshControl={
         <RefreshControl
           refreshing={refreshing}
@@ -1567,6 +1575,7 @@ export default function WalletScreen() {
         Alert.alert('NFC', `Transaction ${tx.txid.slice(0, 16)}... lue depuis la carte`);
       }}
     />
+    </KeyboardAvoidingView>
     </>
   );
 }

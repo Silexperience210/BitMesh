@@ -592,18 +592,23 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
 
   // Enregistrer le handler BLE dès que possible + annoncer notre clé publique
   useEffect(() => {
+    const unsubscribers: (() => void)[] = [];
+    
     if (ble.connected && identity) {
-      console.log('[MeshCore] Connexion BLE établie, enregistrement handler');
-      ble.onPacket(handleIncomingMeshCorePacket);
+      if (__DEV__) console.log('[MeshCore] Connexion BLE établie, enregistrement handler');
+      
+      // Register packet handler and store unsubscribe function
+      const unsubPacket = ble.onPacket(handleIncomingMeshCorePacket);
+      unsubscribers.push(unsubPacket);
 
       // KEY_ANNOUNCE pour les pairs qui utilisent le protocole binaire custom
       const keyAnnounce = createKeyAnnouncePacket(identity.nodeId, identity.pubkeyHex);
       ble.sendPacket(keyAnnounce)
-        .then(() => console.log('[MeshCore] KEY_ANNOUNCE envoyé (broadcast)'))
+        .then(() => { if (__DEV__) console.log('[MeshCore] KEY_ANNOUNCE envoyé (broadcast)'); })
         .catch(err => console.error('[MeshCore] Erreur envoi KEY_ANNOUNCE:', err));
 
       // Enregistrer handler pour messages natifs MeshCore Companion (CMD_SEND_TXT_MSG / CMD_SEND_CHAN_MSG)
-      ble.onBleMessage((msg) => {
+      const unsubBleMsg = ble.onBleMessage((msg) => {
         const contact = ble.meshContacts.find(c => c.pubkeyPrefix === msg.senderPubkeyPrefix);
         const fromNodeId = contact
           ? `MESH-${msg.senderPubkeyPrefix.slice(0, 8).toUpperCase()}`
@@ -620,7 +625,7 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           type: 'text',
           timestamp: msg.timestamp * 1000,
           isMine: false,
-          status: 'received',
+          status: 'delivered',
         };
 
         saveMessage(storedMsg).catch(console.error);
@@ -651,7 +656,13 @@ export const [MessagesContext, useMessages] = createContextHook((): MessagesStat
           );
         });
       });
+      unsubscribers.push(unsubBleMsg);
     }
+    
+    // Cleanup: unsubscribe all handlers when effect re-runs or component unmounts
+    return () => {
+      unsubscribers.forEach(unsub => unsub());
+    };
   }, [ble.connected, identity, handleIncomingMeshCorePacket]);
 
   // Charger les conversations depuis AsyncStorage

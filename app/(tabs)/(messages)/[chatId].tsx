@@ -568,8 +568,8 @@ export default function ChatScreen() {
       />
       <KeyboardAvoidingView
         style={styles.container}
-        behavior="padding"
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 24}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <View style={styles.meshInfo}>
           {settings.connectionMode === 'internet' ? <Globe size={12} color={Colors.blue} />

@@ -201,7 +201,7 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         console.log('[Connect] createBond non bloquant:', bondErr);
       }
 
-      await connectToGateway(pendingDevice.id);
+      await connectToGateway(pendingDevice.id, pendingDevice.name);
       // Succès : fermer le panneau et le modal
       setPendingDevice(null);
       onClose();

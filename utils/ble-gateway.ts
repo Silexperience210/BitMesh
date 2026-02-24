@@ -74,9 +74,9 @@ const PUSH_MSG_WAITING      = 0x83;
 const PUSH_RAW_DATA         = 0x84;
 const PUSH_NEW_ADVERT       = 0x8A; // même format que RESP_CONTACT
 
-const APP_PROTOCOL_VERSION = 3;
+const APP_PROTOCOL_VERSION = 1; // Version officielle du protocole MeshCore Companion (fix: was 3)
 const RAW_PUSH_HEADER_SIZE = 3;
-const BLE_MAX_WRITE        = 182; // MTU 185 − 3 bytes overhead ATT
+const BLE_MAX_WRITE        = 182; // MTU 185 − 3 bytes overhead ATT (verified correct)
 
 // ── Types publics ──────────────────────────────────────────────────────
 
@@ -349,14 +349,15 @@ export class BleGatewayClient {
     const textBytes = new TextEncoder().encode(text);
     const payload = new Uint8Array(2 + 4 + 6 + textBytes.length);
     let off = 0;
-    payload[off++] = 0x00;
+    payload[off++] = 0x00; // txtType = 0 (plain)
     payload[off++] = attempt & 0xFF;
-    new DataView(payload.buffer).setUint32(off, ts, true); off += 4;
+    new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
     payload.set(pubkeyPrefix6.slice(0, 6), off); off += 6;
     payload.set(textBytes, off);
-    const prefixHex = Array.from(pubkeyPrefix6.slice(0, 3)).map(b => b.toString(16).padStart(2, '0')).join('');
-    console.log(`[BleGateway] CMD_SEND_TXT_MSG prefix=${prefixHex}...`);
+    const prefixHex = Array.from(pubkeyPrefix6.slice(0, 6)).map(b => b.toString(16).padStart(2, '0')).join('');
+    console.log(`[BleGateway] CMD_SEND_TXT_MSG prefix=${prefixHex}, text="${text.substring(0, 30)}...", len=${textBytes.length}`);
     await this.sendFrame(CMD_SEND_TXT_MSG, payload);
+    console.log(`[BleGateway] CMD_SEND_TXT_MSG envoyé, en attente de RESP_SENT...`);
   }
 
   async sendChannelMessage(channelIdx: number, text: string): Promise<void> {
@@ -365,11 +366,16 @@ export class BleGatewayClient {
     const textBytes = new TextEncoder().encode(text);
     const payload = new Uint8Array(2 + 4 + textBytes.length);
     let off = 0;
-    payload[off++] = 0x00;
+    payload[off++] = 0x00; // txtType = 0 (plain)
     payload[off++] = channelIdx & 0xFF;
-    new DataView(payload.buffer).setUint32(off, ts, true); off += 4;
+    new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
     payload.set(textBytes, off);
-    console.log(`[BleGateway] CMD_SEND_CHAN_MSG ch${channelIdx}`);
+    console.log(`[BleGateway] CMD_SEND_CHAN_MSG ch=${channelIdx}, text="${text.substring(0, 30)}...", len=${textBytes.length}`);
+    await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
+    console.log(`[BleGateway] CMD_SEND_CHAN_MSG envoyé, en attente de RESP_SENT...`);
+  }
+    payload.set(textBytes, off);
+    if (__DEV__) console.log(`[BleGateway] CMD_SEND_CHAN_MSG ch${channelIdx}`);
     await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
   }
 
@@ -443,7 +449,7 @@ export class BleGatewayClient {
     if (data.length === 0) return;
     const code = data[0];
     const payload = data.slice(1);
-    console.log(`[BleGateway] Frame reçu code=0x${code.toString(16)} (${payload.length}B)`);
+    if (__DEV__) console.log(`[BleGateway] Frame reçu code=0x${code.toString(16)} (${payload.length}B)`);
 
     switch (code) {
       case RESP_OK:
@@ -470,7 +476,9 @@ export class BleGatewayClient {
         this.parseSelfInfo(payload);
         break;
       case RESP_SENT:
-        console.log('[BleGateway] RESP_SENT');
+        if (__DEV__) console.log('[BleGateway] RESP_SENT - Message accepté par le firmware');
+        // Le message a été accepté par le firmware et sera transmis sur LoRa
+        // PUSH_SEND_CONFIRMED (0x82) arrivera plus tard quand le ACK est reçu
         break;
       case RESP_DIRECT_MSG:
         console.log('[BleGateway] RESP_DIRECT_MSG (v2) — ignoré');
@@ -517,7 +525,7 @@ export class BleGatewayClient {
           const snr  = (payload[0] << 24 >> 24) / 4;
           const rssi = payload[1] << 24 >> 24;
           const raw  = payload.slice(RAW_PUSH_HEADER_SIZE);
-          console.log(`[BleGateway] RawData SNR:${snr} RSSI:${rssi} (${raw.length}B)`);
+          if (__DEV__) console.log(`[BleGateway] RawData SNR:${snr} RSSI:${rssi} (${raw.length}B)`);
           this.deliverRawPacket(raw);
         }
         break;
@@ -595,7 +603,7 @@ export class BleGatewayClient {
     const timestamp = view.getUint32(11, true);
     const text = new TextDecoder().decode(payload.slice(15)).replace(/\0/g, '');
     const snr = snrByte / 4.0;
-    console.log(`[BleGateway] RESP_DIRECT_MSG_V3 SNR:${snr}dB hops:${pathLen}`);
+    if (__DEV__) console.log(`[BleGateway] RESP_DIRECT_MSG_V3 SNR:${snr}dB hops:${pathLen}`);
     this.incomingMessageCallback?.({ type: 'direct', senderPubkeyPrefix, pathLen, timestamp, text, snr });
   }
 
@@ -611,7 +619,7 @@ export class BleGatewayClient {
     const timestamp = view.getUint32(6, true);
     const text = new TextDecoder().decode(payload.slice(10)).replace(/\0/g, '');
     const snr = snrByte / 4.0;
-    console.log(`[BleGateway] RESP_CHANNEL_MSG_V3 ch${channelIdx} SNR:${snr}dB`);
+    if (__DEV__) console.log(`[BleGateway] RESP_CHANNEL_MSG_V3 ch${channelIdx} SNR:${snr}dB`);
     this.incomingMessageCallback?.({ type: 'channel', channelIdx, senderPubkeyPrefix: '', pathLen, timestamp, text, snr });
   }
 
@@ -623,7 +631,7 @@ export class BleGatewayClient {
     const pubkeyBytes = payload.slice(0, 32);
     const pubkeyHex = Array.from(pubkeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
     const pubkeyPrefix = pubkeyHex.slice(0, 12);
-    console.log(`[BleGateway] PUSH_ADVERT: ${pubkeyPrefix}...`);
+    if (__DEV__) console.log(`[BleGateway] PUSH_ADVERT: ${pubkeyPrefix.slice(0, 6)}...`);
     const contact: MeshCoreContact = {
       publicKey: pubkeyBytes, pubkeyHex, pubkeyPrefix,
       name: `Node-${pubkeyPrefix.slice(0, 6).toUpperCase()}`,
@@ -637,7 +645,7 @@ export class BleGatewayClient {
     const view = new DataView(payload.buffer, payload.byteOffset);
     const ackCode    = view.getUint32(0, true);
     const roundTripMs = view.getUint32(4, true);
-    console.log(`[BleGateway] PUSH_SEND_CONFIRMED ACK:${ackCode} RTT:${roundTripMs}ms`);
+    if (__DEV__) console.log(`[BleGateway] PUSH_SEND_CONFIRMED ACK:${ackCode} RTT:${roundTripMs}ms`);
     this.sendConfirmedCallback?.(ackCode, roundTripMs);
   }
 
@@ -690,8 +698,12 @@ export class BleGatewayClient {
     frame[0] = cmd;
     frame.set(payload, 1);
 
+    const hex = Array.from(frame).map(b => b.toString(16).padStart(2, '0')).join(' ');
+    console.log(`[BleGateway] TX Frame [${frame.length} bytes]: ${hex.substring(0, 60)}...`);
+    
     for (let offset = 0; offset < frame.length; offset += BLE_MAX_WRITE) {
       const chunk = Array.from(frame.slice(offset, offset + BLE_MAX_WRITE));
+      console.log(`[BleGateway] TX Chunk ${offset}-${offset + chunk.length}: ${chunk.length} bytes`);
       if (this.canWriteWithoutResponse) {
         await BleManager.writeWithoutResponse(
           this.connectedId, SERVICE_UUID, TX_UUID, chunk, BLE_MAX_WRITE
@@ -702,6 +714,7 @@ export class BleGatewayClient {
         );
       }
     }
+    console.log(`[BleGateway] TX Frame complet envoyé`);
   }
 }
 

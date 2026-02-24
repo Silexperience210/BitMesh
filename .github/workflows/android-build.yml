@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'apk-*'
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -58,8 +59,13 @@ jobs:
       - name: Generate version
         id: version
         run: |
-          # Version auto-incrémentée basée sur le numéro de run GitHub Actions
-          VERSION="v1.0.${{ github.run_number }}"
+          # Si c'est un tag v*, utiliser le tag comme version
+          if [[ "${{ github.ref_name }}" == v* ]]; then
+            VERSION="${{ github.ref_name }}"
+          else
+            # Version auto-incrémentée basée sur le numéro de run GitHub Actions
+            VERSION="v1.0.${{ github.run_number }}"
+          fi
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
@@ -94,14 +100,18 @@ jobs:
 
       - name: Rename APK with version
         run: |
+          # Nettoyer le nom de version pour le fichier (enlever les caractères spéciaux)
+          CLEAN_VERSION=$(echo "${{ steps.version.outputs.VERSION }}" | tr '/' '-' | tr ' ' '_')
           cp android/app/build/outputs/apk/release/app-release.apk \
-             android/app/build/outputs/apk/release/BitMesh-${{ steps.version.outputs.VERSION }}.apk
+             android/app/build/outputs/apk/release/BitMesh-${CLEAN_VERSION}.apk
+          echo "APK_NAME=BitMesh-${CLEAN_VERSION}.apk" >> $GITHUB_ENV
+          echo "APK_PATH=android/app/build/outputs/apk/release/BitMesh-${CLEAN_VERSION}.apk" >> $GITHUB_ENV
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: BitMesh-${{ steps.version.outputs.VERSION }}
-          path: android/app/build/outputs/apk/release/BitMesh-${{ steps.version.outputs.VERSION }}.apk
+          path: ${{ env.APK_PATH }}
 
       - name: Delete old releases (garder les 5 dernières)
         uses: dev-drprasad/delete-older-releases@v0.3.4
@@ -120,9 +130,42 @@ jobs:
             ## BitMesh ${{ steps.version.outputs.VERSION }}
 
             **Commit** : ${{ github.sha }}
-            **Message** : ${{ github.event.head_commit.message }}
+            **Branch** : `${{ github.ref_name }}`
 
-            ### Fonctionnalités
+            ${{ contains(github.ref_name, 'v1.1') && '### 🔧 Phase 1 - Critical BLE & Security Fixes
+
+            Cette release corrige 5 bugs critiques identifiés lors de l audit architectural :
+
+            #### 1. BLE Protocol Version (CRITIQUE)
+            - Changé `APP_PROTOCOL_VERSION` de 3 à 1 (protocole officiel MeshCore Companion)
+            - Fix la connexion BLE qui échouait silencieusement
+
+            #### 2. DataView Buffer Safety (CRITIQUE)  
+            - Ajout `byteOffset` sur tous les DataView
+            - Évite la corruption de données sur les sous-tableaux
+
+            #### 3. Memory Leak Fix (CRITIQUE)
+            - Cleanup des listeners BLE avec fonctions unsubscribe
+            - `onPacket()` et `onBleMessage()` retournent des fonctions de cleanup
+            - Évite les crashes après reconnections multiples
+
+            #### 4. Sécurité - Logging Sensible (HAUTE)
+            - Protection des logs avec `__DEV__`
+            - Masquage des public keys et noms de devices en production
+
+            #### 5. BLE_MAX_WRITE Documenté (MINEUR)
+            - Valeur 182 bytes vérifiée (MTU 185 - 3 overhead)
+
+            ### Fichiers Modifiés
+            - `utils/ble-gateway.ts`
+            - `providers/BleProvider.tsx`
+            - `providers/MessagesProvider.ts`
+
+            ### Tests Requis
+            - [ ] Connexion BLE device MeshCore
+            - [ ] RESP_SELF_INFO reçu sous 3s
+            - [ ] Envoi/réception messages
+            - [ ] 5x reconnexion sans crash' || '### Fonctionnalités
             - Messagerie P2P via MQTT et BLE/LoRa
             - Encryption E2E (ECDH + AES-GCM)
             - Wallet Bitcoin avec envoi/réception
@@ -130,12 +173,13 @@ jobs:
             - SQLite persistence
             - Message retry et ACKs
             - Compression Smaz
-            - Chunking pour messages longs
+            - Chunking pour messages longs' }}
 
             ### Installation
             1. Télécharger le fichier `.apk` ci-dessous
-            2. Autoriser l'installation depuis sources inconnues
+            2. Autoriser l'installation depuis sources inconnues  
             3. Installer et profiter !
-          files: android/app/build/outputs/apk/release/BitMesh-${{ steps.version.outputs.VERSION }}.apk
+          files: ${{ env.APK_PATH }}
+          prerelease: ${{ contains(github.ref_name, 'v1.1') }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

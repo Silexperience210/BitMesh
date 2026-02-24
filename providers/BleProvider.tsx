@@ -36,10 +36,11 @@ interface BleState {
 }
 
 interface BleContextValue extends BleState {
-  connectToGateway: (deviceId: string) => Promise<void>;
+  connectToGateway: (deviceId: string, scannedName?: string) => Promise<void>;
   disconnectGateway: () => Promise<void>;
   sendPacket: (packet: MeshCorePacket, timeoutMs?: number) => Promise<void>;
-  onPacket: (handler: (packet: MeshCorePacket) => void) => void;
+  onPacket: (handler: (packet: MeshCorePacket) => void) => () => void; // Returns unsubscribe function
+  offPacket: () => void; // Remove packet handler
   confirmLoraActive: () => void;
   // Protocole natif MeshCore Companion
   sendDirectMessage: (pubkeyHex: string, text: string) => Promise<void>;
@@ -47,7 +48,10 @@ interface BleContextValue extends BleState {
   setChannel: (idx: number) => void;
   syncContacts: () => Promise<void>;
   sendSelfAdvert: () => Promise<void>;
-  onBleMessage: (cb: (msg: MeshCoreIncomingMsg) => void) => void;
+  onBleMessage: (cb: (msg: MeshCoreIncomingMsg) => void) => () => void; // Returns unsubscribe function
+  offBleMessage: () => void; // Remove message handler
+  // Confirmation d'envoi
+  onSendConfirmed: (cb: (ackCode: number, roundTripMs: number) => void) => () => void;
 }
 
 const BleContext = createContext<BleContextValue | null>(null);
@@ -74,6 +78,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   const clientRef = useRef<BleGatewayClient | null>(null);
   const retryServiceRef = useRef(getMessageRetryService());
   const incomingMessageCallbackRef = useRef<((msg: MeshCoreIncomingMsg) => void) | null>(null);
+  // Stocke le nom du device scanné pour l'afficher pendant la connexion (avant réception SelfInfo)
+  const pendingDeviceNameRef = useRef<string>('');
 
   useEffect(() => {
     const initBle = async () => {
@@ -93,7 +99,12 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         clientRef.current = client;
 
         client.onDeviceInfo((info) => {
-          setState((prev) => ({ ...prev, deviceInfo: info }));
+          setState((prev) => ({
+            ...prev,
+            deviceInfo: info,
+            // Mettre à jour le nom du device quand SelfInfo arrive
+            device: prev.device ? { ...prev.device, name: info.name } : null,
+          }));
         });
 
         // Callback : message direct ou channel reçu via firmware natif
@@ -221,9 +232,14 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const connectToGateway = async (deviceId: string) => {
+  const connectToGateway = async (deviceId: string, scannedName?: string) => {
     if (!clientRef.current) {
       throw new Error('BLE not initialized');
+    }
+
+    // Stocke le nom scanné pour l'utiliser comme fallback
+    if (scannedName) {
+      pendingDeviceNameRef.current = scannedName;
     }
 
     setState((prev) => ({ ...prev, error: null }));
@@ -232,16 +248,23 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
       await clientRef.current.connect(deviceId);
 
       const device = clientRef.current.getConnectedDevice();
+      // Utilise le nom scanné comme fallback si SelfInfo pas encore reçu
+      const displayDevice = device ? {
+        ...device,
+        name: device.name === 'MeshCore' && pendingDeviceNameRef.current 
+          ? pendingDeviceNameRef.current 
+          : device.name
+      } : null;
 
       setState((prev) => ({
         ...prev,
         connected: true,
-        device,
+        device: displayDevice,
         meshContacts: [], // Reset contacts, seront rechargés via getContacts()
       }));
 
       await AsyncStorage.setItem(BLE_LAST_DEVICE_KEY, deviceId);
-      console.log(`[BleProvider] Connected to ${device?.name}`);
+      if (__DEV__) console.log(`[BleProvider] Connected to ${displayDevice?.name}`);
     } catch (error: any) {
       console.error('[BleProvider] Connection error:', error);
       const msg: string = error?.message ?? String(error);
@@ -308,12 +331,24 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const onPacket = (handler: (packet: MeshCorePacket) => void) => {
+  const onPacket = (handler: (packet: MeshCorePacket) => void): (() => void) => {
     if (clientRef.current) {
       clientRef.current.onMessage((packet) => {
         setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
         handler(packet);
       });
+    }
+    // Return unsubscribe function
+    return () => {
+      if (clientRef.current) {
+        clientRef.current.onMessage(() => {}); // Clear handler
+      }
+    };
+  };
+
+  const offPacket = () => {
+    if (clientRef.current) {
+      clientRef.current.onMessage(() => {}); // Clear handler
     }
   };
 
@@ -325,7 +360,19 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   const sendDirectMessage = async (pubkeyHex: string, text: string) => {
     if (!clientRef.current || !state.connected) throw new Error('BLE non connecté');
-    const prefix6 = new Uint8Array(Buffer.from(pubkeyHex.slice(0, 12), 'hex'));
+    // Validate pubkey format
+    if (!pubkeyHex || pubkeyHex.length < 12) {
+      throw new Error('Clé publique destinataire invalide (trop courte)');
+    }
+    // Convert hex to bytes - use slice(0,12) to get first 6 bytes (12 hex chars)
+    const prefixHex = pubkeyHex.slice(0, 12);
+    if (!/^[0-9a-fA-F]{12}$/.test(prefixHex)) {
+      throw new Error('Clé publique destinataire invalide (format hex attendu)');
+    }
+    const prefix6 = new Uint8Array(Buffer.from(prefixHex, 'hex'));
+    if (__DEV__) {
+      console.log(`[BleProvider] Envoi DM vers prefix: ${prefixHex}, text: ${text.substring(0, 20)}...`);
+    }
     await clientRef.current.sendDirectMessage(prefix6, text);
     setState((prev) => prev.loraActive ? prev : { ...prev, loraActive: true });
   };
@@ -351,8 +398,27 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     await clientRef.current.sendSelfAdvert(1);
   };
 
-  const onBleMessage = (cb: (msg: MeshCoreIncomingMsg) => void) => {
+  const onBleMessage = (cb: (msg: MeshCoreIncomingMsg) => void): (() => void) => {
     incomingMessageCallbackRef.current = cb;
+    // Return unsubscribe function
+    return () => {
+      incomingMessageCallbackRef.current = null;
+    };
+  };
+
+  const offBleMessage = () => {
+    incomingMessageCallbackRef.current = null;
+  };
+
+  const onSendConfirmed = (cb: (ackCode: number, roundTripMs: number) => void): (() => void) => {
+    if (clientRef.current) {
+      clientRef.current.onSendConfirmed(cb);
+    }
+    return () => {
+      if (clientRef.current) {
+        clientRef.current.onSendConfirmed(() => {});
+      }
+    };
   };
 
   const contextValue: BleContextValue = {
@@ -361,6 +427,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     disconnectGateway,
     sendPacket,
     onPacket,
+    offPacket,
     confirmLoraActive,
     sendDirectMessage,
     sendChannelMessage,
@@ -368,6 +435,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     syncContacts,
     sendSelfAdvert,
     onBleMessage,
+    offBleMessage,
+    onSendConfirmed,
   };
 
   return <BleContext.Provider value={contextValue}>{children}</BleContext.Provider>;
