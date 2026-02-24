@@ -123,6 +123,17 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
           console.log(`[BleProvider] Message confirmé ACK:${ackCode} RTT:${rtt}ms`);
         });
 
+        // Callback : déconnexion BLE — met à jour l'état React
+        client.onDisconnect(() => {
+          console.log('[BleProvider] Déconnexion détectée — reset état');
+          setState((prev) => ({
+            ...prev,
+            connected: false,
+            loraActive: false,
+            device: null,
+          }));
+        });
+
         console.log('[BleProvider] BLE initialized');
 
         // Auto-reconnect avec timeout court (8s max) pour ne pas bloquer le scan
