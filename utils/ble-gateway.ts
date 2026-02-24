@@ -364,13 +364,7 @@ export class BleGatewayClient {
     if (!this.awaitingSelfInfo) return Promise.resolve(true);
     return new Promise(resolve => {
       let done = false;
-      const timer = setTimeout(() => {
-        if (!done) {
-          done = true;
-          this.selfInfoResolvers = this.selfInfoResolvers.filter(r => r !== resolver);
-          resolve(false);
-        }
-      }, timeoutMs);
+      // Déclarer resolver EN PREMIER — le timer le référence par closure
       const resolver = () => {
         if (!done) {
           done = true;
@@ -378,6 +372,13 @@ export class BleGatewayClient {
           resolve(true);
         }
       };
+      const timer = setTimeout(() => {
+        if (!done) {
+          done = true;
+          this.selfInfoResolvers = this.selfInfoResolvers.filter(r => r !== resolver);
+          resolve(false);
+        }
+      }, timeoutMs);
       this.selfInfoResolvers.push(resolver);
     });
   }

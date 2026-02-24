@@ -46,6 +46,12 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const [pendingDevice, setPendingDevice] = React.useState<BleGatewayDevice | null>(null);
   // PIN BLE — MeshCore firmware défaut: 123456 (build flag BLE_PIN_CODE)
   const [pinValue, setPinValue] = React.useState('123456');
+  // Guard anti-setState sur composant démonté (modal fermé pendant scan)
+  const isMountedRef = React.useRef(true);
+  React.useEffect(() => {
+    isMountedRef.current = true;
+    return () => { isMountedRef.current = false; };
+  }, []);
 
   const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
@@ -107,6 +113,7 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
       setTimeout(async () => {
         sub.remove();
         try { await BleManager.stopScan(); } catch (_) {}
+        if (!isMountedRef.current) return; // modal fermé pendant le scan
         const devices = Array.from(found.values());
         console.log('=== Scan terminé ===', devices.length, 'device(s)');
 
