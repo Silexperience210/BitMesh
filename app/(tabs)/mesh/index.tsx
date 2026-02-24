@@ -596,16 +596,39 @@ export default function MeshScreen() {
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity } = useMessages();
-  const { connected: bleConnected, device: bleDevice, deviceInfo } = useBle();
+  const { connected: bleConnected, device: bleDevice, deviceInfo, meshContacts: bleMeshContacts } = useBle();
+
+  // Fusionner contacts BLE (MeshCore getContacts) + pairs MQTT sur le radar
+  const allPeers = useMemo((): RadarPeer[] => {
+    const mqttNodeIds = new Set(radarPeers.map(p => p.nodeId));
+    const blePeers: RadarPeer[] = bleConnected
+      ? bleMeshContacts
+          .filter(c => c.pubkeyPrefix)
+          .filter(c => !mqttNodeIds.has(`MESH-${c.pubkeyPrefix.slice(0, 8).toUpperCase()}`))
+          .map(c => ({
+            nodeId: `MESH-${c.pubkeyPrefix.slice(0, 8).toUpperCase()}`,
+            name: c.name,
+            online: c.lastSeen > 0 && (Date.now() / 1000 - c.lastSeen) < 600,
+            pubkeyHex: c.pubkeyHex,
+            signalStrength: 75,
+            distanceMeters: 0,
+            bearingRad: 0,
+            lastSeen: c.lastSeen > 0 ? c.lastSeen * 1000 : Date.now(),
+            lat: c.lat,
+            lng: c.lng,
+          }))
+      : [];
+    return [...radarPeers, ...blePeers];
+  }, [radarPeers, bleMeshContacts, bleConnected]);
 
   const filteredPeers = useMemo(() => {
     switch (filter) {
       case 'online':
-        return radarPeers.filter((p) => p.online);
+        return allPeers.filter((p) => p.online);
       default:
-        return radarPeers;
+        return allPeers;
     }
-  }, [filter, radarPeers]);
+  }, [filter, allPeers]);
 
   const handleScan = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -630,6 +653,7 @@ export default function MeshScreen() {
   }, []);
 
   return (
+    <View style={styles.screenContainer}>
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.contentContainer}
@@ -650,9 +674,64 @@ export default function MeshScreen() {
 
       {!isInternetOnly && (
         <>
-          <StatsRow peers={radarPeers} mqttConnected={mqttState === 'connected'} deviceInfo={deviceInfo} />
+          <StatsRow peers={allPeers} mqttConnected={mqttState === 'connected'} deviceInfo={deviceInfo} />
           <RadioBand deviceInfo={deviceInfo} />
         </>
+      )}
+
+      {/* Barre de connexion gateway — remplace les boutons flottants */}
+      {!isInternetOnly && (
+        <View style={styles.connectionSection}>
+          {bleConnected && bleDevice ? (
+            <View style={styles.connectedDeviceRow}>
+              <View style={styles.connectedDeviceLeft}>
+                <View style={[styles.connectedDot, { backgroundColor: Colors.green }]} />
+                <Text style={styles.connectedDeviceName} numberOfLines={1}>
+                  {bleDevice.name}
+                </Text>
+              </View>
+              <View style={styles.deviceActionsRow}>
+                <TouchableOpacity
+                  style={[styles.deviceActionBtn, { backgroundColor: `${Colors.purple}25`, borderColor: `${Colors.purple}50` }]}
+                  onPress={() => { setSelectedDeviceId(1); setShowRoomServerModal(true); }}
+                  activeOpacity={0.7}
+                >
+                  <Server size={12} color={Colors.purple} />
+                  <Text style={[styles.deviceActionText, { color: Colors.purple }]}>Room Server</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.deviceActionBtn, { backgroundColor: `${Colors.cyan}25`, borderColor: `${Colors.cyan}50` }]}
+                  onPress={() => { setSelectedDeviceId(1); setShowRepeaterModal(true); }}
+                  activeOpacity={0.7}
+                >
+                  <Radio size={12} color={Colors.cyan} />
+                  <Text style={[styles.deviceActionText, { color: Colors.cyan }]}>Repeater</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.deviceActionBtn, { backgroundColor: `${Colors.accent}20`, borderColor: `${Colors.accent}40` }]}
+                  onPress={() => setShowGatewayModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <Radio size={12} color={Colors.textMuted} />
+                  <Text style={[styles.deviceActionText, { color: Colors.textMuted }]}>BLE</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : (
+            <View style={styles.connectButtonsRow}>
+              <TouchableOpacity style={[styles.connectGatewayBtn, { flex: 1 }]} onPress={() => setShowGatewayModal(true)} activeOpacity={0.8}>
+                <Radio size={16} color={Colors.accent} />
+                <Text style={styles.connectGatewayText}>Gateway LoRa</Text>
+                <Text style={styles.connectGatewayArrow}>→</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.connectGatewayBtn, { flex: 1, borderColor: `${Colors.accent}30` }]} onPress={() => setShowUsbModal(true)} activeOpacity={0.8}>
+                <Usb size={16} color={Colors.textMuted} />
+                <Text style={[styles.connectGatewayText, { color: Colors.textMuted }]}>USB Serial</Text>
+                <Text style={[styles.connectGatewayArrow, { color: Colors.textMuted }]}>→</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
       )}
 
       <View style={styles.viewToggle}>
@@ -770,63 +849,6 @@ export default function MeshScreen() {
         </View>
       )}
 
-      {/* Bouton flottant Gateway BLE */}
-      {!isInternetOnly && (
-        <TouchableOpacity
-          style={styles.gatewayFloatingBtn}
-          onPress={() => setShowGatewayModal(true)}
-          activeOpacity={0.8}
-        >
-          <Radio size={20} color={Colors.background} />
-          <Text style={styles.gatewayFloatingText}>
-            {bleConnected ? `📡 ${bleDevice?.name.slice(0, 12)}` : 'Gateway LoRa'}
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      {/* ✅ NOUVEAU: Bouton flottant USB Serial */}
-      {!isInternetOnly && (
-        <TouchableOpacity
-          style={[styles.gatewayFloatingBtn, { bottom: 100, backgroundColor: Colors.accent }]}
-          onPress={() => setShowUsbModal(true)}
-          activeOpacity={0.8}
-        >
-          <Usb size={20} color={Colors.background} />
-          <Text style={styles.gatewayFloatingText}>
-            USB Serial
-          </Text>
-        </TouchableOpacity>
-      )}
-
-      {/* ✅ NOUVEAU: Boutons Room Server et Repeater - utilisent le device connecté */}
-      {!isInternetOnly && bleConnected && bleDevice && (
-        <View style={styles.deviceConfigRow}>
-          <TouchableOpacity
-            style={[styles.configBtn, { backgroundColor: Colors.purple }]}
-            onPress={() => {
-              setSelectedDeviceId(typeof bleDevice.id === 'string' ? parseInt(bleDevice.id) || 1 : (bleDevice.id || 1));
-              setShowRoomServerModal(true);
-            }}
-            activeOpacity={0.8}
-          >
-            <Server size={16} color={Colors.background} />
-            <Text style={styles.configBtnText}>Room Server</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            style={[styles.configBtn, { backgroundColor: Colors.cyan }]}
-            onPress={() => {
-              setSelectedDeviceId(typeof bleDevice.id === 'string' ? parseInt(bleDevice.id) || 1 : (bleDevice.id || 1));
-              setShowRepeaterModal(true);
-            }}
-            activeOpacity={0.8}
-          >
-            <Radio size={16} color={Colors.background} />
-            <Text style={styles.configBtnText}>Repeater</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-
       <NodeDetailModal peer={selectedPeer} visible={showDetail} onClose={handleCloseDetail} />
       <GatewayScanModal visible={showGatewayModal} onClose={() => setShowGatewayModal(false)} />
       <UsbSerialScanModal visible={showUsbModal} onClose={() => setShowUsbModal(false)} />
@@ -845,10 +867,15 @@ export default function MeshScreen() {
         </>
       )}
     </ScrollView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screenContainer: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
   container: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -1686,5 +1713,83 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: Colors.background,
+  },
+  connectionSection: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+  },
+  connectedDeviceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    borderWidth: 0.5,
+    borderColor: Colors.border,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  connectedDeviceLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+  },
+  connectedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  connectedDeviceName: {
+    color: Colors.text,
+    fontSize: 13,
+    fontWeight: '600',
+    flex: 1,
+  },
+  deviceActionsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  deviceActionBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 0.5,
+  },
+  deviceActionText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  connectButtonsRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  connectGatewayBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.accentGlow,
+    borderWidth: 1,
+    borderColor: Colors.accentDim,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+  },
+  connectGatewayText: {
+    color: Colors.accent,
+    fontSize: 13,
+    fontWeight: '700',
+    flex: 1,
+  },
+  connectGatewayArrow: {
+    color: Colors.accent,
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

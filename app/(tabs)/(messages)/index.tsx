@@ -167,14 +167,6 @@ function NewChatModal({ visible, onClose, onDM, onForum, mqttState }: {
       return;
     }
 
-    if (mqttState !== 'connected') {
-      Alert.alert(
-        'Non connecté',
-        `La messagerie n'est pas encore connectée (status: ${mqttState}). Veuillez patienter quelques secondes et réessayer.`
-      );
-      return;
-    }
-
     const channelName = newForumName.toLowerCase().replace(/\s+/g, '-');
     try {
       setLoading(true);
