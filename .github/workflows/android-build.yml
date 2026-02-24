@@ -63,25 +63,17 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
-      - name: Generate Keystore
+      - name: Restore Keystore from secret
         run: |
-          keytool -genkey -v \
-            -keystore android/app/bitmesh-release.keystore \
-            -alias bitmesh \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass bitmesh2024 \
-            -keypass bitmesh2024 \
-            -dname "CN=BitMesh, OU=BitMesh, O=BitMesh, L=Unknown, ST=Unknown, C=US"
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/bitmesh-release.keystore
 
       - name: Setup Signing Config
         run: |
           cat > android/app/signing.properties << EOF
           MYAPP_UPLOAD_STORE_FILE=bitmesh-release.keystore
-          MYAPP_UPLOAD_KEY_ALIAS=bitmesh
-          MYAPP_UPLOAD_STORE_PASSWORD=bitmesh2024
-          MYAPP_UPLOAD_KEY_PASSWORD=bitmesh2024
+          MYAPP_UPLOAD_KEY_ALIAS=${{ secrets.KEY_ALIAS }}
+          MYAPP_UPLOAD_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}
+          MYAPP_UPLOAD_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}
           EOF
 
       - name: Build Release APK
@@ -91,9 +83,9 @@ jobs:
           export GRADLE_OPTS="-Xmx3072m -XX:MaxMetaspaceSize=768m"
           ./gradlew assembleRelease \
             -PMYAPP_UPLOAD_STORE_FILE=bitmesh-release.keystore \
-            -PMYAPP_UPLOAD_KEY_ALIAS=bitmesh \
-            -PMYAPP_UPLOAD_STORE_PASSWORD=bitmesh2024 \
-            -PMYAPP_UPLOAD_KEY_PASSWORD=bitmesh2024 \
+            "-PMYAPP_UPLOAD_KEY_ALIAS=${{ secrets.KEY_ALIAS }}" \
+            "-PMYAPP_UPLOAD_STORE_PASSWORD=${{ secrets.KEYSTORE_PASSWORD }}" \
+            "-PMYAPP_UPLOAD_KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}" \
             --no-daemon \
             --max-workers=2
         timeout-minutes: 25
