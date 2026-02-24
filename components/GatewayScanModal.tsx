@@ -44,8 +44,8 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
   const [connecting, setConnecting] = React.useState(false);
   // Device sélectionné en attente de connexion
   const [pendingDevice, setPendingDevice] = React.useState<BleGatewayDevice | null>(null);
-  // PIN saisie par l'utilisateur (défaut vide = pas de createBond forcé)
-  const [pinValue, setPinValue] = React.useState('');
+  // PIN BLE — MeshCore firmware défaut: 123456 (build flag BLE_PIN_CODE)
+  const [pinValue, setPinValue] = React.useState('123456');
 
   const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
@@ -148,16 +148,16 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
     try {
       const pin = pinValue.trim();
-      if (pin) {
-        // PIN saisi manuellement → createBond programmatique (pas de dialogue Android)
-        console.log('[Connect] createBond avec PIN:', pin);
-        try {
-          await BleManager.createBond(pendingDevice.id, pin);
-          console.log('[Connect] Bond créé OK');
-        } catch (bondErr) {
-          // Certains devices ne requièrent pas de bond — on continue quand même
-          console.log('[Connect] createBond ignoré:', bondErr);
-        }
+      // createBond systématique — MeshCore requiert l'appairage
+      // PIN défaut firmware = 123456 (platformio.ini: -D BLE_PIN_CODE=123456)
+      // Si le device a un écran il génère un PIN aléatoire → l'utilisateur le saisit ici
+      console.log('[Connect] createBond avec PIN:', pin || '(aucun)');
+      try {
+        await BleManager.createBond(pendingDevice.id, pin || null);
+        console.log('[Connect] Bond créé OK');
+      } catch (bondErr) {
+        // Bond déjà existant ou device "Just Works" → on continue
+        console.log('[Connect] createBond:', bondErr);
       }
 
       await connectToGateway(pendingDevice.id);
@@ -251,8 +251,8 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
                 />
               </View>
               <Text style={styles.pinHint}>
-                Laisser vide si le device ne demande pas de PIN.{'\n'}
-                Renseignez le PIN affiché par votre device MeshCore.
+                Défaut firmware MeshCore : 123456{'\n'}
+                Si votre device a un écran, entrez le PIN affiché.
               </Text>
               <View style={styles.connectBtnRow}>
                 <TouchableOpacity style={styles.cancelBtn} onPress={() => setPendingDevice(null)}>
