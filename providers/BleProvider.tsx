@@ -8,7 +8,7 @@
  */
 
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { Platform, PermissionsAndroid, Alert } from 'react-native';
+import { Platform, PermissionsAndroid } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import BleManager from 'react-native-ble-manager';
 import {
@@ -30,15 +30,12 @@ interface BleState {
   loraActive: boolean;  // true = au moins un paquet LoRa reçu/envoyé avec succès
   device: BleGatewayDevice | null;
   deviceInfo: BleDeviceInfo | null;
-  scanning: boolean;
-  availableDevices: BleGatewayDevice[];
   error: string | null;
   currentChannel: number;          // 0=public, 1-N=privé chiffré
   meshContacts: MeshCoreContact[]; // contacts syncés du device MeshCore
 }
 
 interface BleContextValue extends BleState {
-  scanForGateways: () => Promise<void>;
   connectToGateway: (deviceId: string) => Promise<void>;
   disconnectGateway: () => Promise<void>;
   sendPacket: (packet: MeshCorePacket, timeoutMs?: number) => Promise<void>;
@@ -69,8 +66,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     loraActive: false,
     device: null,
     deviceInfo: null,
-    scanning: false,
-    availableDevices: [],
     error: null,
     currentChannel: 0,
     meshContacts: [],
@@ -220,98 +215,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const scanForGateways = async (): Promise<void> => {
-    // Initialiser le client si nécessaire
-    if (!clientRef.current) {
-      try {
-        if (Platform.OS === 'android') {
-          await requestAndroidPermissions();
-        }
-        const client = getBleGatewayClient();
-        await client.initialize();
-        clientRef.current = client;
-        client.onDeviceInfo((info) => {
-          setState((prev) => ({ ...prev, deviceInfo: info }));
-        });
-      } catch (initErr: any) {
-        const msg = initErr.message || 'Bluetooth non disponible';
-        setState((prev) => ({ ...prev, error: msg }));
-        throw new Error(msg);
-      }
-    }
-
-    setState((prev) => ({ ...prev, scanning: true, availableDevices: [], error: null }));
-
-    try {
-      await BleManager.start({ showAlert: false });
-      const bleState = await BleManager.checkState();
-      if (bleState !== 'on') {
-        throw new Error(`Bluetooth éteint (état: ${bleState}). Allumez le Bluetooth.`);
-      }
-
-      const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
-      // Même structure exacte que handleDebugBle : Map locale, setState UNE SEULE FOIS à la fin.
-      // Pas de setState pendant le scan : avec newArch, setState depuis setInterval/callback
-      // natif peut être ignoré ou batché de façon inattendue.
-      const found = new Map<string, BleGatewayDevice>();
-
-      const addDevice = (peripheral: any) => {
-        if (!peripheral?.id) return;
-        const name: string = peripheral.name || peripheral.advertising?.localName || '';
-        const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
-        if (!found.has(peripheral.id)) {
-          found.set(peripheral.id, {
-            id: peripheral.id,
-            name: displayName,
-            rssi: peripheral.rssi || -100,
-            type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
-              ? 'companion' : 'gateway',
-          });
-          console.log(`[Scan] "${displayName}" ${peripheral.rssi}dBm`);
-        }
-      };
-
-      // ── Scan 1 : NUS UUID filter (8s) — identique à handleDebugBle ───────
-      console.log('[Scan] NUS UUID 8s...');
-      const l1 = BleManager.onDiscoverPeripheral(addDevice);
-      await BleManager.scan({
-        serviceUUIDs: [NUS_UUID],
-        seconds: 8,
-        allowDuplicates: false,
-        scanMode: 2,
-        matchMode: 1,
-      } as any);
-      await new Promise<void>((r) => setTimeout(r, 8500));
-      l1.remove();
-      try { await BleManager.stopScan(); } catch (_) {}
-      console.log(`[Scan] NUS → ${found.size} device(s)`);
-
-      // ── Scan 2 : Universal fallback si rien trouvé (8s) ──────────────────
-      if (found.size === 0) {
-        console.log('[Scan] Fallback universel 8s...');
-        const l2 = BleManager.onDiscoverPeripheral(addDevice);
-        await BleManager.scan({
-          serviceUUIDs: [],
-          seconds: 8,
-          allowDuplicates: false,
-          scanMode: 2,
-          matchMode: 1,
-        } as any);
-        await new Promise<void>((r) => setTimeout(r, 8500));
-        l2.remove();
-        try { await BleManager.stopScan(); } catch (_) {}
-        console.log(`[Scan] Universal → ${found.size} device(s)`);
-      }
-
-      // setState UNE SEULE FOIS, comme le debug scan qui montre l'Alert à la fin
-      setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()), scanning: false }));
-    } catch (error: any) {
-      console.error('[Scan] Error:', error);
-      setState((prev) => ({ ...prev, scanning: false, error: error.message || 'Scan failed' }));
-      throw error;
-    }
-  };
-
   const connectToGateway = async (deviceId: string) => {
     if (!clientRef.current) {
       throw new Error('BLE not initialized');
@@ -343,7 +246,7 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         msg.includes('bonding') ||
         msg.includes('pairing');
       const displayMsg = isAuthErr
-        ? 'Appairage BLE requis. Allez dans Paramètres → Bluetooth, supprimez "MeshCore-..." puis relancez. PIN : 123456'
+        ? 'Erreur d\'appairage BLE. Vérifiez le PIN dans le modal de scan (défaut: 123456).'
         : msg || 'Connection failed';
       setState((prev) => ({ ...prev, error: displayMsg }));
       throw error;
@@ -448,7 +351,6 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
   const contextValue: BleContextValue = {
     ...state,
-    scanForGateways,
     connectToGateway,
     disconnectGateway,
     sendPacket,

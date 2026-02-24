@@ -87,13 +87,6 @@ export interface BleGatewayDevice {
   type?: 'gateway' | 'companion';
 }
 
-export interface BleGatewayState {
-  connected: boolean;
-  device: BleGatewayDevice | null;
-  scanning: boolean;
-  error: string | null;
-}
-
 export interface BleDeviceInfo {
   name: string;
   publicKey: string;
@@ -162,41 +155,6 @@ export class BleGatewayClient {
     await BleManager.start({ showAlert: false });
     console.log('[BleGateway] BleManager démarré');
   }
-
-  // ── Scan ──────────────────────────────────────────────────────────
-
-  async scanForGateways(
-    onDeviceFound: (device: BleGatewayDevice) => void,
-    timeoutMs = 10000
-  ): Promise<void> {
-    console.log('[BleGateway] Scan BLE...');
-    const seen = new Set<string>();
-    await BleManager.start({ showAlert: false });
-    try { await BleManager.stopScan(); } catch (_) {}
-    await new Promise(res => setTimeout(res, 200));
-
-    const listener = BleManager.onDiscoverPeripheral((p: any) => {
-      const name: string = p.name || p.advertising?.localName || '';
-      if (seen.has(p.id) && !name) return;
-      seen.add(p.id);
-      const displayName = name || `BLE (${p.id.slice(0, 8)})`;
-      onDeviceFound({
-        id: p.id, name: displayName, rssi: p.rssi || -100,
-        type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
-          ? 'companion' : 'gateway',
-      });
-    });
-
-    await BleManager.scan({
-      serviceUUIDs: [], seconds: timeoutMs / 1000,
-      allowDuplicates: false, scanMode: 2, matchMode: 1,
-    } as any);
-    await new Promise(res => setTimeout(res, timeoutMs));
-    await BleManager.stopScan();
-    listener.remove();
-  }
-
-  stopScan(): void { BleManager.stopScan(); }
 
   // ── Connect — séquence EXACTE meshcore_connector.dart ────────────
 
