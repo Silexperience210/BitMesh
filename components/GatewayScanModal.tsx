@@ -12,8 +12,6 @@ import {
   FlatList,
   ActivityIndicator,
   Alert,
-  Platform,
-  PermissionsAndroid,
 } from 'react-native';
 import BleManager from 'react-native-ble-manager';
 import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug } from 'lucide-react-native';
@@ -43,32 +41,10 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
   const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 
-  const requestPerms = async (): Promise<boolean> => {
-    if (Platform.OS !== 'android') return true;
-    if (Platform.Version >= 31) {
-      const granted = await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      ]);
-      return (
-        granted['android.permission.BLUETOOTH_SCAN'] === 'granted' &&
-        granted['android.permission.BLUETOOTH_CONNECT'] === 'granted'
-      );
-    } else {
-      const r = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION);
-      return r === 'granted';
-    }
-  };
-
-  const handleScan = async () => {
+  // Scan unifié — code IDENTIQUE au debug qui fonctionne, juste setState à la fin
+  const runScan = async (debugMode: boolean) => {
     try {
-      const ok = await requestPerms();
-      if (!ok) {
-        Alert.alert('Permissions BLE requises', 'Accordez les permissions Bluetooth dans les paramètres.');
-        return;
-      }
-
+      console.log('=== SCAN BLE START ===');
       await BleManager.start({ showAlert: false });
       const bleState = await BleManager.checkState();
       if (bleState !== 'on') {
@@ -78,93 +54,21 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
 
       setLocalScanning(true);
       setLocalDevices([]);
-      const found = new Map<string, BleGatewayDevice>();
+      const found: Map<string, BleGatewayDevice> = new Map();
 
-      const addDevice = (peripheral: any) => {
-        if (!peripheral?.id) return;
-        const name: string = peripheral.name || peripheral.advertising?.localName || '';
-        const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
-        if (!found.has(peripheral.id)) {
-          found.set(peripheral.id, {
-            id: peripheral.id,
+      const sub = BleManager.onDiscoverPeripheral((device: any) => {
+        if (!device?.id) return;
+        const name: string = device.name || device.advertising?.localName || '';
+        const displayName = name || `BLE (${device.id.slice(0, 8)})`;
+        if (!found.has(device.id)) {
+          found.set(device.id, {
+            id: device.id,
             name: displayName,
-            rssi: peripheral.rssi || -100,
+            rssi: device.rssi || -100,
             type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
               ? 'companion' : 'gateway',
           });
-          console.log(`[Scan] "${displayName}" ${peripheral.rssi}dBm`);
-        }
-      };
-
-      // ── Scan 1 : NUS UUID filter (8s) ─────────────────────────────────
-      console.log('[Scan] NUS UUID 8s...');
-      const l1 = BleManager.onDiscoverPeripheral(addDevice);
-      await BleManager.scan({ serviceUUIDs: [NUS_UUID], seconds: 8, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
-
-      setTimeout(async () => {
-        l1.remove();
-        try { await BleManager.stopScan(); } catch (_) {}
-        console.log(`[Scan] NUS → ${found.size} device(s)`);
-
-        if (found.size > 0) {
-          setLocalDevices(Array.from(found.values()));
-          setLocalScanning(false);
-          return;
-        }
-
-        // ── Scan 2 : Fallback universel (8s) ──────────────────────────
-        console.log('[Scan] Fallback universel 8s...');
-        const l2 = BleManager.onDiscoverPeripheral(addDevice);
-        await BleManager.scan({ serviceUUIDs: [], seconds: 8, allowDuplicates: false, scanMode: 2, matchMode: 1 } as any);
-
-        setTimeout(async () => {
-          l2.remove();
-          try { await BleManager.stopScan(); } catch (_) {}
-          console.log(`[Scan] Universal → ${found.size} device(s)`);
-          setLocalDevices(Array.from(found.values()));
-          setLocalScanning(false);
-        }, 8500);
-      }, 8500);
-    } catch (err: any) {
-      setLocalScanning(false);
-      Alert.alert('Scan impossible', err.message || 'Vérifiez que le Bluetooth est activé et les permissions accordées.');
-    }
-  };
-
-  const [connecting, setConnecting] = React.useState(false);
-
-  const handleDebugBle = async () => {
-    try {
-      console.log('=== DEBUG BLE START ===');
-
-      await BleManager.start({ showAlert: false });
-      console.log('✅ BleManager démarré');
-
-      const bleState = await BleManager.checkState();
-      console.log('📡 BLE State:', bleState);
-
-      if (bleState !== 'on') {
-        Alert.alert('Bluetooth éteint', `État : ${bleState}\nAllumez le Bluetooth.`);
-        return;
-      }
-
-      let permStatus = 'N/A';
-      if (Platform.OS === 'android' && Platform.Version >= 31) {
-        const scan = await PermissionsAndroid.check('android.permission.BLUETOOTH_SCAN' as any);
-        const conn = await PermissionsAndroid.check('android.permission.BLUETOOTH_CONNECT' as any);
-        permStatus = `SCAN=${scan ? '✅' : '❌'} CONNECT=${conn ? '✅' : '❌'}`;
-        console.log('🔐 Permissions:', permStatus);
-      }
-
-      console.log('🔍 Scan 8s — v12 TurboModule API (NUS UUID filter)...');
-      const found: Map<string, any> = new Map();
-
-      const sub = BleManager.onDiscoverPeripheral((dev: any) => {
-        if (!dev?.id) return;
-        const name = dev.name || dev.advertising?.localName || 'SANS NOM';
-        if (!found.has(dev.id)) {
-          found.set(dev.id, { name, id: dev.id, rssi: dev.rssi });
-          console.log('📱 TROUVÉ:', name, dev.id, dev.rssi);
+          console.log('📱 TROUVÉ:', displayName, device.id, device.rssi);
         }
       });
 
@@ -174,18 +78,37 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         sub.remove();
         try { await BleManager.stopScan(); } catch (_) {}
         const devices = Array.from(found.values());
-        console.log('=== Scan terminé ===', devices.length, 'device(s) uniques');
-        Alert.alert(
-          `${devices.length} device(s) MeshCore trouvé(s)`,
-          `Permissions: ${permStatus}\nFiltre: NUS UUID\n\n` +
-          (devices.map((d: any) => `• ${d.name}\n  ${d.id.slice(0, 17)}\n  (${d.rssi} dBm)`).join('\n\n') || 'Aucun device MeshCore détecté')
-        );
+        console.log('=== Scan terminé ===', devices.length, 'device(s)');
+
+        setLocalDevices(devices);
+        setLocalScanning(false);
+
+        if (debugMode) {
+          // Mode debug : Alert avec bouton "Connecter" en plus
+          Alert.alert(
+            `${devices.length} device(s) trouvé(s)`,
+            devices.map(d => `• ${d.name} (${d.rssi} dBm)`).join('\n') || 'Aucun device détecté',
+            devices.length > 0
+              ? [
+                  { text: 'Fermer', style: 'cancel' },
+                  { text: `Connecter → ${devices[0].name}`, onPress: () => handleConnect(devices[0].id) },
+                ]
+              : [{ text: 'OK' }]
+          );
+        }
       }, 8500);
     } catch (err: any) {
-      console.error('❌ ERREUR DEBUG BLE:', err);
-      Alert.alert('Erreur BLE', err.message);
+      setLocalScanning(false);
+      console.error('❌ ERREUR SCAN:', err);
+      Alert.alert('Scan impossible', err.message || 'Vérifiez que le Bluetooth est activé.');
     }
   };
+
+  const handleScan = () => runScan(false);
+
+  const [connecting, setConnecting] = React.useState(false);
+
+  const handleDebugBle = () => runScan(true);
 
   const handleConnect = async (deviceId: string) => {
     setConnecting(true);
