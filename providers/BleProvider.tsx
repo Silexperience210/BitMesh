@@ -125,18 +125,25 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
 
         console.log('[BleProvider] BLE initialized');
 
-        // Auto-reconnect au dernier appareil connu
+        // Auto-reconnect avec timeout court (8s max) pour ne pas bloquer le scan
+        // Android interdit le scan pendant connect()/bonding → timeout impératif
         try {
           const lastDeviceId = await AsyncStorage.getItem(BLE_LAST_DEVICE_KEY);
           if (lastDeviceId) {
             console.log('[BleProvider] Auto-reconnect à:', lastDeviceId);
-            await client.connect(lastDeviceId);
+            await Promise.race([
+              client.connect(lastDeviceId),
+              new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error('auto-reconnect timeout')), 8000)
+              ),
+            ]);
             const device = client.getConnectedDevice();
             setState((prev) => ({ ...prev, connected: true, device }));
             console.log('[BleProvider] Auto-reconnect réussi:', device?.name);
           }
         } catch (reconnectErr) {
-          console.log('[BleProvider] Auto-reconnect échoué (appareil hors portée)');
+          console.log('[BleProvider] Auto-reconnect échoué — nettoyage');
+          client.disconnect().catch(() => {});
         }
       } catch (error: any) {
         console.error('[BleProvider] Initialization error:', error);
@@ -196,8 +203,8 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const scanForGateways = async () => {
-    // Initialiser le client si nécessaire (pour connect/disconnect)
+  const scanForGateways = async (): Promise<void> => {
+    // Initialiser le client si nécessaire
     if (!clientRef.current) {
       try {
         if (Platform.OS === 'android') {
@@ -225,83 +232,74 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
         throw new Error(`Bluetooth éteint (état: ${bleState}). Allumez le Bluetooth.`);
       }
 
-      // Stopper tout scan précédent pour éviter les conflits Android
+      // Stopper tout scan/connexion en cours pour libérer le BleManager
       try { await BleManager.stopScan(); } catch (_) {}
-      await new Promise((r) => setTimeout(r, 200));
+      await new Promise((r) => setTimeout(r, 300));
 
-      const found: BleGatewayDevice[] = [];
-      const seen = new Set<string>();
       const NUS_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+      // Map pour déduplication propre (pas de doublons par ID)
+      const found = new Map<string, BleGatewayDevice>();
 
-      const handlePeripheral = (peripheral: any) => {
-        if (!peripheral?.id || seen.has(peripheral.id)) return;
-        seen.add(peripheral.id);
+      const addDevice = (peripheral: any) => {
+        if (!peripheral?.id) return;
         const name: string = peripheral.name || peripheral.advertising?.localName || '';
         const displayName = name || `BLE (${peripheral.id.slice(0, 8)})`;
-        const isMeshCore = displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-');
-        found.push({
+        found.set(peripheral.id, {
           id: peripheral.id,
           name: displayName,
           rssi: peripheral.rssi || -100,
-          type: isMeshCore ? 'companion' : 'gateway',
+          type: (displayName.startsWith('MeshCore-') || displayName.startsWith('Whisper-'))
+            ? 'companion' : 'gateway',
         });
-        console.log(`[BleProvider] Trouvé: "${displayName}" RSSI ${peripheral.rssi}`);
-        // Différer setState hors du contexte du callback natif (comme le scan debug)
-        setTimeout(() => {
-          setState((prev) => ({ ...prev, availableDevices: [...found] }));
-        }, 0);
+        console.log(`[Scan] "${displayName}" ${peripheral.rssi}dBm`);
       };
 
-      // ── Stratégie 1 : UUID NUS filter — même pattern exact que le scan debug ──
-      // setTimeout callback (non-bloquant) = pattern prouvé fonctionnel
-      console.log('[BleProvider] Scan NUS UUID (10s)...');
-      await new Promise<void>((resolve, reject) => {
-        const listener = BleManager.onDiscoverPeripheral(handlePeripheral);
+      // ── Scan 1 : NUS UUID filter (10s) ──────────────────────────────────
+      // BleManager.scan() appelé SANS await (fire-and-forget, comme handleDebugBle)
+      // setInterval met à jour l'UI toutes les 500ms (pas dans le callback natif)
+      console.log('[Scan] NUS UUID 10s...');
+      const l1 = BleManager.onDiscoverPeripheral(addDevice);
+      const i1 = setInterval(() => {
+        setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
+      }, 500);
+      BleManager.scan({
+        serviceUUIDs: [NUS_UUID],
+        seconds: 10,
+        allowDuplicates: false,
+        scanMode: 2,
+        matchMode: 1,
+      } as any).catch((e: any) => console.warn('[Scan] NUS scan error:', e));
+      await new Promise<void>((r) => setTimeout(r, 10500));
+      clearInterval(i1);
+      l1.remove();
+      BleManager.stopScan().catch(() => {});
+      console.log(`[Scan] NUS → ${found.size} device(s)`);
+
+      // ── Scan 2 : Universal fallback si rien trouvé (8s) ─────────────────
+      if (found.size === 0) {
+        console.log('[Scan] Fallback universel 8s...');
+        const l2 = BleManager.onDiscoverPeripheral(addDevice);
+        const i2 = setInterval(() => {
+          setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()) }));
+        }, 500);
         BleManager.scan({
-          serviceUUIDs: [NUS_UUID],
-          seconds: 10,
+          serviceUUIDs: [],
+          seconds: 8,
           allowDuplicates: false,
           scanMode: 2,
           matchMode: 1,
-        } as any).catch(reject);
-        setTimeout(() => {
-          listener.remove();
-          BleManager.stopScan().catch(() => {});
-          resolve();
-        }, 10500);
-      });
-      console.log(`[BleProvider] Scan NUS → ${found.length} device(s)`);
-
-      // ── Stratégie 2 : Scan universel si UUID filter vide ──
-      if (found.length === 0) {
-        console.log('[BleProvider] Fallback scan universel (8s)...');
-        await new Promise<void>((resolve, reject) => {
-          const listener2 = BleManager.onDiscoverPeripheral(handlePeripheral);
-          BleManager.scan({
-            serviceUUIDs: [],
-            seconds: 8,
-            allowDuplicates: false,
-            scanMode: 2,
-            matchMode: 1,
-          } as any).catch(reject);
-          setTimeout(() => {
-            listener2.remove();
-            BleManager.stopScan().catch(() => {});
-            resolve();
-          }, 8500);
-        });
-        console.log(`[BleProvider] Scan universel → ${found.length} device(s)`);
+        } as any).catch((e: any) => console.warn('[Scan] Universal scan error:', e));
+        await new Promise<void>((r) => setTimeout(r, 8500));
+        clearInterval(i2);
+        l2.remove();
+        BleManager.stopScan().catch(() => {});
+        console.log(`[Scan] Universal → ${found.size} device(s)`);
       }
 
-      console.log(`[BleProvider] Scan terminé — ${found.length} device(s)`);
-      setState((prev) => ({ ...prev, availableDevices: [...found], scanning: false }));
+      setState((prev) => ({ ...prev, availableDevices: Array.from(found.values()), scanning: false }));
     } catch (error: any) {
-      console.error('[BleProvider] Scan error:', error);
-      setState((prev) => ({
-        ...prev,
-        scanning: false,
-        error: error.message || 'Scan failed',
-      }));
+      console.error('[Scan] Error:', error);
+      setState((prev) => ({ ...prev, scanning: false, error: error.message || 'Scan failed' }));
       throw error;
     }
   };

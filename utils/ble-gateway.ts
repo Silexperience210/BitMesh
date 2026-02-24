@@ -234,6 +234,9 @@ export class BleGatewayClient {
    *   → DeviceQuery → AppStart → (SelfInfo → SetTime auto) → SelfAdvert → GetContacts
    */
   async connect(deviceId: string, timeoutMs = 60000): Promise<void> {
+    // Nettoyer les listeners orphelins d'une connexion précédente
+    this.listeners.forEach((l) => l.remove());
+    this.listeners = [];
     console.log(`[BleGateway] Connexion à ${deviceId}...`);
 
     // ── 1. Connexion BLE (link layer) ──
@@ -264,7 +267,7 @@ export class BleGatewayClient {
     console.log('[BleGateway] Nordic UART Service trouvé');
 
     // ── 4. Bonding EXPLICITE ──────────────────────────────────────
-    await this.createBondExplicit(deviceId, 60000);
+    await this.createBondExplicit(deviceId, 15000);
 
     // ── 5. Activer notifications TX (Device → App) ──
     await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
@@ -341,7 +344,7 @@ export class BleGatewayClient {
       };
 
       const timer = setTimeout(() => {
-        console.warn('[BleGateway] Bonding timeout (60s) — tentative de continuer...');
+        console.warn('[BleGateway] Bonding timeout (15s) — tentative de continuer...');
         done();
       }, timeoutMs);
 
