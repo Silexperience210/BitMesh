@@ -52,11 +52,23 @@ Write-Host "========================================" -ForegroundColor Green
 Write-Host "  ✅ Corrections appliquées!" -ForegroundColor Green
 Write-Host "========================================" -ForegroundColor Green
 Write-Host ""
+Write-Host "Nouveaux fichiers:" -ForegroundColor Cyan
+Write-Host "  📁 components/RadioConfigModal.tsx" -ForegroundColor White
+Write-Host "  📁 components/MeshDebugger.tsx" -ForegroundColor White
+Write-Host "  📁 hooks/useMeshDiagnostics.ts" -ForegroundColor White
+Write-Host "  📁 app/(tabs)/mesh/debug.tsx" -ForegroundColor White
+Write-Host ""
 Write-Host "Prochaines étapes:" -ForegroundColor Cyan
 Write-Host "  1. Redémarrez Metro: npx expo start --clear" -ForegroundColor White
 Write-Host "  2. Reconnectez votre device BLE" -ForegroundColor White
 Write-Host "  3. Vérifiez les logs: Canal 0 (public) configuré" -ForegroundColor White
-Write-Host "  4. Testez le broadcast flood" -ForegroundColor White
+Write-Host "  4. Ouvrez Mesh Debugger: Mesh → Configurer Canaux → Debugger" -ForegroundColor White
+Write-Host "  5. Lancez 'Test Complet' pour valider" -ForegroundColor White
+Write-Host ""
+Write-Host "Documentation:" -ForegroundColor Yellow
+Write-Host "  📖 BROADCAST_FLOOD_FIX.md" -ForegroundColor Gray
+Write-Host "  📖 CHANNEL_AND_FREQUENCY_GUIDE.md" -ForegroundColor Gray
+Write-Host "  📖 MESH_DEBUGGER_GUIDE.md" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Pour annuler les changements:" -ForegroundColor Yellow
 Write-Host "  utils/ble-gateway.ts.backup.$timestamp" -ForegroundColor Gray
