@@ -668,6 +668,20 @@ export class BleGatewayClient {
     console.log('[BleGateway] SelfInfo parsed:', { name, freq: radioFreqHz, sf: radioSf, txPower });
 
     if (this.deviceInfoCallback) this.deviceInfoCallback(info);
+
+    // Envoyer l'heure au device
+    const ts = Math.floor(Date.now() / 1000);
+    const timeBuf = new Uint8Array(4);
+    new DataView(timeBuf.buffer).setUint32(0, ts, true);
+    this.sendFrame(CMD_SET_TIME, timeBuf)
+      .then(() => console.log('[BleGateway] SetTime envoyé:', ts))
+      .catch(e => console.warn('[BleGateway] SetTime:', e));
+
+    this.awaitingSelfInfo = false;
+    this.clearSelfInfoRetry();
+    const resolvers = [...this.selfInfoResolvers];
+    this.selfInfoResolvers = [];
+    resolvers.forEach(r => r());
   }
 
   // ── Tentative de trouver la fréquence correcte dans le packet ──
@@ -687,20 +701,6 @@ export class BleGatewayClient {
         }
       }
     }
-  }
-
-    const ts = Math.floor(Date.now() / 1000);
-    const timeBuf = new Uint8Array(4);
-    new DataView(timeBuf.buffer).setUint32(0, ts, true);
-    this.sendFrame(CMD_SET_TIME, timeBuf)
-      .then(() => console.log('[BleGateway] SetTime envoyé:', ts))
-      .catch(e => console.warn('[BleGateway] SetTime:', e));
-
-    this.awaitingSelfInfo = false;
-    this.clearSelfInfoRetry();
-    const resolvers = [...this.selfInfoResolvers];
-    this.selfInfoResolvers = [];
-    resolvers.forEach(r => r());
   }
 
   // ── Privé : Parsers messages natifs ─────────────────────────────
