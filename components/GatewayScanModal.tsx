@@ -135,6 +135,7 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
         const devices = Array.from(found.values());
         console.log('=== Scan terminé ===', devices.length, 'device(s)');
 
+        console.log('[GatewayScanModal] setLocalDevices:', devices.length, 'devices');
         setLocalDevices(devices);
         setLocalScanning(false);
 
@@ -389,6 +390,7 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
           {/* Liste des devices */}
           <View style={styles.listContainer}>
             <Text style={styles.listTitle}>Appareils BLE détectés ({localDevices.length})</Text>
+            {__DEV__ && console.log('[GatewayScanModal] Render - localDevices:', localDevices.length, 'localScanning:', localScanning)}
             {localDevices.length === 0 && !localScanning ? (
               <Text style={styles.emptyText}>
                 Aucun appareil trouvé. Vérifiez que votre device MeshCore est allumé et à proximité.

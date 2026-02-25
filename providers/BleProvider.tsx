@@ -258,7 +258,9 @@ export function BleProvider({ children }: { children: React.ReactNode }) {
   };
 
   const connectToGateway = async (deviceId: string, scannedName?: string) => {
+    console.log('[BleProvider] connectToGateway called:', deviceId, 'clientRef:', !!clientRef.current);
     if (!clientRef.current) {
+      console.error('[BleProvider] ERROR: clientRef.current is null!');
       throw new Error('BLE not initialized');
     }
 
