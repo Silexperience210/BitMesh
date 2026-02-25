@@ -1,5 +1,5 @@
 /**
- * BLE Gateway Client — MeshCore Companion Protocol
+ * BLE Gateway Client — MeshCore Companion Protocol (CORRIGÉ)
  *
  * Implémentation EXACTE de meshcore-open (Flutter officiel)
  * Source : https://github.com/zjs81/meshcore-open
@@ -10,18 +10,11 @@
  * ║  Device → App : [code][data...]     sur 6e400003 (TX/notify)        ║
  * ╚══════════════════════════════════════════════════════════════════════╝
  *
- * Séquence connexion (meshcore_connector.dart) :
- *   1. connect() + requestMTU(185)
- *   2. retrieveServices() → vérif NUS UUID
- *   3. startNotification() × 3 retries (0ms, 500ms, 1000ms)
- *   4. _requestDeviceInfo() :
- *        DeviceQuery(22) → AppStart(1) → GetCustomVar(40) → GetBattAndStorage(20)
- *        + retry AppStart toutes les 3500ms jusqu'à SelfInfo reçu
- *   5. waitForSelfInfo(3s) — si échec → retry complet
- *   6. syncTime() auto dans parseSelfInfo
- *   7. getChannels() [unawaited]
- *   8. getContacts() [unawaited]
- *   9. sendSelfAdvert() [unawaited]
+ * CORRECTIONS APPLIQUÉES:
+ * 1. Configuration automatique du canal 0 (public) au handshake
+ * 2. Gestion correcte des messages de canal reçus (RESP_CHANNEL_MSG_V3)
+ * 3. Vérification de l'état du canal avant envoi
+ * 4. Logs détaillés pour debugging broadcast
  */
 
 import BleManager from 'react-native-ble-manager';
@@ -33,23 +26,24 @@ import {
 } from './meshcore-protocol';
 
 // ── Nordic UART Service UUIDs ──────────────────────────────────────────
-const SERVICE_UUID = MESHCORE_BLE.SERVICE_UUID; // 6e400001-b5a3-f393-e0a9-e50e24dcca9e
+const SERVICE_UUID = MESHCORE_BLE.SERVICE_UUID;
 const TX_UUID      = MESHCORE_BLE.TX_CHAR_UUID; // 6e400002  App → Device (WRITE)
 const RX_UUID      = MESHCORE_BLE.RX_CHAR_UUID; // 6e400003  Device → App (NOTIFY)
 
-// ── Commandes App → Device (meshcore_protocol.dart) ───────────────────
+// ── Commandes App → Device ────────────────────────────────────────────
 const CMD_APP_START          = 1;
 const CMD_SEND_TXT_MSG       = 2;
-const CMD_SEND_CHAN_MSG       = 3;
+const CMD_SEND_CHAN_MSG      = 3;
 const CMD_GET_CONTACTS       = 4;
 const CMD_SET_TIME           = 6;
 const CMD_SEND_SELF_ADV      = 7;
 const CMD_SYNC_NEXT_MSG      = 10;
-const CMD_GET_BATT_STORAGE   = 20;  // cmdGetBattAndStorage
+const CMD_GET_BATT_STORAGE   = 20;
 const CMD_DEVICE_QUERY       = 22;
 const CMD_SEND_RAW           = 25;
-const CMD_GET_CHANNEL        = 31;  // cmdGetChannel (index)
-const CMD_GET_CUSTOM_VAR     = 40;  // cmdGetCustomVar
+const CMD_GET_CHANNEL        = 31;
+const CMD_SET_CHANNEL        = 32; // 0x20
+const CMD_GET_CUSTOM_VAR     = 40;
 
 // ── Réponses / Push Device → App ──────────────────────────────────────
 const RESP_OK               = 0;
@@ -72,11 +66,16 @@ const PUSH_ADVERT           = 0x80;
 const PUSH_SEND_CONFIRMED   = 0x82;
 const PUSH_MSG_WAITING      = 0x83;
 const PUSH_RAW_DATA         = 0x84;
-const PUSH_NEW_ADVERT       = 0x8A; // même format que RESP_CONTACT
+const PUSH_NEW_ADVERT       = 0x8A;
 
-const APP_PROTOCOL_VERSION = 1; // Version officielle du protocole MeshCore Companion (fix: was 3)
+const APP_PROTOCOL_VERSION = 1;
 const RAW_PUSH_HEADER_SIZE = 3;
-const BLE_MAX_WRITE        = 182; // MTU 185 − 3 bytes overhead ATT (verified correct)
+const BLE_MAX_WRITE        = 182;
+
+// ── Configuration canal par défaut ────────────────────────────────────
+// Canal 0 = Public (doit être configuré pour recevoir les broadcasts)
+const DEFAULT_CHANNEL_NAME = 'public';
+const DEFAULT_CHANNEL_SECRET = new Uint8Array(32); // 32 zéros = canal public par défaut
 
 // ── Types publics ──────────────────────────────────────────────────────
 
@@ -119,6 +118,13 @@ export interface MeshCoreIncomingMsg {
   snr?: number;
 }
 
+export interface ChannelConfig {
+  index: number;
+  name: string;
+  secret: Uint8Array;
+  configured: boolean;
+}
+
 type MessageHandler    = (packet: MeshCorePacket) => void;
 type BleSubscription   = { remove: () => void };
 
@@ -139,7 +145,10 @@ export class BleGatewayClient {
   private disconnectCallback:      (() => void) | null = null;
   private pendingContacts: MeshCoreContact[] = [];
 
-  // Handshake SelfInfo — retry toutes les 3500ms (meshcore_connector.dart)
+  // Configuration des canaux
+  private channelConfigs: Map<number, ChannelConfig> = new Map();
+
+  // Handshake SelfInfo
   private awaitingSelfInfo = false;
   private selfInfoRetryTimer: ReturnType<typeof setInterval> | null = null;
   private selfInfoResolvers: Array<() => void> = [];
@@ -156,25 +165,23 @@ export class BleGatewayClient {
     console.log('[BleGateway] BleManager démarré');
   }
 
-  // ── Connect — séquence EXACTE meshcore_connector.dart ────────────
+  // ── Connect ───────────────────────────────────────────────────────
 
   async connect(deviceId: string): Promise<void> {
-    // Nettoyer toute connexion précédente
     this.listeners.forEach(l => l.remove());
     this.listeners = [];
     this.clearSelfInfoRetry();
     this.selfInfoResolvers = [];
     this.awaitingSelfInfo = false;
     this.canWriteWithoutResponse = false;
+    this.channelConfigs.clear();
 
     console.log(`[BleGateway] Connexion à ${deviceId}...`);
 
-    // ── 1. Connexion BLE link layer (timeout 15s comme l'officiel) ──
     await BleManager.connect(deviceId);
     this.connectedId = deviceId;
     console.log('[BleGateway] Connecté');
 
-    // ── 2. MTU 185 ──
     try {
       const mtu = await BleManager.requestMTU(deviceId, 185);
       console.log(`[BleGateway] MTU: ${mtu}`);
@@ -182,9 +189,6 @@ export class BleGatewayClient {
       console.log('[BleGateway] MTU ignoré');
     }
 
-    // ── 3. Découverte services + check NUS UUID ──
-    // PeripheralInfo.serviceUUIDs = string[]   (chemin rapide)
-    // PeripheralInfo.services     = Service[]  = { uuid: string }[]  (fallback)
     const services = await BleManager.retrieveServices(deviceId) as any;
     const hasUart =
       services.serviceUUIDs?.some((u: string) => u.toLowerCase() === SERVICE_UUID.toLowerCase()) ||
@@ -196,7 +200,6 @@ export class BleGatewayClient {
     }
     console.log('[BleGateway] Nordic UART Service trouvé');
 
-    // Détecter WriteWithoutResponse sur le char TX (6e400002)
     const allChars: any[] = services.characteristics || [];
     for (const char of allChars) {
       const uuid = (char.characteristic || char.uuid || '').toLowerCase();
@@ -207,7 +210,6 @@ export class BleGatewayClient {
     }
     console.log(`[BleGateway] WriteWithoutResponse: ${this.canWriteWithoutResponse}`);
 
-    // ── 4. startNotification × 3 retries (0ms / 500ms / 1000ms) ──
     let notifySet = false;
     for (let attempt = 0; attempt < 3 && !notifySet; attempt++) {
       try {
@@ -217,8 +219,6 @@ export class BleGatewayClient {
         await BleManager.startNotification(deviceId, SERVICE_UUID, RX_UUID);
         notifySet = true;
         console.log(`[BleGateway] Notifications activées (attempt ${attempt + 1})`);
-        // Délai 500ms pour que le firmware active ses handlers avant la première commande
-        // (meshcore_connector.dart: Future.delayed(const Duration(milliseconds: 500)))
         await new Promise(r => setTimeout(r, 500));
       } catch (e) {
         console.log(`[BleGateway] startNotification ${attempt + 1}/3 échoué`);
@@ -226,7 +226,6 @@ export class BleGatewayClient {
       }
     }
 
-    // ── 5. Listeners événements — API v12 TurboModule (pas NativeEventEmitter) ──
     const notifListener = BleManager.onDidUpdateValueForCharacteristic((data) => {
       if (data.peripheral !== deviceId) return;
       if (data.characteristic?.toLowerCase() !== RX_UUID.toLowerCase()) return;
@@ -243,15 +242,14 @@ export class BleGatewayClient {
     });
     this.listeners.push(discListener);
 
-    // ── 6. _requestDeviceInfo() — ordre exact de l'officiel ──
+    // Handshake
     this.awaitingSelfInfo = true;
     await this.sendFrame(CMD_DEVICE_QUERY, new Uint8Array([APP_PROTOCOL_VERSION]));
     await this.sendAppStart();
     await this.sendFrame(CMD_GET_CUSTOM_VAR, new Uint8Array(0));
     await this.sendFrame(CMD_GET_BATT_STORAGE, new Uint8Array(0));
-    this.scheduleSelfInfoRetry(); // re-envoie AppStart toutes les 3500ms
+    this.scheduleSelfInfoRetry();
 
-    // ── 7. waitForSelfInfo(3s) — si non reçu → retry ──
     const gotSelfInfo = await this.waitForSelfInfo(3000);
     if (!gotSelfInfo) {
       console.log('[BleGateway] SelfInfo non reçu — retry requestDeviceInfo...');
@@ -260,16 +258,34 @@ export class BleGatewayClient {
       await this.waitForSelfInfo(3000);
     }
 
-    // ── 8. getChannels() — unawaited comme l'officiel ──
+    // CORRECTION: Configurer le canal 0 (public) automatiquement
+    await this.configureDefaultChannels();
+
     this.getChannels().catch(e => console.warn('[BleGateway] getChannels:', e));
-
-    // ── 9. getContacts() ──
     this.getContacts().catch(e => console.warn('[BleGateway] getContacts:', e));
-
-    // ── 10. sendSelfAdvert() ──
     this.sendSelfAdvert(1).catch(e => console.warn('[BleGateway] SelfAdvert:', e));
 
     console.log('[BleGateway] Handshake terminé');
+  }
+
+  // ── Configuration des canaux par défaut ────────────────────────────
+  
+  private async configureDefaultChannels(): Promise<void> {
+    console.log('[BleGateway] Configuration des canaux par défaut...');
+    
+    // Canal 0 = Public (pour broadcasts)
+    try {
+      await this.setChannel(0, DEFAULT_CHANNEL_NAME, DEFAULT_CHANNEL_SECRET);
+      this.channelConfigs.set(0, {
+        index: 0,
+        name: DEFAULT_CHANNEL_NAME,
+        secret: DEFAULT_CHANNEL_SECRET,
+        configured: true
+      });
+      console.log('[BleGateway] Canal 0 (public) configuré avec succès');
+    } catch (err) {
+      console.warn('[BleGateway] Impossible de configurer canal 0:', err);
+    }
   }
 
   // ── Disconnect ──────────────────────────────────────────────────
@@ -280,6 +296,7 @@ export class BleGatewayClient {
     this.awaitingSelfInfo = false;
     this.listeners.forEach(l => l.remove());
     this.listeners = [];
+    this.channelConfigs.clear();
     if (this.connectedId) {
       console.log('[BleGateway] Déconnexion...');
       await BleManager.disconnect(this.connectedId).catch(() => {});
@@ -287,13 +304,12 @@ export class BleGatewayClient {
     }
   }
 
-  // ── SelfInfo retry — scheduleSelfInfoRetry (meshcore_connector.dart) ──
+  // ── SelfInfo retry ──────────────────────────────────────────────
 
   private async sendAppStart(): Promise<void> {
     const appNameBytes = new TextEncoder().encode('BitMesh\0');
     const payload = new Uint8Array(1 + 6 + appNameBytes.length);
-    payload[0] = 0x01; // app version
-    // bytes 1-6 : reserved (0x00)
+    payload[0] = 0x01;
     payload.set(appNameBytes, 7);
     await this.sendFrame(CMD_APP_START, payload);
     console.log('[BleGateway] AppStart envoyé');
@@ -322,7 +338,6 @@ export class BleGatewayClient {
     if (!this.awaitingSelfInfo) return Promise.resolve(true);
     return new Promise(resolve => {
       let done = false;
-      // Déclarer resolver EN PREMIER — le timer le référence par closure
       const resolver = () => {
         if (!done) {
           done = true;
@@ -362,17 +377,41 @@ export class BleGatewayClient {
 
   async sendChannelMessage(channelIdx: number, text: string): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
+    
+    // CORRECTION: Vérifier que le canal est configuré
+    const channelConfig = this.channelConfigs.get(channelIdx);
+    if (!channelConfig?.configured) {
+      console.warn(`[BleGateway] Canal ${channelIdx} non configuré! Configuration auto...`);
+      if (channelIdx === 0) {
+        await this.configureDefaultChannels();
+      } else {
+        throw new Error(`Canal ${channelIdx} non configuré. Utilisez setChannel() d'abord.`);
+      }
+    }
+    
     const ts = Math.floor(Date.now() / 1000);
     const textBytes = new TextEncoder().encode(text);
+    
+    // Vérification taille max
+    if (textBytes.length > 150) {
+      throw new Error(`Message trop long: ${textBytes.length} bytes (max 150)`);
+    }
+    
     const payload = new Uint8Array(2 + 4 + textBytes.length);
     let off = 0;
     payload[off++] = 0x00; // txtType = 0 (plain)
     payload[off++] = channelIdx & 0xFF;
     new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
     payload.set(textBytes, off);
-    console.log(`[BleGateway] CMD_SEND_CHAN_MSG ch=${channelIdx}, text="${text.substring(0, 30)}...", len=${textBytes.length}`);
+    
+    console.log(`[BleGateway] 🚀 ENVOI BROADCAST ch=${channelIdx}`);
+    console.log(`[BleGateway]    Texte: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`);
+    console.log(`[BleGateway]    Taille: ${textBytes.length} bytes`);
+    console.log(`[BleGateway]    Canal configuré: ${channelConfig?.name || 'public'}`);
+    
     await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
-    console.log(`[BleGateway] CMD_SEND_CHAN_MSG envoyé, en attente de RESP_SENT...`);
+    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG envoyé au firmware`);
+    console.log(`[BleGateway]    En attente de RESP_SENT puis PUSH_SEND_CONFIRMED...`);
   }
 
   async syncNextMessage(): Promise<void> {
@@ -391,10 +430,6 @@ export class BleGatewayClient {
     await this.sendFrame(CMD_GET_CONTACTS, new Uint8Array(0));
   }
 
-  /**
-   * getChannels — séquence exacte : cmdGetChannel(31) × 8
-   * Requête canal par canal avec 400ms entre chaque (firmware ESP32 lent à répondre)
-   */
   async getChannels(maxChannels = 8): Promise<void> {
     if (!this.connectedId) return;
     console.log(`[BleGateway] getChannels(${maxChannels})...`);
@@ -409,7 +444,37 @@ export class BleGatewayClient {
     }
   }
 
-  // ── Envoi paquet gateway relay mode ─────────────────────────────
+  // ── CORRECTION: setChannel pour configurer les canaux ─────────────
+  async setChannel(channelIdx: number, name: string, secret: Uint8Array): Promise<void> {
+    if (!this.connectedId) throw new Error('Non connecté');
+    if (channelIdx < 0 || channelIdx > 7) {
+      throw new Error(`Index canal invalide: ${channelIdx} (0-7)`);
+    }
+    
+    // Format: [idx(1)] [name(32)] [secret(32)]
+    const payload = new Uint8Array(1 + 32 + 32);
+    payload[0] = channelIdx & 0xFF;
+    
+    // Nom (32 bytes, null-terminated)
+    const nameBytes = new TextEncoder().encode(name.slice(0, 31));
+    payload.set(nameBytes, 1);
+    
+    // Secret (32 bytes)
+    payload.set(secret.slice(0, 32), 33);
+    
+    console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}"`);
+    await this.sendFrame(CMD_SET_CHANNEL, payload);
+    
+    // Sauvegarder la config localement
+    this.channelConfigs.set(channelIdx, {
+      index: channelIdx,
+      name,
+      secret: secret.slice(0, 32),
+      configured: true
+    });
+    
+    console.log(`[BleGateway] ✓ Canal ${channelIdx} configuré`);
+  }
 
   async sendPacket(packet: MeshCorePacket): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
@@ -436,6 +501,9 @@ export class BleGatewayClient {
     if (!this.connectedId) return null;
     return { id: this.connectedId, name: this.deviceInfo?.name || 'MeshCore', rssi: -70 };
   }
+  getChannelConfig(index: number): ChannelConfig | undefined {
+    return this.channelConfigs.get(index);
+  }
 
   async destroy(): Promise<void> { await this.disconnect(); }
 
@@ -461,7 +529,7 @@ export class BleGatewayClient {
       case RESP_CONTACT:
         this.parseContact(payload);
         break;
-      case PUSH_NEW_ADVERT:        // même format que RESP_CONTACT
+      case PUSH_NEW_ADVERT:
         this.parseContact(payload);
         break;
       case RESP_END_CONTACTS:
@@ -472,9 +540,7 @@ export class BleGatewayClient {
         this.parseSelfInfo(payload);
         break;
       case RESP_SENT:
-        if (__DEV__) console.log('[BleGateway] RESP_SENT - Message accepté par le firmware');
-        // Le message a été accepté par le firmware et sera transmis sur LoRa
-        // PUSH_SEND_CONFIRMED (0x82) arrivera plus tard quand le ACK est reçu
+        console.log('[BleGateway] ✓ RESP_SENT - Message accepté par le firmware et mis en file pour LoRa');
         break;
       case RESP_DIRECT_MSG:
         console.log('[BleGateway] RESP_DIRECT_MSG (v2) — ignoré');
@@ -491,6 +557,7 @@ export class BleGatewayClient {
       case RESP_DEVICE_INFO:
         console.log('[BleGateway] RESP_DEVICE_INFO reçu');
         break;
+      // CORRECTION: Gestion correcte des messages de canal V3
       case RESP_DIRECT_MSG_V3:
         this.parseDirectMsgV3(payload);
         break;
@@ -498,7 +565,7 @@ export class BleGatewayClient {
         this.parseChannelMsgV3(payload);
         break;
       case RESP_CHANNEL_INFO:
-        console.log(`[BleGateway] RESP_CHANNEL_INFO ch${payload[0] ?? '?'}`);
+        this.parseChannelInfo(payload);
         break;
       case RESP_CUSTOM_VARS:
         console.log('[BleGateway] RESP_CUSTOM_VARS reçu');
@@ -549,7 +616,7 @@ export class BleGatewayClient {
 
     const advLatRaw = view.getInt32(off, true);  off += 4;
     const advLonRaw = view.getInt32(off, true);  off += 4;
-    off += 4; // reserved+manualAddContacts
+    off += 4;
 
     const radioFreqHz = view.getUint32(off, true); off += 4;
     const radioBwHz   = view.getUint32(off, true); off += 4;
@@ -568,7 +635,6 @@ export class BleGatewayClient {
 
     if (this.deviceInfoCallback) this.deviceInfoCallback(info);
 
-    // SetTime — syncTime() dans l'officiel, envoyé ici automatiquement
     const ts = Math.floor(Date.now() / 1000);
     const timeBuf = new Uint8Array(4);
     new DataView(timeBuf.buffer).setUint32(0, ts, true);
@@ -576,7 +642,6 @@ export class BleGatewayClient {
       .then(() => console.log('[BleGateway] SetTime envoyé:', ts))
       .catch(e => console.warn('[BleGateway] SetTime:', e));
 
-    // Notifier waitForSelfInfo() — arrêter le retry timer
     this.awaitingSelfInfo = false;
     this.clearSelfInfoRetry();
     const resolvers = [...this.selfInfoResolvers];
@@ -599,15 +664,21 @@ export class BleGatewayClient {
     const timestamp = view.getUint32(11, true);
     const text = new TextDecoder().decode(payload.slice(15)).replace(/\0/g, '');
     const snr = snrByte / 4.0;
-    if (__DEV__) console.log(`[BleGateway] RESP_DIRECT_MSG_V3 SNR:${snr}dB hops:${pathLen}`);
+    
+    console.log(`[BleGateway] 📨 DM REÇU de ${senderPubkeyPrefix.slice(0, 8)}...`);
+    console.log(`[BleGateway]    Texte: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`);
+    console.log(`[BleGateway]    SNR: ${snr}dB, Hops: ${pathLen}`);
+    
     this.incomingMessageCallback?.({ type: 'direct', senderPubkeyPrefix, pathLen, timestamp, text, snr });
   }
 
+  // CORRECTION: Parser complet pour les messages de canal
   private parseChannelMsgV3(payload: Uint8Array): void {
     if (payload.length < 10) {
-      console.warn('[BleGateway] RESP_CHANNEL_MSG_V3 trop court:', payload.length);
+      console.warn('[BleGateway] ⚠️ RESP_CHANNEL_MSG_V3 trop court:', payload.length);
       return;
     }
+    
     const snrByte = payload[0];
     const channelIdx = payload[3];
     const pathLen = payload[4];
@@ -615,8 +686,58 @@ export class BleGatewayClient {
     const timestamp = view.getUint32(6, true);
     const text = new TextDecoder().decode(payload.slice(10)).replace(/\0/g, '');
     const snr = snrByte / 4.0;
-    if (__DEV__) console.log(`[BleGateway] RESP_CHANNEL_MSG_V3 ch${channelIdx} SNR:${snr}dB`);
-    this.incomingMessageCallback?.({ type: 'channel', channelIdx, senderPubkeyPrefix: '', pathLen, timestamp, text, snr });
+    
+    console.log(`[BleGateway] 📢 MESSAGE CANAL REÇU !`);
+    console.log(`[BleGateway]    Canal: ${channelIdx} (${channelIdx === 0 ? 'public' : 'privé'})`);
+    console.log(`[BleGateway]    Texte: "${text.substring(0, 50)}${text.length > 50 ? '...' : ''}"`);
+    console.log(`[BleGateway]    SNR: ${snr}dB, Hops: ${pathLen}`);
+    console.log(`[BleGateway]    Timestamp: ${new Date(timestamp * 1000).toLocaleTimeString()}`);
+    
+    // Vérifier si on a ce canal configuré
+    const channelConfig = this.channelConfigs.get(channelIdx);
+    if (channelConfig) {
+      console.log(`[BleGateway]    ✓ Canal configuré: "${channelConfig.name}"`);
+    } else {
+      console.warn(`[BleGateway]    ⚠️ Canal ${channelIdx} non configuré localement`);
+    }
+    
+    this.incomingMessageCallback?.({ 
+      type: 'channel', 
+      channelIdx, 
+      senderPubkeyPrefix: '', // Les messages canal n'ont pas de pubkey expéditeur visible
+      pathLen, 
+      timestamp, 
+      text, 
+      snr 
+    });
+  }
+
+  // CORRECTION: Parser pour les infos de canal
+  private parseChannelInfo(payload: Uint8Array): void {
+    if (payload.length < 1) {
+      console.warn('[BleGateway] RESP_CHANNEL_INFO trop court');
+      return;
+    }
+    
+    const channelIdx = payload[0];
+    
+    if (payload.length >= 65) {
+      // Canal configuré: [idx(1)] [name(32)] [secret(32)]
+      const nameBytes = payload.slice(1, 33);
+      const name = new TextDecoder().decode(nameBytes).replace(/\0/g, '').trim();
+      const secret = payload.slice(33, 65);
+      
+      console.log(`[BleGateway] Canal ${channelIdx} info: "${name}" (configuré)`);
+      
+      this.channelConfigs.set(channelIdx, {
+        index: channelIdx,
+        name,
+        secret,
+        configured: name.length > 0
+      });
+    } else {
+      console.log(`[BleGateway] Canal ${channelIdx} non configuré (payload: ${payload.length} bytes)`);
+    }
   }
 
   private parsePushAdvert(payload: Uint8Array): void {
@@ -641,7 +762,12 @@ export class BleGatewayClient {
     const view = new DataView(payload.buffer, payload.byteOffset);
     const ackCode    = view.getUint32(0, true);
     const roundTripMs = view.getUint32(4, true);
-    if (__DEV__) console.log(`[BleGateway] PUSH_SEND_CONFIRMED ACK:${ackCode} RTT:${roundTripMs}ms`);
+    
+    console.log(`[BleGateway] ✓✓✓ PUSH_SEND_CONFIRMED`);
+    console.log(`[BleGateway]    ACK Code: ${ackCode}`);
+    console.log(`[BleGateway]    Round-trip: ${roundTripMs}ms`);
+    console.log(`[BleGateway]    Le message a été relayé avec succès sur le réseau LoRa!`);
+    
     this.sendConfirmedCallback?.(ackCode, roundTripMs);
   }
 
@@ -683,9 +809,6 @@ export class BleGatewayClient {
   }
 
   // ── Privé : BLE write ───────────────────────────────────────────
-  //
-  // Préfère writeWithoutResponse si supporté (comme l'app officielle Flutter).
-  // Fallback sur write avec réponse sinon.
 
   private async sendFrame(cmd: number, payload: Uint8Array): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
@@ -695,11 +818,12 @@ export class BleGatewayClient {
     frame.set(payload, 1);
 
     const hex = Array.from(frame).map(b => b.toString(16).padStart(2, '0')).join(' ');
-    console.log(`[BleGateway] TX Frame [${frame.length} bytes]: ${hex.substring(0, 60)}...`);
+    if (__DEV__ && frame.length > 50) {
+      console.log(`[BleGateway] TX Frame [${frame.length} bytes]: ${hex.substring(0, 60)}...`);
+    }
     
     for (let offset = 0; offset < frame.length; offset += BLE_MAX_WRITE) {
       const chunk = Array.from(frame.slice(offset, offset + BLE_MAX_WRITE));
-      console.log(`[BleGateway] TX Chunk ${offset}-${offset + chunk.length}: ${chunk.length} bytes`);
       if (this.canWriteWithoutResponse) {
         await BleManager.writeWithoutResponse(
           this.connectedId, SERVICE_UUID, TX_UUID, chunk, BLE_MAX_WRITE
@@ -710,7 +834,6 @@ export class BleGatewayClient {
         );
       }
     }
-    console.log(`[BleGateway] TX Frame complet envoyé`);
   }
 }
 

@@ -17,10 +17,11 @@ import {
   PermissionsAndroid,
 } from 'react-native';
 import BleManager from 'react-native-ble-manager';
-import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug } from 'lucide-react-native';
+import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug, Settings } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useBle } from '@/providers/BleProvider';
 import { type BleGatewayDevice } from '@/utils/ble-gateway';
+import RadioConfigModal from './RadioConfigModal';
 
 const CHANNEL_OPTIONS = [
   { idx: 0, label: 'Public (ch0)', icon: '🌐' },
@@ -36,9 +37,10 @@ interface GatewayScanModalProps {
 }
 
 export default function GatewayScanModal({ visible, onClose }: GatewayScanModalProps) {
-  const { connected, device, error, connectToGateway, currentChannel, setChannel } = useBle();
+  const { connected, device, error, connectToGateway, currentChannel, setChannel, channelConfigured } = useBle();
 
   const [showChannelPicker, setShowChannelPicker] = React.useState(false);
+  const [showRadioConfig, setShowRadioConfig] = React.useState(false);
   const [localScanning, setLocalScanning] = React.useState(false);
   const [localDevices, setLocalDevices] = React.useState<BleGatewayDevice[]>([]);
   const [connecting, setConnecting] = React.useState(false);
@@ -248,9 +250,13 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
           {/* Sélecteur de channel */}
           {connected && (
             <View style={styles.channelRow}>
-              <Radio size={16} color={Colors.textMuted} />
+              <Radio size={16} color={channelConfigured ? Colors.green : Colors.yellow} />
               <Text style={styles.channelLabel}>Channel actif :</Text>
-              <View style={[styles.channelBadge, { backgroundColor: currentChannel === 0 ? `${Colors.green}20` : `${Colors.purple}20` }]}>
+              <View style={[styles.channelBadge, { 
+                backgroundColor: currentChannel === 0 ? `${Colors.green}20` : `${Colors.purple}20`,
+                borderColor: channelConfigured ? Colors.green + '40' : Colors.yellow + '40',
+                borderWidth: 1,
+              }]}>
                 <Text style={[styles.channelText, { color: currentChannel === 0 ? Colors.green : Colors.purple }]}>
                   {currentChannel === 0 ? '🌐 Public (ch0)' : `🔒 Privé (ch${currentChannel})`}
                 </Text>
@@ -259,6 +265,22 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
                 <Text style={styles.channelChange}>Changer →</Text>
               </TouchableOpacity>
             </View>
+          )}
+
+          {/* Bouton Configuration Radio */}
+          {connected && (
+            <TouchableOpacity 
+              style={styles.radioConfigBtn}
+              onPress={() => setShowRadioConfig(true)}
+            >
+              <Settings size={16} color={Colors.accent} />
+              <Text style={styles.radioConfigText}>Configurer Canaux & Radio</Text>
+              {!channelConfigured && (
+                <View style={styles.warningBadge}>
+                  <Text style={styles.warningBadgeText}>!</Text>
+                </View>
+              )}
+            </TouchableOpacity>
           )}
 
           {/* Picker de channel */}
@@ -372,6 +394,12 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
           </View>
         </View>
       </View>
+      
+      {/* Modal Configuration Radio */}
+      <RadioConfigModal 
+        visible={showRadioConfig} 
+        onClose={() => setShowRadioConfig(false)} 
+      />
     </Modal>
   );
 }
@@ -713,5 +741,37 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
     fontFamily: 'monospace',
+  },
+  radioConfigBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    backgroundColor: Colors.accentGlow,
+    borderWidth: 1,
+    borderColor: Colors.accentDim,
+    borderRadius: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  radioConfigText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: Colors.accent,
+  },
+  warningBadge: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: Colors.yellow,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginLeft: 4,
+  },
+  warningBadgeText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: Colors.black,
   },
 });

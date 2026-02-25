@@ -608,7 +608,7 @@ export default function MeshScreen() {
   const { settings } = useAppSettings();
   const isInternetOnly = settings.connectionMode === 'internet';
   const { radarPeers, mqttState, identity, sendMessage } = useMessages();
-  const { connected: bleConnected, device: bleDevice, deviceInfo, meshContacts: bleMeshContacts, sendChannelMessage, sendDirectMessage } = useBle();
+  const { connected: bleConnected, device: bleDevice, deviceInfo, meshContacts: bleMeshContacts, sendChannelMessage, sendDirectMessage, channelConfigured, currentChannel } = useBle();
   
   // Test message state
   const [testMsg, setTestMsg] = useState('');
@@ -730,11 +730,17 @@ export default function MeshScreen() {
         // Broadcast sur le canal actif
         console.log(`[TestMessage] Envoi broadcast sur canal actif: "${testMsg.trim()}"`);
         
+        // CORRECTION: Vérifier que le canal est configuré avant envoi
+        if (!channelConfigured && currentChannel === 0) {
+          console.warn('[TestMessage] Canal 0 peut ne pas être configuré, tentative d\'envoi...');
+        }
+        
         await sendChannelMessage(testMsg.trim());
         
         Alert.alert('Message transmis', 
           'Message envoyé en broadcast sur le canal LoRa actif. ' +
-          'Tous les nodes à portée recevront ce message.');
+          'Tous les nodes à portée recevront ce message.' +
+          (channelConfigured ? '' : '\n\n⚠️ Canal non confirmé configuré. Si le message n\'est pas reçu, déconnectez et reconnectez le BLE.'));
       } else {
         Alert.alert('Erreur', 'Connectez-vous à un device BLE pour envoyer via LoRa');
       }
