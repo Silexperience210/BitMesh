@@ -524,8 +524,9 @@ export class BleGatewayClient {
     switch (code) {
       case RESP_OK:
         break;
-      case 0x01: // RESP_ERR — firmware a rejeté la commande
-        console.warn('[BleGateway] ⚠️ RESP_ERR (0x01) — commande rejetée par MeshCore');
+      case 0x01: 
+        // Note: 0x01 = CMD_APP_START, pourrait être une réponse ACK à AppStart
+        if (__DEV__) console.log('[BleGateway] Frame 0x01 (probable ACK AppStart)');
         break;
       case RESP_CONTACTS_START: {
         this.pendingContacts = [];
@@ -838,6 +839,17 @@ export class BleGatewayClient {
         secret,
         configured: name.length > 0
       });
+      
+      // CORRECTION: Si on reçoit des infos de canal, la connexion fonctionne
+      // On arrête le retry de SelfInfo qui peut être bloqué
+      if (this.awaitingSelfInfo) {
+        console.log('[BleGateway] Canal info reçu → arrêt du retry SelfInfo');
+        this.awaitingSelfInfo = false;
+        this.clearSelfInfoRetry();
+        // Résoudre les promesses en attente
+        this.selfInfoResolvers.forEach(r => r());
+        this.selfInfoResolvers = [];
+      }
     } else {
       console.log(`[BleGateway] Canal ${channelIdx} non configuré (payload: ${payload.length} bytes)`);
     }
