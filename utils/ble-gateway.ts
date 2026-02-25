@@ -452,26 +452,49 @@ export class BleGatewayClient {
     }
   }
 
-  // ── CORRECTION: setChannel pour configurer les canaux ─────────────
+  // ── CORRECTION: setChannel pour configurer les canaux (v1.12/v1.13) ─────────────
   async setChannel(channelIdx: number, name: string, secret: Uint8Array): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
     if (channelIdx < 0 || channelIdx > 7) {
       throw new Error(`Index canal invalide: ${channelIdx} (0-7)`);
     }
     
-    // Format: [idx(1)] [name(32)] [secret(32)]
-    const payload = new Uint8Array(1 + 32 + 32);
-    payload[0] = channelIdx & 0xFF;
+    // Format v1.12: [idx(1)] [name(32)] [secret(32)] = 65 bytes
+    // Format v1.13: [idx(1)] [name(32)] [secret_hash(16)] = 49 bytes
+    // On essaie d'abord le format v1.13 (plus petit)
+    const useV13Format = true; // TODO: auto-detect basé sur la version firmware
     
-    // Nom (32 bytes, null-terminated)
-    const nameBytes = new TextEncoder().encode(name.slice(0, 31));
-    payload.set(nameBytes, 1);
-    
-    // Secret (32 bytes)
-    payload.set(secret.slice(0, 32), 33);
-    
-    console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}"`);
-    await this.sendFrame(CMD_SET_CHANNEL, payload);
+    if (useV13Format) {
+      // Format v1.13: secret hash = 16 bytes (SHA256 tronqué)
+      const payload = new Uint8Array(1 + 32 + 16); // 49 bytes
+      payload[0] = channelIdx & 0xFF;
+      
+      // Nom (32 bytes)
+      const nameBytes = new TextEncoder().encode(name.slice(0, 31));
+      payload.set(nameBytes, 1);
+      
+      // Secret hash (16 bytes = SHA256 tronqué)
+      // Pour un canal public, on envoie des zeros
+      const secretHash = secret.length === 32 && secret.every(b => b === 0) 
+        ? new Uint8Array(16) // Canal public = zeros
+        : secret.slice(0, 16); // Hash tronqué
+      payload.set(secretHash, 33);
+      
+      console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (format v1.13)`);
+      await this.sendFrame(CMD_SET_CHANNEL, payload);
+    } else {
+      // Format v1.12: secret = 32 bytes
+      const payload = new Uint8Array(1 + 32 + 32); // 65 bytes
+      payload[0] = channelIdx & 0xFF;
+      
+      const nameBytes = new TextEncoder().encode(name.slice(0, 31));
+      payload.set(nameBytes, 1);
+      
+      payload.set(secret.slice(0, 32), 33);
+      
+      console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (format v1.12)`);
+      await this.sendFrame(CMD_SET_CHANNEL, payload);
+    }
     
     // Sauvegarder la config localement
     this.channelConfigs.set(channelIdx, {
@@ -809,7 +832,7 @@ export class BleGatewayClient {
     });
   }
 
-  // CORRECTION: Parser pour les infos de canal
+  // CORRECTION: Parser pour les infos de canal (v1.12+ compatible)
   private parseChannelInfo(payload: Uint8Array): void {
     if (payload.length < 1) {
       console.warn('[BleGateway] RESP_CHANNEL_INFO trop court');
@@ -818,13 +841,18 @@ export class BleGatewayClient {
     
     const channelIdx = payload[0];
     
-    if (payload.length >= 65) {
-      // Canal configuré: [idx(1)] [name(32)] [secret(32)]
+    // Format v1.12: [idx(1)] [name(32)] [secret(32)] = 65 bytes
+    // Format v1.13: [idx(1)] [name(32)] [secret_hash(16)] = 49 bytes
+    if (payload.length >= 49) {
+      // Canal configuré
       const nameBytes = payload.slice(1, 33);
       const name = new TextDecoder().decode(nameBytes).replace(/\0/g, '').trim();
-      const secret = payload.slice(33, 65);
       
-      console.log(`[BleGateway] Canal ${channelIdx} info: "${name}" (configuré)`);
+      // Secret: soit 32 bytes (v1.12) soit 16 bytes (v1.13 hash)
+      const secretLen = payload.length >= 65 ? 32 : 16;
+      const secret = payload.slice(33, 33 + secretLen);
+      
+      console.log(`[BleGateway] Canal ${channelIdx} info: "${name}" (configuré, payload=${payload.length}b)`);
       
       this.channelConfigs.set(channelIdx, {
         index: channelIdx,
