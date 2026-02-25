@@ -5,7 +5,7 @@
  * Pour une version complète, il faudrait migrer vers expo-background-task (SDK 53+)
  */
 
-import { getBleGatewayClient } from '@/utils/ble-gateway';
+import { getBleGatewayClient } from '../utils/ble-gateway';
 import { getPendingMessages, removePendingMessage } from '@/utils/database';
 
 class BackgroundBleService {

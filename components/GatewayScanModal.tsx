@@ -20,7 +20,7 @@ import BleManager from 'react-native-ble-manager';
 import { Bluetooth, X, Wifi, CheckCircle2, Radio, Bug, Settings } from 'lucide-react-native';
 import Colors from '@/constants/colors';
 import { useBle } from '@/providers/BleProvider';
-import { type BleGatewayDevice } from '@/utils/ble-gateway';
+import { type BleGatewayDevice } from '../utils/ble-gateway';
 import RadioConfigModal from './RadioConfigModal';
 import { DebugFeatures } from '@/utils/debugConfig';
 

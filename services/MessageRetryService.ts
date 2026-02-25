@@ -10,7 +10,7 @@ import {
   incrementRetryCount,
   PendingMessage,
 } from '@/utils/database';
-import { getBleGatewayClient } from '@/utils/ble-gateway';
+import { getBleGatewayClient } from '../utils/ble-gateway';
 
 const MAX_RETRY_ATTEMPTS = 3;
 const RETRY_INTERVAL_BASE = 5000; // 5 secondes

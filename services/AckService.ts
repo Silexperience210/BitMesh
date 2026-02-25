@@ -3,7 +3,7 @@
  * Ajoute des ACK pour confirmer la livraison des messages
  */
 import { MeshCorePacket, MeshCoreMessageType, createTextMessageSync, nodeIdToUint64, uint64ToNodeId } from '@/utils/meshcore-protocol';
-import { getBleGatewayClient } from '@/utils/ble-gateway';
+import { getBleGatewayClient } from '../utils/ble-gateway';
 import { updateMessageStatusDB } from '@/utils/database';
 
 interface PendingAck {

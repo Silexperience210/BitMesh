@@ -36,7 +36,7 @@ import {
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { meshStats } from '@/mocks/data';
-import { type BleDeviceInfo } from '@/utils/ble-gateway';
+import { type BleDeviceInfo } from '../../../utils/ble-gateway';
 import { useMessages } from '@/providers/MessagesProvider';
 import { useRouter } from 'expo-router';
 import { type RadarPeer, formatDistance } from '@/utils/radar';
