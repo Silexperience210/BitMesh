@@ -24,6 +24,15 @@ import {
   encodeMeshCorePacket,
   decodeMeshCorePacket,
 } from './meshcore-protocol';
+import { MeshCoreProtocolTLV, CMD_SET_CHANNEL_TLV, CMD_SEND_CHAN_MSG_TLV } from './meshcore-protocol-tlv';
+
+// ── Utilitaires ─────────────────────────────────────────────────────────
+function formatFreq(hz: number): string {
+  if (hz >= 1000000) {
+    return `${(hz / 1000000).toFixed(3)} MHz`;
+  }
+  return `${hz} Hz`;
+}
 
 // ── Nordic UART Service UUIDs ──────────────────────────────────────────
 const SERVICE_UUID = MESHCORE_BLE.SERVICE_UUID;
@@ -68,7 +77,7 @@ const PUSH_MSG_WAITING      = 0x83;
 const PUSH_RAW_DATA         = 0x84;
 const PUSH_NEW_ADVERT       = 0x8A;
 
-const APP_PROTOCOL_VERSION = 1;
+const APP_PROTOCOL_VERSION = 3; // CORRECTION: v3 pour MeshCore 1.13+
 const RAW_PUSH_HEADER_SIZE = 3;
 const BLE_MAX_WRITE        = 182;
 
@@ -307,12 +316,13 @@ export class BleGatewayClient {
   // ── SelfInfo retry ──────────────────────────────────────────────
 
   private async sendAppStart(): Promise<void> {
-    const appNameBytes = new TextEncoder().encode('BitMesh\0');
-    const payload = new Uint8Array(1 + 6 + appNameBytes.length);
-    payload[0] = 0x01;
-    payload.set(appNameBytes, 7);
+    // CORRECTION: Format officiel Flutter meshcore-open
+    // [version(1)] [flags(1)] = 2 bytes seulement
+    const payload = new Uint8Array(2);
+    payload[0] = APP_PROTOCOL_VERSION; // 3
+    payload[1] = 0x00; // flags
     await this.sendFrame(CMD_APP_START, payload);
-    console.log('[BleGateway] AppStart envoyé');
+    console.log('[BleGateway] AppStart envoyé (v' + APP_PROTOCOL_VERSION + ')');
   }
 
   private scheduleSelfInfoRetry(): void {
@@ -389,28 +399,23 @@ export class BleGatewayClient {
       }
     }
     
-    const ts = Math.floor(Date.now() / 1000);
-    const textBytes = new TextEncoder().encode(text);
+    // NOUVEAU: Format TLV complet pour v1.13
+    const tlvPayload = MeshCoreProtocolTLV.encodeSendMessage(channelIdx, text);
+    const packet = MeshCoreProtocolTLV.buildPacket(CMD_SEND_CHAN_MSG_TLV, tlvPayload);
     
-    // Vérification taille max
-    if (textBytes.length > 150) {
-      throw new Error(`Message trop long: ${textBytes.length} bytes (max 150)`);
-    }
-    
-    const payload = new Uint8Array(2 + 4 + textBytes.length);
-    let off = 0;
-    payload[off++] = 0x00; // txtType = 0 (plain)
-    payload[off++] = channelIdx & 0xFF;
-    new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
-    payload.set(textBytes, off);
-    
-    console.log(`[BleGateway] 🚀 ENVOI BROADCAST ch=${channelIdx}`);
+    console.log(`[BleGateway] Envoie BROADCAST TLV ch=${channelIdx}`);
     console.log(`[BleGateway]    Texte: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`);
-    console.log(`[BleGateway]    Taille: ${textBytes.length} bytes`);
-    console.log(`[BleGateway]    Canal configuré: ${channelConfig?.name || 'public'}`);
+    console.log(`[BleGateway]    TLV payload:`, Array.from(tlvPayload).map(b => b.toString(16).padStart(2,'0')).join(' '));
     
-    await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
-    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG envoyé au firmware`);
+    // Envoyer directement sans passer par sendFrame
+    await BleManager.writeWithoutResponse(
+      this.connectedId,
+      SERVICE_UUID,
+      TX_UUID,
+      Array.from(packet)
+    );
+    
+    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG_TLV envoyé au firmware`);
     console.log(`[BleGateway]    En attente de RESP_SENT puis PUSH_SEND_CONFIRMED...`);
   }
 
@@ -444,26 +449,29 @@ export class BleGatewayClient {
     }
   }
 
-  // ── CORRECTION: setChannel pour configurer les canaux ─────────────
+  // ── CORRECTION: setChannel avec format TLV v1.13 ─────────────
   async setChannel(channelIdx: number, name: string, secret: Uint8Array): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
     if (channelIdx < 0 || channelIdx > 7) {
       throw new Error(`Index canal invalide: ${channelIdx} (0-7)`);
     }
     
-    // Format: [idx(1)] [name(32)] [secret(32)]
-    const payload = new Uint8Array(1 + 32 + 32);
-    payload[0] = channelIdx & 0xFF;
+    // NOUVEAU: Format TLV complet pour v1.13
+    const tlvPayload = MeshCoreProtocolTLV.encodeChannelConfig(name);
+    const packet = MeshCoreProtocolTLV.buildPacket(CMD_SET_CHANNEL_TLV, tlvPayload);
     
-    // Nom (32 bytes, null-terminated)
-    const nameBytes = new TextEncoder().encode(name.slice(0, 31));
-    payload.set(nameBytes, 1);
+    console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (TLV format)`);
+    console.log(`[BleGateway] TLV payload (${tlvPayload.length} bytes):`, Array.from(tlvPayload).map(b => b.toString(16).padStart(2,'0')).join(' '));
     
-    // Secret (32 bytes)
-    payload.set(secret.slice(0, 32), 33);
+    // Envoyer directement sans passer par sendFrame qui ajoute un header
+    await BleManager.writeWithoutResponse(
+      this.connectedId,
+      SERVICE_UUID,
+      TX_UUID,
+      Array.from(packet)
+    );
     
-    console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}"`);
-    await this.sendFrame(CMD_SET_CHANNEL, payload);
+    console.log(`[BleGateway] ✓ Canal ${channelIdx} configuré (TLV)`);
     
     // Sauvegarder la config localement
     this.channelConfigs.set(channelIdx, {
@@ -472,8 +480,6 @@ export class BleGatewayClient {
       secret: secret.slice(0, 32),
       configured: true
     });
-    
-    console.log(`[BleGateway] ✓ Canal ${channelIdx} configuré`);
   }
 
   async sendPacket(packet: MeshCorePacket): Promise<void> {
@@ -517,6 +523,9 @@ export class BleGatewayClient {
 
     switch (code) {
       case RESP_OK:
+        break;
+      case 0x01: // RESP_ERR — firmware a rejeté la commande
+        console.warn('[BleGateway] ⚠️ RESP_ERR (0x01) — commande rejetée par MeshCore');
         break;
       case RESP_CONTACTS_START: {
         this.pendingContacts = [];
@@ -600,30 +609,90 @@ export class BleGatewayClient {
   // ── Privé : SelfInfo parser ─────────────────────────────────────
 
   private parseSelfInfo(payload: Uint8Array): void {
-    if (payload.length < 58) {
+    if (payload.length < 48) {
       console.warn('[BleGateway] SelfInfo trop court:', payload.length);
       return;
     }
+    
     const view = new DataView(payload.buffer, payload.byteOffset);
     let off = 0;
-    /* type */      off++;
+    
+    const msgType = payload[off++];
     const txPower = payload[off++];
-    /* maxTx */     off++;
-    /* flags */     off++;
+    const maxTx = payload[off++];
+    const flags = payload[off++];
 
     const pubkeyBytes = payload.slice(off, off + 32); off += 32;
-    const publicKey   = Array.from(pubkeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
+    const publicKey = Array.from(pubkeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
 
     const advLatRaw = view.getInt32(off, true);  off += 4;
     const advLonRaw = view.getInt32(off, true);  off += 4;
-    off += 4;
-
-    const radioFreqHz = view.getUint32(off, true); off += 4;
-    const radioBwHz   = view.getUint32(off, true); off += 4;
-    const radioSf     = payload[off++];
-    const radioCr     = payload[off++];
-
-    const nameRaw = payload.slice(off);
+    
+    // 🔍 AUTO-DETECT: Tester différents offsets pour la fréquence
+    // Format v1.13 peut avoir des champs supplémentaires avant radio
+    const possibleOffsets = [44, 48, 52, 56, 60, 40, 36];
+    let bestOffset = -1;
+    let bestFreq = 0;
+    let bestScore = 0;
+    
+    for (const testOffset of possibleOffsets) {
+      if (testOffset + 10 > payload.length) continue;
+      
+      const testFreq = view.getUint32(testOffset, true);
+      const testBw = view.getUint32(testOffset + 4, true);
+      const testSf = payload[testOffset + 8];
+      const testCr = payload[testOffset + 9];
+      
+      // Score basé sur la validité des valeurs
+      let score = 0;
+      
+      // Fréquence valide LoRa? (433, 868, 915 MHz)
+      if (testFreq >= 400000000 && testFreq <= 1000000000) {
+        score += 100;
+        // Bonus si c'est exactement une fréquence connue
+        const knownFreqs = [869525000, 868000000, 915000000, 433000000, 905000000];
+        for (const kf of knownFreqs) {
+          if (Math.abs(testFreq - kf) < 1000000) score += 50;
+        }
+      }
+      
+      // SF valide? (7-12)
+      if (testSf >= 7 && testSf <= 12) score += 20;
+      
+      // BW valide? (125000, 250000, 500000)
+      const knownBw = [125000, 250000, 500000, 62500, 104200];
+      for (const kb of knownBw) {
+        if (Math.abs(testBw - kb) < 1000) score += 20;
+      }
+      
+      // CR valide? (5-8)
+      if (testCr >= 5 && testCr <= 8) score += 10;
+      
+      if (score > bestScore) {
+        bestScore = score;
+        bestOffset = testOffset;
+        bestFreq = testFreq;
+      }
+      
+      console.log(`[BleGateway] Test offset ${testOffset}: Freq=${testFreq}, SF=${testSf}, BW=${testBw}, CR=${testCr} (score=${score})`);
+    }
+    
+    console.log(`[BleGateway] ✅ Meilleur offset trouvé: ${bestOffset} (score=${bestScore})`);
+    
+    // Utiliser le meilleur offset trouvé
+    if (bestOffset < 0) {
+      console.warn('[BleGateway] ⚠️ Aucun offset valide trouvé, utilisation offset 48 par défaut');
+      bestOffset = 48;
+    }
+    
+    const radioFreqHz = view.getUint32(bestOffset, true);
+    const radioBwHz = view.getUint32(bestOffset + 4, true);
+    const radioSf = payload[bestOffset + 8];
+    const radioCr = payload[bestOffset + 9];
+    
+    // Le nom commence après les paramètres radio (offset + 10)
+    const nameOffset = bestOffset + 10;
+    const nameRaw = payload.slice(nameOffset);
     const name = new TextDecoder().decode(nameRaw).replace(/\0/g, '').trim() || 'MeshCore';
 
     const info: BleDeviceInfo = {
@@ -631,10 +700,20 @@ export class BleGatewayClient {
       advLat: advLatRaw / 1e7, advLon: advLonRaw / 1e7,
     };
     this.deviceInfo = info;
-    console.log('[BleGateway] SelfInfo:', { name, freq: radioFreqHz, sf: radioSf, txPower });
+    
+    console.log('[BleGateway] SelfInfo FINAL:', { 
+      name, 
+      freq: radioFreqHz, 
+      freqMHz: (radioFreqHz/1000000).toFixed(3) + ' MHz',
+      sf: radioSf, 
+      bw: radioBwHz,
+      cr: radioCr,
+      txPower 
+    });
 
     if (this.deviceInfoCallback) this.deviceInfoCallback(info);
 
+    // Envoyer l'heure au device
     const ts = Math.floor(Date.now() / 1000);
     const timeBuf = new Uint8Array(4);
     new DataView(timeBuf.buffer).setUint32(0, ts, true);
@@ -647,6 +726,25 @@ export class BleGatewayClient {
     const resolvers = [...this.selfInfoResolvers];
     this.selfInfoResolvers = [];
     resolvers.forEach(r => r());
+  }
+
+  // ── Tentative de trouver la fréquence correcte dans le packet ──
+  private tryFindCorrectFrequency(payload: Uint8Array, view: DataView): void {
+    console.log('[BleGateway] 🔍 Recherche de la fréquence correcte...');
+    
+    // Essayer différents offsets possibles pour la fréquence (868 MHz = 0x33D09540 en little-endian)
+    const targetFreqs = [869525000, 868000000, 915000000];
+    
+    for (let offset = 40; offset < payload.length - 4; offset += 4) {
+      const val = view.getUint32(offset, true);
+      if (val >= 400000000 && val <= 1000000000) {
+        console.log(`[BleGateway]   Offset ${offset}: ${val} Hz (${formatFreq(val)})`);
+        // Vérifier si c'est une fréquence LoRa valide
+        if (targetFreqs.some(tf => Math.abs(val - tf) < 5000000)) {
+          console.log(`[BleGateway]   ✅ Fréquence plausible trouvée à offset ${offset}: ${val} Hz`);
+        }
+      }
+    }
   }
 
   // ── Privé : Parsers messages natifs ─────────────────────────────
@@ -712,7 +810,7 @@ export class BleGatewayClient {
     });
   }
 
-  // CORRECTION: Parser pour les infos de canal
+  // CORRECTION: Parser pour les infos de canal (v1.12+ compatible)
   private parseChannelInfo(payload: Uint8Array): void {
     if (payload.length < 1) {
       console.warn('[BleGateway] RESP_CHANNEL_INFO trop court');
@@ -721,13 +819,18 @@ export class BleGatewayClient {
     
     const channelIdx = payload[0];
     
-    if (payload.length >= 65) {
-      // Canal configuré: [idx(1)] [name(32)] [secret(32)]
+    // Format v1.12: [idx(1)] [name(32)] [secret(32)] = 65 bytes
+    // Format v1.13: [idx(1)] [name(32)] [secret_hash(16)] = 49 bytes
+    if (payload.length >= 49) {
+      // Canal configuré
       const nameBytes = payload.slice(1, 33);
       const name = new TextDecoder().decode(nameBytes).replace(/\0/g, '').trim();
-      const secret = payload.slice(33, 65);
       
-      console.log(`[BleGateway] Canal ${channelIdx} info: "${name}" (configuré)`);
+      // Secret: soit 32 bytes (v1.12) soit 16 bytes (v1.13 hash)
+      const secretLen = payload.length >= 65 ? 32 : 16;
+      const secret = payload.slice(33, 33 + secretLen);
+      
+      console.log(`[BleGateway] Canal ${channelIdx} info: "${name}" (configuré, payload=${payload.length}b)`);
       
       this.channelConfigs.set(channelIdx, {
         index: channelIdx,
