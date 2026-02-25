@@ -41,8 +41,16 @@ const CHANNEL_OPTIONS = [
 
 const FREQUENCY_PRESETS = [
   { name: 'Europe 868', freq: 869525000, sf: 11, bw: 250000 },
+  { name: 'Europe 868 (alt)', freq: 868000000, sf: 11, bw: 250000 },
   { name: 'US 915', freq: 915000000, sf: 10, bw: 125000 },
   { name: 'Asia 433', freq: 433000000, sf: 11, bw: 125000 },
+];
+
+// Valeurs SF et BW pour l'interface manuelle
+const SF_OPTIONS = [7, 8, 9, 10, 11, 12];
+const BW_OPTIONS = [
+  { label: '125 kHz', value: 125000 },
+  { label: '250 kHz', value: 250000 },
 ];
 
 export default function RadioConfigModal({ visible, onClose }: RadioConfigModalProps) {
@@ -61,6 +69,29 @@ export default function RadioConfigModal({ visible, onClose }: RadioConfigModalP
   const [channelSecret, setChannelSecret] = useState('');
   const [configuring, setConfiguring] = useState(false);
   const [showSecret, setShowSecret] = useState(false);
+  
+  // État pour configuration radio manuelle
+  const [manualFreq, setManualFreq] = useState('869525000');
+  const [manualSf, setManualSf] = useState(11);
+  const [manualBw, setManualBw] = useState(250000);
+  const [isApplyingPreset, setIsApplyingPreset] = useState(false);
+
+  // Appliquer un preset
+  const applyPreset = (preset: typeof FREQUENCY_PRESETS[0]) => {
+    setManualFreq(preset.freq.toString());
+    setManualSf(preset.sf);
+    setManualBw(preset.bw);
+    setIsApplyingPreset(true);
+    
+    // Simuler l'application (en attendant la commande réelle du firmware)
+    setTimeout(() => {
+      Alert.alert(
+        '✅ Preset appliqué',
+        `Configuration chargée:\n• Fréquence: ${formatFreq(preset.freq)}\n• SF: ${preset.sf}\n• BW: ${preset.bw/1000} kHz\n\nNote: La fréquence réelle est configurée dans le firmware. Ces valeurs sont pour référence.`,
+        [{ text: 'OK', onPress: () => setIsApplyingPreset(false) }]
+      );
+    }, 500);
+  };
 
   // Reset quand le modal s'ouvre
   useEffect(() => {
@@ -284,7 +315,7 @@ export default function RadioConfigModal({ visible, onClose }: RadioConfigModalP
               <View style={styles.radioSection}>
                 {/* Fréquence Actuelle */}
                 <View style={styles.freqCard}>
-                  <Text style={styles.sectionTitle}>Fréquence Actuelle</Text>
+                  <Text style={styles.sectionTitle}>Fréquence Actuelle (Firmware)</Text>
                   <View style={styles.freqDisplay}>
                     <Wifi size={32} color={Colors.accent} />
                     <View style={styles.freqInfo}>
@@ -297,29 +328,98 @@ export default function RadioConfigModal({ visible, onClose }: RadioConfigModalP
                     </View>
                   </View>
                   
+                  {deviceInfo && deviceInfo.radioFreqHz < 400000000 && (
+                    <View style={[styles.infoBox, { backgroundColor: Colors.redDim, borderColor: Colors.red + '40' }]}>
+                      <AlertCircle size={16} color={Colors.red} />
+                      <Text style={[styles.infoText, { color: Colors.red }]}>
+                        ⚠️ Fréquence anormale détectée! La valeur lue ({formatFreq(deviceInfo.radioFreqHz)}) semble incorrecte. 
+                        Cela peut indiquer un problème de parsing avec le firmware v1.13.
+                      </Text>
+                    </View>
+                  )}
+                  
                   <View style={styles.infoBox}>
                     <Info size={16} color={Colors.blue} />
                     <Text style={styles.infoText}>
-                      La fréquence radio est configurée dans le firmware du device MeshCore. 
-                      Pour la changer, reflashez l'ESP32 avec la fréquence désirée.
+                      La fréquence réelle est configurée dans le firmware. Si la valeur affichée est incorrecte, 
+                      utilisez la configuration manuelle ci-dessous pour référence.
                     </Text>
+                  </View>
+                </View>
+
+                {/* Configuration Manuelle */}
+                <View style={styles.manualConfigCard}>
+                  <Text style={styles.sectionTitle}>Configuration Manuelle</Text>
+                  
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>Fréquence (Hz)</Text>
+                    <TextInput
+                      style={styles.input}
+                      value={manualFreq}
+                      onChangeText={setManualFreq}
+                      keyboardType="numeric"
+                      placeholder="869525000"
+                      placeholderTextColor={Colors.textMuted}
+                    />
+                    <Text style={styles.inputHint}>Ex: 869525000 = 869.525 MHz</Text>
+                  </View>
+
+                  <View style={styles.rowInputs}>
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <Text style={styles.inputLabel}>Spread Factor</Text>
+                      <View style={styles.sfSelector}>
+                        {SF_OPTIONS.map((sf) => (
+                          <TouchableOpacity
+                            key={sf}
+                            style={[styles.sfOption, manualSf === sf && styles.sfOptionActive]}
+                            onPress={() => setManualSf(sf)}
+                          >
+                            <Text style={[styles.sfText, manualSf === sf && styles.sfTextActive]}>
+                              SF{sf}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={[styles.inputGroup, { flex: 1 }]}>
+                      <Text style={styles.inputLabel}>Bandwidth</Text>
+                      <View style={styles.bwSelector}>
+                        {BW_OPTIONS.map((bw) => (
+                          <TouchableOpacity
+                            key={bw.value}
+                            style={[styles.bwOption, manualBw === bw.value && styles.bwOptionActive]}
+                            onPress={() => setManualBw(bw.value)}
+                          >
+                            <Text style={[styles.bwText, manualBw === bw.value && styles.bwTextActive]}>
+                              {bw.label}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
                   </View>
                 </View>
 
                 {/* Préréglages */}
                 <Text style={styles.sectionTitle}>Préréglages Régionaux</Text>
                 <Text style={styles.presetsDesc}>
-                  Ces fréquences sont pour référence. Vérifiez que votre firmware utilise la même.
+                  Cliquez sur un preset pour charger les valeurs:
                 </Text>
 
                 {FREQUENCY_PRESETS.map((preset) => (
-                  <View key={preset.name} style={styles.presetCard}>
+                  <TouchableOpacity
+                    key={preset.name}
+                    style={styles.presetCard}
+                    onPress={() => applyPreset(preset)}
+                    disabled={isApplyingPreset}
+                  >
                     <View style={styles.presetHeader}>
                       <Radio size={16} color={Colors.accent} />
                       <Text style={styles.presetName}>{preset.name}</Text>
-                      {deviceInfo && Math.abs(deviceInfo.radioFreqHz - preset.freq) < 1000000 && (
+                      {parseInt(manualFreq) === preset.freq && manualSf === preset.sf && manualBw === preset.bw && (
                         <View style={styles.matchBadge}>
-                          <Text style={styles.matchBadgeText}>ACTIF</Text>
+                          <Text style={styles.matchBadgeText}>CHARGÉ</Text>
                         </View>
                       )}
                     </View>
@@ -328,7 +428,10 @@ export default function RadioConfigModal({ visible, onClose }: RadioConfigModalP
                       <Text style={styles.presetDetail}>SF: {preset.sf}</Text>
                       <Text style={styles.presetDetail}>BW: {preset.bw / 1000} kHz</Text>
                     </View>
-                  </View>
+                    <View style={styles.applyPresetBtn}>
+                      <Text style={styles.applyPresetText}>⚡ Charger ce preset</Text>
+                    </View>
+                  </TouchableOpacity>
                 ))}
 
                 {/* Explications */}
@@ -607,6 +710,78 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     borderWidth: 1,
     borderColor: Colors.border,
+  },
+  manualConfigCard: {
+    backgroundColor: Colors.surface,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  rowInputs: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  sfSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  sfOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  sfOptionActive: {
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
+  },
+  sfText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  sfTextActive: {
+    color: Colors.black,
+  },
+  bwSelector: {
+    gap: 6,
+  },
+  bwOption: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    backgroundColor: Colors.background,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  bwOptionActive: {
+    backgroundColor: Colors.accent,
+    borderColor: Colors.accent,
+  },
+  bwText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: Colors.textMuted,
+  },
+  bwTextActive: {
+    color: Colors.black,
+  },
+  applyPresetBtn: {
+    marginTop: 10,
+    backgroundColor: Colors.accentDim,
+    paddingVertical: 8,
+    borderRadius: 6,
+    alignItems: 'center',
+  },
+  applyPresetText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: Colors.accent,
   },
   freqDisplay: {
     flexDirection: 'row',
