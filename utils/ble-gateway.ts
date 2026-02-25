@@ -388,15 +388,13 @@ export class BleGatewayClient {
   async sendChannelMessage(channelIdx: number, text: string): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
     
-    // CORRECTION: Vérifier que le canal est configuré
+    // CORRECTION: Vérifier que le canal est configuré — auto-config si absent
     const channelConfig = this.channelConfigs.get(channelIdx);
     if (!channelConfig?.configured) {
       console.warn(`[BleGateway] Canal ${channelIdx} non configuré! Configuration auto...`);
-      if (channelIdx === 0) {
-        await this.configureDefaultChannels();
-      } else {
-        throw new Error(`Canal ${channelIdx} non configuré. Utilisez setChannel() d'abord.`);
-      }
+      const defaultName   = channelIdx === 0 ? 'public' : `channel${channelIdx}`;
+      const defaultSecret = new Uint8Array(16); // 16 zéros = PSK par défaut
+      await this.setChannel(channelIdx, defaultName, defaultSecret);
     }
     
     // CORRECTION: Retour au format legacy (TLV ne fonctionne pas pour l'envoi)
