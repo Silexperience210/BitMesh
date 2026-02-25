@@ -399,23 +399,27 @@ export class BleGatewayClient {
       }
     }
     
-    // NOUVEAU: Format TLV complet pour v1.13
-    const tlvPayload = MeshCoreProtocolTLV.encodeSendMessage(channelIdx, text);
-    const packet = MeshCoreProtocolTLV.buildPacket(CMD_SEND_CHAN_MSG_TLV, tlvPayload);
+    // CORRECTION: Retour au format legacy (TLV ne fonctionne pas pour l'envoi)
+    const ts = Math.floor(Date.now() / 1000);
+    const textBytes = new TextEncoder().encode(text);
     
-    console.log(`[BleGateway] Envoie BROADCAST TLV ch=${channelIdx}`);
+    if (textBytes.length > 150) {
+      throw new Error(`Message trop long: ${textBytes.length} bytes (max 150)`);
+    }
+    
+    const payload = new Uint8Array(2 + 4 + textBytes.length);
+    let off = 0;
+    payload[off++] = 0x00; // txtType = 0 (plain)
+    payload[off++] = channelIdx & 0xFF;
+    new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
+    payload.set(textBytes, off);
+    
+    console.log(`[BleGateway] Envoie BROADCAST ch=${channelIdx}`);
     console.log(`[BleGateway]    Texte: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`);
-    console.log(`[BleGateway]    TLV payload:`, Array.from(tlvPayload).map(b => b.toString(16).padStart(2,'0')).join(' '));
+    console.log(`[BleGateway]    Taille: ${textBytes.length} bytes`);
     
-    // Envoyer directement sans passer par sendFrame
-    await BleManager.writeWithoutResponse(
-      this.connectedId,
-      SERVICE_UUID,
-      TX_UUID,
-      Array.from(packet)
-    );
-    
-    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG_TLV envoyé au firmware`);
+    await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
+    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG envoyé au firmware`);
     console.log(`[BleGateway]    En attente de RESP_SENT puis PUSH_SEND_CONFIRMED...`);
   }
 
@@ -524,8 +528,9 @@ export class BleGatewayClient {
     switch (code) {
       case RESP_OK:
         break;
-      case 0x01: // RESP_ERR — firmware a rejeté la commande
-        console.warn('[BleGateway] ⚠️ RESP_ERR (0x01) — commande rejetée par MeshCore');
+      case 0x01: 
+        // Note: 0x01 = CMD_APP_START, pourrait être une réponse ACK à AppStart
+        if (__DEV__) console.log('[BleGateway] Frame 0x01 (probable ACK AppStart)');
         break;
       case RESP_CONTACTS_START: {
         this.pendingContacts = [];
@@ -838,6 +843,17 @@ export class BleGatewayClient {
         secret,
         configured: name.length > 0
       });
+      
+      // CORRECTION: Si on reçoit des infos de canal, la connexion fonctionne
+      // On arrête le retry de SelfInfo qui peut être bloqué
+      if (this.awaitingSelfInfo) {
+        console.log('[BleGateway] Canal info reçu → arrêt du retry SelfInfo');
+        this.awaitingSelfInfo = false;
+        this.clearSelfInfoRetry();
+        // Résoudre les promesses en attente
+        this.selfInfoResolvers.forEach(r => r());
+        this.selfInfoResolvers = [];
+      }
     } else {
       console.log(`[BleGateway] Canal ${channelIdx} non configuré (payload: ${payload.length} bytes)`);
     }
