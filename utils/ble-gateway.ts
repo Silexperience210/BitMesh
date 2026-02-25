@@ -374,10 +374,6 @@ export class BleGatewayClient {
     await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
     console.log(`[BleGateway] CMD_SEND_CHAN_MSG envoyé, en attente de RESP_SENT...`);
   }
-    payload.set(textBytes, off);
-    if (__DEV__) console.log(`[BleGateway] CMD_SEND_CHAN_MSG ch${channelIdx}`);
-    await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
-  }
 
   async syncNextMessage(): Promise<void> {
     if (!this.connectedId) return;
