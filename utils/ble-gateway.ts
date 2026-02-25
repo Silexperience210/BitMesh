@@ -24,6 +24,7 @@ import {
   encodeMeshCorePacket,
   decodeMeshCorePacket,
 } from './meshcore-protocol';
+import { MeshCoreProtocolTLV, CMD_SET_CHANNEL_TLV, CMD_SEND_CHAN_MSG_TLV } from './meshcore-protocol-tlv';
 
 // ── Utilitaires ─────────────────────────────────────────────────────────
 function formatFreq(hz: number): string {
@@ -397,28 +398,23 @@ export class BleGatewayClient {
       }
     }
     
-    const ts = Math.floor(Date.now() / 1000);
-    const textBytes = new TextEncoder().encode(text);
+    // NOUVEAU: Format TLV complet pour v1.13
+    const tlvPayload = MeshCoreProtocolTLV.encodeSendMessage(channelIdx, text);
+    const packet = MeshCoreProtocolTLV.buildPacket(CMD_SEND_CHAN_MSG_TLV, tlvPayload);
     
-    // Vérification taille max
-    if (textBytes.length > 150) {
-      throw new Error(`Message trop long: ${textBytes.length} bytes (max 150)`);
-    }
-    
-    const payload = new Uint8Array(2 + 4 + textBytes.length);
-    let off = 0;
-    payload[off++] = 0x00; // txtType = 0 (plain)
-    payload[off++] = channelIdx & 0xFF;
-    new DataView(payload.buffer, payload.byteOffset).setUint32(off, ts, true); off += 4;
-    payload.set(textBytes, off);
-    
-    console.log(`[BleGateway] 🚀 ENVOI BROADCAST ch=${channelIdx}`);
+    console.log(`[BleGateway] Envoie BROADCAST TLV ch=${channelIdx}`);
     console.log(`[BleGateway]    Texte: "${text.substring(0, 40)}${text.length > 40 ? '...' : ''}"`);
-    console.log(`[BleGateway]    Taille: ${textBytes.length} bytes`);
-    console.log(`[BleGateway]    Canal configuré: ${channelConfig?.name || 'public'}`);
+    console.log(`[BleGateway]    TLV payload:`, Array.from(tlvPayload).map(b => b.toString(16).padStart(2,'0')).join(' '));
     
-    await this.sendFrame(CMD_SEND_CHAN_MSG, payload);
-    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG envoyé au firmware`);
+    // Envoyer directement sans passer par sendFrame
+    await BleManager.writeWithoutResponse(
+      this.connectedId,
+      SERVICE_UUID,
+      TX_UUID,
+      Array.from(packet)
+    );
+    
+    console.log(`[BleGateway] ✓ CMD_SEND_CHAN_MSG_TLV envoyé au firmware`);
     console.log(`[BleGateway]    En attente de RESP_SENT puis PUSH_SEND_CONFIRMED...`);
   }
 
@@ -452,49 +448,29 @@ export class BleGatewayClient {
     }
   }
 
-  // ── CORRECTION: setChannel pour configurer les canaux (v1.12/v1.13) ─────────────
+  // ── CORRECTION: setChannel avec format TLV v1.13 ─────────────
   async setChannel(channelIdx: number, name: string, secret: Uint8Array): Promise<void> {
     if (!this.connectedId) throw new Error('Non connecté');
     if (channelIdx < 0 || channelIdx > 7) {
       throw new Error(`Index canal invalide: ${channelIdx} (0-7)`);
     }
     
-    // Format v1.12: [idx(1)] [name(32)] [secret(32)] = 65 bytes
-    // Format v1.13: [idx(1)] [name(32)] [secret_hash(16)] = 49 bytes
-    // On essaie d'abord le format v1.13 (plus petit)
-    const useV13Format = true; // TODO: auto-detect basé sur la version firmware
+    // NOUVEAU: Format TLV complet pour v1.13
+    const tlvPayload = MeshCoreProtocolTLV.encodeChannelConfig(name);
+    const packet = MeshCoreProtocolTLV.buildPacket(CMD_SET_CHANNEL_TLV, tlvPayload);
     
-    if (useV13Format) {
-      // Format v1.13: secret hash = 16 bytes (SHA256 tronqué)
-      const payload = new Uint8Array(1 + 32 + 16); // 49 bytes
-      payload[0] = channelIdx & 0xFF;
-      
-      // Nom (32 bytes)
-      const nameBytes = new TextEncoder().encode(name.slice(0, 31));
-      payload.set(nameBytes, 1);
-      
-      // Secret hash (16 bytes = SHA256 tronqué)
-      // Pour un canal public, on envoie des zeros
-      const secretHash = secret.length === 32 && secret.every(b => b === 0) 
-        ? new Uint8Array(16) // Canal public = zeros
-        : secret.slice(0, 16); // Hash tronqué
-      payload.set(secretHash, 33);
-      
-      console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (format v1.13)`);
-      await this.sendFrame(CMD_SET_CHANNEL, payload);
-    } else {
-      // Format v1.12: secret = 32 bytes
-      const payload = new Uint8Array(1 + 32 + 32); // 65 bytes
-      payload[0] = channelIdx & 0xFF;
-      
-      const nameBytes = new TextEncoder().encode(name.slice(0, 31));
-      payload.set(nameBytes, 1);
-      
-      payload.set(secret.slice(0, 32), 33);
-      
-      console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (format v1.12)`);
-      await this.sendFrame(CMD_SET_CHANNEL, payload);
-    }
+    console.log(`[BleGateway] Configuration canal ${channelIdx}: "${name}" (TLV format)`);
+    console.log(`[BleGateway] TLV payload (${tlvPayload.length} bytes):`, Array.from(tlvPayload).map(b => b.toString(16).padStart(2,'0')).join(' '));
+    
+    // Envoyer directement sans passer par sendFrame qui ajoute un header
+    await BleManager.writeWithoutResponse(
+      this.connectedId,
+      SERVICE_UUID,
+      TX_UUID,
+      Array.from(packet)
+    );
+    
+    console.log(`[BleGateway] ✓ Canal ${channelIdx} configuré (TLV)`);
     
     // Sauvegarder la config localement
     this.channelConfigs.set(channelIdx, {
@@ -503,8 +479,6 @@ export class BleGatewayClient {
       secret: secret.slice(0, 32),
       configured: true
     });
-    
-    console.log(`[BleGateway] ✓ Canal ${channelIdx} configuré`);
   }
 
   async sendPacket(packet: MeshCorePacket): Promise<void> {
