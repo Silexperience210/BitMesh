@@ -22,6 +22,7 @@ import Colors from '@/constants/colors';
 import { useBle } from '@/providers/BleProvider';
 import { type BleGatewayDevice } from '@/utils/ble-gateway';
 import RadioConfigModal from './RadioConfigModal';
+import { DebugFeatures } from '@/utils/debugConfig';
 
 const CHANNEL_OPTIONS = [
   { idx: 0, label: 'Public (ch0)', icon: '🌐' },
@@ -280,6 +281,17 @@ export default function GatewayScanModal({ visible, onClose }: GatewayScanModalP
                   <Text style={styles.warningBadgeText}>!</Text>
                 </View>
               )}
+            </TouchableOpacity>
+          )}
+
+          {/* Bouton Debugger (visible uniquement en dev ou si feature flag actif) */}
+          {connected && DebugFeatures.SHOW_DEBUG_BUTTON && (
+            <TouchableOpacity 
+              style={[styles.radioConfigBtn, { backgroundColor: Colors.blueDim, borderColor: Colors.blue + '40' }]}
+              onPress={() => {}} // Ouvrirait le debugger - à implémenter
+            >
+              <Bug size={16} color={Colors.blue} />
+              <Text style={[styles.radioConfigText, { color: Colors.blue }]}>Ouvrir Debugger</Text>
             </TouchableOpacity>
           )}
 
