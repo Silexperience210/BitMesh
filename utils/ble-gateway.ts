@@ -77,7 +77,7 @@ const PUSH_MSG_WAITING      = 0x83;
 const PUSH_RAW_DATA         = 0x84;
 const PUSH_NEW_ADVERT       = 0x8A;
 
-const APP_PROTOCOL_VERSION = 1;
+const APP_PROTOCOL_VERSION = 3; // CORRECTION: v3 pour MeshCore 1.13+
 const RAW_PUSH_HEADER_SIZE = 3;
 const BLE_MAX_WRITE        = 182;
 
@@ -316,12 +316,13 @@ export class BleGatewayClient {
   // ── SelfInfo retry ──────────────────────────────────────────────
 
   private async sendAppStart(): Promise<void> {
-    const appNameBytes = new TextEncoder().encode('BitMesh\0');
-    const payload = new Uint8Array(1 + 6 + appNameBytes.length);
-    payload[0] = 0x01;
-    payload.set(appNameBytes, 7);
+    // CORRECTION: Format officiel Flutter meshcore-open
+    // [version(1)] [flags(1)] = 2 bytes seulement
+    const payload = new Uint8Array(2);
+    payload[0] = APP_PROTOCOL_VERSION; // 3
+    payload[1] = 0x00; // flags
     await this.sendFrame(CMD_APP_START, payload);
-    console.log('[BleGateway] AppStart envoyé');
+    console.log('[BleGateway] AppStart envoyé (v' + APP_PROTOCOL_VERSION + ')');
   }
 
   private scheduleSelfInfoRetry(): void {
@@ -522,6 +523,9 @@ export class BleGatewayClient {
 
     switch (code) {
       case RESP_OK:
+        break;
+      case 0x01: // RESP_ERR — firmware a rejeté la commande
+        console.warn('[BleGateway] ⚠️ RESP_ERR (0x01) — commande rejetée par MeshCore');
         break;
       case RESP_CONTACTS_START: {
         this.pendingContacts = [];
