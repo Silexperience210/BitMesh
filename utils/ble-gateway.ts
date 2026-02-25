@@ -608,15 +608,39 @@ export class BleGatewayClient {
   // ── Privé : SelfInfo parser ─────────────────────────────────────
 
   private parseSelfInfo(payload: Uint8Array): void {
-    console.log('[BleGateway] SelfInfo raw:', Array.from(payload).map(b => b.toString(16).padStart(2,'0')).join(' '));
-    console.log('[BleGateway] SelfInfo length:', payload.length);
+    // DEBUG ULTRA-DÉTAILLÉ
+    const hexDump = Array.from(payload).map(b => b.toString(16).padStart(2,'0')).join(' ');
+    console.log('[BleGateway] ═══════════════════════════════════════════');
+    console.log('[BleGateway] SelfInfo RAW BYTES (' + payload.length + ' bytes):');
+    console.log('[BleGateway] ' + hexDump);
+    
+    // Chercher la fréquence 869.525 MHz (0x33D4C148 = little-endian: 48 C1 D4 33)
+    const targetBytes = [0x48, 0xC1, 0xD4, 0x33]; // 869.525 MHz
+    for (let i = 0; i <= payload.length - 4; i++) {
+      if (payload[i] === targetBytes[0] && 
+          payload[i+1] === targetBytes[1] && 
+          payload[i+2] === targetBytes[2] && 
+          payload[i+3] === targetBytes[3]) {
+        console.log('[BleGateway] ✅ FREQ 869.525 MHz TROUVÉE à offset ' + i + ' !');
+      }
+    }
+    
+    // Afficher toutes les valeurs Uint32 à chaque offset de 4 en 4
+    const view = new DataView(payload.buffer, payload.byteOffset);
+    console.log('[BleGateway] --- Scan Uint32 ---');
+    for (let offset = 0; offset <= payload.length - 4; offset += 4) {
+      const val = view.getUint32(offset, true);
+      if (val >= 400000000 && val <= 1000000000) {
+        console.log('[BleGateway] Offset ' + offset + ': ' + val + ' Hz (' + (val/1000000).toFixed(3) + ' MHz)');
+      }
+    }
+    console.log('[BleGateway] ═══════════════════════════════════════════');
     
     if (payload.length < 58) {
       console.warn('[BleGateway] SelfInfo trop court:', payload.length);
       return;
     }
     
-    const view = new DataView(payload.buffer, payload.byteOffset);
     let off = 0;
     
     const msgType = payload[off++];
@@ -624,7 +648,7 @@ export class BleGatewayClient {
     const maxTx = payload[off++];
     const flags = payload[off++];
     
-    console.log('[BleGateway] SelfInfo header:', { msgType, txPower, maxTx, flags, offset: off });
+    console.log('[BleGateway] Header:', { msgType, txPower, maxTx, flags });
 
     const pubkeyBytes = payload.slice(off, off + 32); off += 32;
     const publicKey = Array.from(pubkeyBytes).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -635,18 +659,12 @@ export class BleGatewayClient {
     // 4 bytes supplémentaires (peut être l'altitude ou autres selon version)
     const extraField = view.getInt32(off, true); off += 4;
     
-    console.log('[BleGateway] SelfInfo position avant freq:', { offset: off, remaining: payload.length - off });
+    console.log('[BleGateway] Après lat/lon/extra, offset=' + off);
 
     const radioFreqHz = view.getUint32(off, true); off += 4;
     const radioBwHz = view.getUint32(off, true); off += 4;
     const radioSf = payload[off++];
     const radioCr = payload[off++];
-    
-    console.log('[BleGateway] SelfInfo radio raw:', { 
-      radioFreqHz, radioBwHz, radioSf, radioCr,
-      freqHex: radioFreqHz.toString(16),
-      freqAtOffset: off - 10
-    });
 
     const nameRaw = payload.slice(off);
     const name = new TextDecoder().decode(nameRaw).replace(/\0/g, '').trim() || 'MeshCore';
@@ -656,14 +674,6 @@ export class BleGatewayClient {
       advLat: advLatRaw / 1e7, advLon: advLonRaw / 1e7,
     };
     this.deviceInfo = info;
-    
-    // Vérification de la fréquence
-    if (radioFreqHz < 400000000) {
-      console.warn('[BleGateway] ⚠️ Fréquence anormale détectée:', radioFreqHz, 'Hz');
-      console.warn('[BleGateway]   Cela indique probablement un offset incorrect dans le parsing v1.13');
-      // Tentative de correction: chercher la fréquence ailleurs dans le packet
-      this.tryFindCorrectFrequency(payload, view);
-    }
     
     console.log('[BleGateway] SelfInfo parsed:', { name, freq: radioFreqHz, sf: radioSf, txPower });
 
