@@ -1,3 +1,10 @@
+// @ts-ignore - subpath exports use .js extension
+import { secp256k1 } from '@noble/curves/secp256k1';
+// @ts-ignore
+import { sha256 } from '@noble/hashes/sha2.js';
+// @ts-ignore
+import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js';
+
 export interface CashuMintInfo {
   name: string;
   pubkey: string;
@@ -27,6 +34,7 @@ export interface CashuMintQuote {
   paid: boolean;
   expiry: number;
   amount: number;
+  state?: 'UNPAID' | 'PENDING' | 'PAID';  // NUT-04 v2
 }
 
 // ✅ NOUVEAU : Cache pour les infos mint
@@ -54,6 +62,72 @@ export interface CashuProof {
 }
 
 // ✅ NOUVEAU : Vérification DLEQ (simplifiée)
+
+// ─── BDHKE Crypto (NUT-00) ────────────────────────────────────────────────────
+
+function hashToCurve(message: Uint8Array): ReturnType<typeof secp256k1.ProjectivePoint.fromHex> {
+  const prefix = new TextEncoder().encode('Secp256k1_hashToCurve_Cashu_');
+  const prefixed = new Uint8Array(prefix.length + message.length);
+  prefixed.set(prefix);
+  prefixed.set(message, prefix.length);
+  const msgHash = sha256(prefixed);
+  for (let counter = 0; counter < 65536; counter++) {
+    const counterBytes = new Uint8Array(4);
+    new DataView(counterBytes.buffer).setUint32(0, counter, true);
+    const combined = new Uint8Array(msgHash.length + 4);
+    combined.set(msgHash);
+    combined.set(counterBytes, msgHash.length);
+    const candidateHash = sha256(combined);
+    try {
+      const compressed = new Uint8Array(33);
+      compressed[0] = 0x02;
+      compressed.set(candidateHash, 1);
+      return secp256k1.ProjectivePoint.fromHex(bytesToHex(compressed));
+    } catch { /* try next */ }
+  }
+  throw new Error('hashToCurve: failed to find valid point');
+}
+
+export interface BlindedMessage {
+  amount: number;
+  B_: string;
+  id: string;
+  secret: string;
+  r: bigint;
+}
+
+export function createBlindedMessage(amount: number, keysetId: string): BlindedMessage {
+  const secretBytes = secp256k1.utils.randomPrivateKey();
+  const secret = bytesToHex(secretBytes);
+  const Y = hashToCurve(secretBytes);
+  const rBytes = secp256k1.utils.randomPrivateKey();
+  const r = BigInt('0x' + bytesToHex(rBytes));
+  const rG = secp256k1.ProjectivePoint.BASE.multiply(r);
+  const B_ = Y.add(rG);
+  return { amount, B_: B_.toHex(true), id: keysetId, secret, r };
+}
+
+export function createBlindedMessages(amounts: number[], keysetId: string): BlindedMessage[] {
+  return amounts.map(amount => createBlindedMessage(amount, keysetId));
+}
+
+export function unblindSignature(C_hex: string, r: bigint, mintPubkeyHex: string): string {
+  const C_ = secp256k1.ProjectivePoint.fromHex(C_hex);
+  const K = secp256k1.ProjectivePoint.fromHex(mintPubkeyHex);
+  const rK = K.multiply(r);
+  const C = C_.add(rK.negate());
+  return C.toHex(true);
+}
+
+export function splitAmountIntoPowerOfTwo(amount: number): number[] {
+  const result: number[] = [];
+  for (let i = 0; i < 32; i++) {
+    const denom = 1 << i;
+    if (amount & denom) result.push(denom);
+  }
+  return result.sort((a, b) => a - b);
+}
+
 export function verifyDleqProof(proof: CashuProof, mintPubkey: string): boolean {
   if (!proof.dleq) {
     // Pas de DLEQ proof, on accepte (backward compatibility)
@@ -241,7 +315,15 @@ export async function checkProofsSpent(
   const url = `${mintUrl}/v1/checkstate`;
   console.log('[Cashu] Checking', proofs.length, 'proofs state');
 
-  const Ys = proofs.map(p => p.secret);
+  const Ys = proofs.map(p => {
+    try {
+      const secretBytes = new TextEncoder().encode(p.secret);
+      const Y = hashToCurve(secretBytes);
+      return Y.toHex(true);
+    } catch {
+      return p.secret;
+    }
+  });
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -253,6 +335,11 @@ export async function checkProofsSpent(
   }
 
   const data = await response.json();
+  const states = (data as { states: Array<{ state: string; Y: string }> }).states;
+  if (states) {
+    const spendable = states.map(s => s.state === 'UNSPENT');
+    return { spendable };
+  }
   return data as { spendable: boolean[] };
 }
 
@@ -406,11 +493,15 @@ export interface SwapResponse {
 export async function swapTokens(
   mintUrl: string,
   inputs: CashuProof[],
-  outputs: Array<{ amount: number; B_: string }>
-): Promise<SwapResponse> {
-  const url = `${mintUrl}/v1/swap`;
-  console.log('[Cashu] Swapping', inputs.length, 'proofs for', outputs.length, 'outputs');
+  targetAmounts: number[],
+  keysetId: string,
+  mintKeys: Record<string, string>
+): Promise<CashuProof[]> {
+  console.log('[Cashu] Swapping', inputs.length, 'proofs for', targetAmounts.length, 'outputs');
+  const blindedMessages = createBlindedMessages(targetAmounts, keysetId);
+  const outputs = blindedMessages.map(bm => ({ amount: bm.amount, B_: bm.B_, id: bm.id }));
 
+  const url = `${mintUrl}/v1/swap`;
   const response = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -423,11 +514,96 @@ export async function swapTokens(
   }
 
   const data = await response.json();
-  console.log('[Cashu] Swap successful');
-  return data as SwapResponse;
+  const signatures = (data as SwapResponse).signatures;
+  const proofs: CashuProof[] = signatures.map((sig, i) => {
+    const bm = blindedMessages[i];
+    const mintKeyForAmount = mintKeys[String(sig.amount)];
+    let C: string;
+    if (mintKeyForAmount) {
+      C = unblindSignature(sig.C_, bm.r, mintKeyForAmount);
+    } else {
+      C = sig.C_;
+    }
+    return { id: sig.id || keysetId, amount: sig.amount, secret: bm.secret, C };
+  });
+
+  console.log('[Cashu] Swap successful, new proofs:', proofs.length);
+  return proofs;
 }
 
 // ✅ NOUVEAU : MELT (NUT-05) - Redeem tokens via Lightning
+
+export async function mintTokens(
+  mintUrl: string,
+  quoteId: string,
+  amount: number,
+  keysetId: string,
+  mintKeys: Record<string, string>
+): Promise<CashuProof[]> {
+  console.log('[Cashu] Minting tokens for quote:', quoteId, 'amount:', amount);
+  const denominations = splitAmountIntoPowerOfTwo(amount);
+  const blindedMessages = createBlindedMessages(denominations, keysetId);
+  const outputs = blindedMessages.map(bm => ({ amount: bm.amount, B_: bm.B_, id: bm.id }));
+
+  const url = `${mintUrl}/v1/mint/bolt11`;
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ quote: quoteId, outputs }),
+  });
+
+  if (!response.ok) {
+    const errText = await response.text().catch(() => 'Unknown error');
+    throw new Error(`Mint error: ${response.status} - ${errText}`);
+  }
+
+  const data = await response.json();
+  const signatures = (data as { signatures: Array<{ amount: number; C_: string; id: string }> }).signatures;
+
+  const proofs: CashuProof[] = signatures.map((sig, i) => {
+    const bm = blindedMessages[i];
+    const mintKeyForAmount = mintKeys[String(sig.amount)];
+    let C: string;
+    if (mintKeyForAmount) {
+      C = unblindSignature(sig.C_, bm.r, mintKeyForAmount);
+    } else {
+      console.warn('[Cashu] No mint key for amount:', sig.amount);
+      C = sig.C_;
+    }
+    return { id: sig.id, amount: sig.amount, secret: bm.secret, C };
+  });
+
+  console.log('[Cashu] Minted', proofs.length, 'proofs, total:', proofs.reduce((s, p) => s + p.amount, 0), 'sats');
+  return proofs;
+}
+
+export function isMintQuotePaid(quote: CashuMintQuote): boolean {
+  return quote.paid === true || quote.state === 'PAID';
+}
+
+// NUT-07: reclaim sent proofs via swap (invalidates original token for receiver)
+export async function reclaimProofs(
+  mintUrl: string,
+  proofs: CashuProof[],
+  keysetId: string,
+  mintKeys: Record<string, string>
+): Promise<CashuProof[]> {
+  const totalAmount = proofs.reduce((s, p) => s + p.amount, 0);
+  console.log('[Cashu] Reclaiming', proofs.length, 'proofs,', totalAmount, 'sats');
+
+  const { spendable } = await checkProofsSpent(mintUrl, proofs);
+  const allUnspent = spendable.every(s => s === true);
+  if (!allUnspent) {
+    const spentCount = spendable.filter(s => !s).length;
+    throw new Error(`${spentCount}/${proofs.length} proofs already spent`);
+  }
+
+  const targetAmounts = splitAmountIntoPowerOfTwo(totalAmount);
+  const newProofs = await swapTokens(mintUrl, proofs, targetAmounts, keysetId, mintKeys);
+  console.log('[Cashu] Reclaim successful:', newProofs.length, 'new proofs');
+  return newProofs;
+}
+
 export async function meltTokens(
   mintUrl: string,
   proofs: CashuProof[],
