@@ -4,7 +4,8 @@ import {
   TouchableOpacity, Pressable, KeyboardAvoidingView, Platform,
   ActivityIndicator, Modal, Alert, Image,
 } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useLocalSearchParams, Stack, useRouter } from 'expo-router';
+import * as Clipboard from 'expo-clipboard';
 import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square, Camera } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
@@ -12,8 +13,8 @@ import { formatMessageTime } from '@/utils/helpers';
 import { useAppSettings } from '@/providers/AppSettingsProvider';
 import { useMessages } from '@/providers/MessagesProvider';
 import { useBle } from '@/providers/BleProvider';
-import { decodeCashuToken, getTokenAmount, verifyCashuToken, generateTokenId } from '@/utils/cashu';
-import { markCashuTokenSpent, markCashuTokenPending, markCashuTokenUnspent } from '@/utils/database';
+import { decodeCashuToken, getTokenAmount, verifyCashuToken, generateTokenId, reclaimProofs, fetchMintKeys, encodeCashuToken } from '@/utils/cashu';
+import { markCashuTokenSpent, markCashuTokenPending, markCashuTokenUnspent, saveCashuToken, getCashuBalance } from '@/utils/database';
 import type { StoredMessage } from '@/utils/messages-store';
 import {
   requestAudioPermissions,
@@ -36,12 +37,20 @@ function PaymentBubble({ amount }: { amount: number }) {
   );
 }
 
-function CashuBubble({ amount }: { amount: number }) {
+function CashuBubble({ amount, received }: { amount: number; received?: boolean }) {
   return (
     <View style={styles.cashuBubble}>
-      <CircleDollarSign size={14} color={Colors.cyan} />
-      <Text style={styles.cashuLabel}>Cashu Token</Text>
+      <View style={styles.cashuHeader}>
+        <CircleDollarSign size={14} color={Colors.cyan} />
+        <Text style={styles.cashuLabel}>Cashu Token</Text>
+        {received && (
+          <View style={styles.cashuReceivedBadge}>
+            <Text style={styles.cashuReceivedText}>✓ Reçu</Text>
+          </View>
+        )}
+      </View>
       <Text style={styles.cashuAmount}>{amount.toLocaleString()} sats</Text>
+      {received && <Text style={styles.cashuHint}>Appuyer pour copier</Text>}
     </View>
   );
 }
@@ -135,7 +144,7 @@ function ImageBubble({ imageData, imageMime, isMe }: { imageData?: string; image
   );
 }
 
-function MessageBubble({ message, displayName, onLongPress }: { message: StoredMessage; displayName?: string; onLongPress?: () => void }) {
+function MessageBubble({ message, displayName, onLongPress, onCashuPress }: { message: StoredMessage; displayName?: string; onLongPress?: () => void; onCashuPress?: () => void }) {
   const isMe = message.isMine;
   const senderName = displayName ?? message.fromNodeId;
 
@@ -143,8 +152,9 @@ function MessageBubble({ message, displayName, onLongPress }: { message: StoredM
     <TouchableOpacity
       style={[styles.messageBubbleContainer, isMe ? styles.bubbleRight : styles.bubbleLeft]}
       onLongPress={onLongPress}
+      onPress={message.type === 'cashu' && !isMe ? onCashuPress : undefined}
       delayLongPress={500}
-      activeOpacity={1}
+      activeOpacity={message.type === 'cashu' && !isMe ? 0.75 : 1}
     >
       {!isMe && (
         <Text style={styles.senderLabel}>{senderName}</Text>
@@ -161,7 +171,7 @@ function MessageBubble({ message, displayName, onLongPress }: { message: StoredM
         ) : (message.type === 'image' || message.type === 'gif') ? (
           <ImageBubble imageData={message.imageData} imageMime={message.imageMime} isMe={isMe} />
         ) : message.type === 'cashu' && message.cashuAmount ? (
-          <CashuBubble amount={message.cashuAmount} />
+          <CashuBubble amount={message.cashuAmount} received={!isMe} />
         ) : message.type === 'btc_tx' && message.btcAmount ? (
           <PaymentBubble amount={message.btcAmount} />
         ) : (
@@ -384,8 +394,111 @@ export default function ChatScreen() {
     }
   }, [inputText, isSending, convId, sendMessage]);
 
+  const router = useRouter();
+
+  const handleCashuTap = useCallback((item: StoredMessage) => {
+    if (!item.cashuToken) return;
+    Clipboard.setStringAsync(item.cashuToken);
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert(
+      '✓ Token copié !',
+      item.cashuAmount + ' sats\nCe token est déjà importé dans votre wallet.',
+      [
+        { text: 'OK', style: 'cancel' },
+        { text: 'Aller au wallet', onPress: () => router.push('/(tabs)/wallet') },
+      ]
+    );
+  }, [router]);
+
+  const handleReclaimToken = useCallback(async (item: StoredMessage) => {
+    if (!item.cashuToken) return;
+    const decoded = decodeCashuToken(item.cashuToken);
+    if (!decoded) return Alert.alert('Erreur', 'Token invalide');
+
+    const entry = decoded.token[0];
+    if (!entry) return Alert.alert('Erreur', 'Token vide');
+    const { mint: mintUrl, proofs } = entry;
+    const keysetId = proofs[0]?.id;
+    if (!keysetId) return Alert.alert('Erreur', 'Keyset introuvable');
+
+    Alert.alert(
+      '↩ Récupérer les sats ?',
+      `Vérification que le destinataire n'a pas encore encaissé ce token de ${item.cashuAmount ?? 0} sats...`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: 'Récupérer',
+          onPress: async () => {
+            try {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+              const keysets = await fetchMintKeys(mintUrl);
+              const keyset = keysets.find(k => k.id === keysetId && k.active) ?? keysets[0];
+              if (!keyset) throw new Error('Keyset introuvable sur le mint');
+
+              const newProofs = await reclaimProofs(mintUrl, proofs, keyset.id, keyset.keys);
+              const newToken = { token: [{ mint: mintUrl, proofs: newProofs }] };
+              const encoded = encodeCashuToken(newToken);
+              const amount = newProofs.reduce((s, p) => s + p.amount, 0);
+              await saveCashuToken({
+                id: generateTokenId(newToken),
+                mintUrl,
+                amount,
+                token: encoded,
+                proofs: JSON.stringify(newProofs),
+                keysetId: keyset.id,
+                state: 'unspent',
+                source: 'reclaim',
+                memo: `Récupéré · ${amount} sats`,
+                unverified: false,
+                retryCount: 0,
+              });
+              deleteMessage(item.id, convId);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              Alert.alert('✓ Récupéré !', `${amount} sats récupérés dans votre wallet.`);
+            } catch (err: any) {
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+              const msg = err?.message || 'Erreur inconnue';
+              if (msg.includes('already spent')) {
+                Alert.alert('Impossible', 'Le destinataire a déjà encaissé ce token.');
+              } else {
+                Alert.alert('Erreur', msg);
+              }
+            }
+          },
+        },
+      ]
+    );
+  }, [convId, deleteMessage]);
+
   const handleLongPressMessage = useCallback((item: StoredMessage) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    if (item.type === 'cashu' && item.cashuToken) {
+      Alert.alert(
+        'Token Cashu · ' + (item.cashuAmount ?? 0) + ' sats',
+        item.isMine ? 'Token envoyé (appuyer pour tenter de récupérer)' : 'Importé automatiquement dans votre wallet',
+        [
+          { text: 'Annuler', style: 'cancel' },
+          {
+            text: 'Copier le token',
+            onPress: () => {
+              Clipboard.setStringAsync(item.cashuToken!);
+              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            },
+          },
+          { text: 'Aller au wallet', onPress: () => router.push('/(tabs)/wallet') },
+          ...(item.isMine ? [{
+            text: '↩ Récupérer les sats',
+            onPress: () => handleReclaimToken(item),
+          }] : []),
+          {
+            text: 'Supprimer',
+            style: 'destructive',
+            onPress: () => deleteMessage(item.id, convId),
+          },
+        ]
+      );
+      return;
+    }
     Alert.alert(
       'Supprimer ce message ?',
       item.isMine ? 'Le message sera supprimé localement.' : 'Le message sera supprimé de cet appareil uniquement.',
@@ -398,7 +511,7 @@ export default function ChatScreen() {
         },
       ]
     );
-  }, [convId, deleteMessage]);
+  }, [convId, deleteMessage, router, handleReclaimToken]);
 
   const handlePickMedia = useCallback(() => {
     if (isRecording || isSendingMedia) return;
@@ -529,9 +642,10 @@ export default function ChatScreen() {
         message={item}
         displayName={contactNameMap[item.fromNodeId]}
         onLongPress={() => handleLongPressMessage(item)}
+        onCashuPress={() => handleCashuTap(item)}
       />
     ),
-    [handleLongPressMessage, contactNameMap]
+    [handleLongPressMessage, handleCashuTap, contactNameMap]
   );
 
   const convName = conv?.name ?? convId;
@@ -727,6 +841,10 @@ const styles = StyleSheet.create({
   paymentBubble: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingVertical: 4 },
   paymentAmount: { color: Colors.accent, fontSize: 16, fontWeight: '700' },
   cashuBubble: { gap: 4 },
+  cashuHeader: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: 4 },
+  cashuReceivedBadge: { marginLeft: 8, backgroundColor: 'rgba(34,211,238,0.15)', borderRadius: 4, paddingHorizontal: 5, paddingVertical: 1 },
+  cashuReceivedText: { color: Colors.cyan, fontSize: 9, fontWeight: '700' as const },
+  cashuHint: { color: 'rgba(34,211,238,0.55)', fontSize: 10, marginTop: 2 },
   cashuLabel: { color: Colors.cyan, fontSize: 11, fontWeight: '700' },
   cashuAmount: { color: Colors.cyan, fontSize: 20, fontWeight: '800' },
   messageText: { color: Colors.text, fontSize: 15, lineHeight: 20 },
