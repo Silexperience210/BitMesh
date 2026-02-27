@@ -3,7 +3,7 @@
  * Affiche l'adresse Bitcoin avec QR code scannable
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   View,
   Text,
@@ -34,6 +34,7 @@ export default function ReceiveBitcoinModal({
 }: ReceiveBitcoinModalProps) {
   const [copied, setCopied] = useState(false);
   const [selectedAddress, setSelectedAddress] = useState(address);
+  const scrollViewRef = useRef<ScrollView>(null);
 
   // Sync when address prop becomes available (Modal stays mounted even when hidden)
   useEffect(() => {
@@ -42,15 +43,33 @@ export default function ReceiveBitcoinModal({
     }
   }, [address]);
 
+  // Reset copied state when modal closes
+  useEffect(() => {
+    if (!visible) {
+      setCopied(false);
+    }
+  }, [visible]);
+
   const handleCopy = async () => {
+    if (!selectedAddress) return;
     try {
       await Clipboard.setStringAsync(selectedAddress);
       setCopied(true);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      Alert.alert('Erreur', 'Impossible de copier l\'adresse');
+      Alert.alert('Erreur', "Impossible de copier l'adresse");
     }
+  };
+
+  const handleSelectAddress = (addr: string) => {
+    setCopied(false);
+    setSelectedAddress(addr);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    // Scroll vers le haut pour voir le QR code mis à jour
+    setTimeout(() => {
+      scrollViewRef.current?.scrollTo({ y: 0, animated: true });
+    }, 50);
   };
 
   const displayAddresses = addresses.length > 0 ? addresses : [address];
@@ -73,12 +92,18 @@ export default function ReceiveBitcoinModal({
           </View>
 
           <ScrollView
+            ref={scrollViewRef}
             style={styles.content}
             contentContainerStyle={styles.contentContainer}
             showsVerticalScrollIndicator={false}
           >
-            {/* QR Code */}
-            <View style={styles.qrContainer}>
+            {/* QR Code — tappable pour copier */}
+            <TouchableOpacity
+              style={styles.qrContainer}
+              onPress={handleCopy}
+              activeOpacity={0.85}
+              accessibilityLabel="Appuyer pour copier l'adresse"
+            >
               <View style={styles.qrWrapper}>
                 {selectedAddress ? (
                   <QRCode
@@ -96,8 +121,16 @@ export default function ReceiveBitcoinModal({
                     <Text style={styles.qrPlaceholderText}>Chargement...</Text>
                   </View>
                 )}
+                {/* Overlay "Copié !" sur le QR */}
+                {copied && (
+                  <View style={styles.qrCopiedOverlay}>
+                    <Check size={32} color={Colors.accent} />
+                    <Text style={styles.qrCopiedText}>Copié !</Text>
+                  </View>
+                )}
               </View>
-            </View>
+              <Text style={styles.qrHint}>Appuyer pour copier</Text>
+            </TouchableOpacity>
 
             {/* Adresse */}
             <View style={styles.addressContainer}>
@@ -132,19 +165,16 @@ export default function ReceiveBitcoinModal({
             {displayAddresses.length > 1 && (
               <View style={styles.addressListContainer}>
                 <Text style={styles.addressListLabel}>
-                  Autres adresses dérivées :
+                  Sélectionner une adresse ({displayAddresses.length} disponibles) :
                 </Text>
                 {displayAddresses.map((addr, index) => (
                   <TouchableOpacity
-                    key={addr}
+                    key={`addr-${index}`}
                     style={[
                       styles.addressListItem,
                       addr === selectedAddress && styles.addressListItemActive,
                     ]}
-                    onPress={() => {
-                      setSelectedAddress(addr);
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
+                    onPress={() => handleSelectAddress(addr)}
                     activeOpacity={0.7}
                   >
                     <View style={styles.addressListItemLeft}>
@@ -159,8 +189,10 @@ export default function ReceiveBitcoinModal({
                         {addr}
                       </Text>
                     </View>
-                    {addr === selectedAddress && (
+                    {addr === selectedAddress ? (
                       <Check size={16} color={Colors.accent} />
+                    ) : (
+                      <View style={styles.addressListItemDot} />
                     )}
                   </TouchableOpacity>
                 ))}
@@ -174,8 +206,8 @@ export default function ReceiveBitcoinModal({
                 cette adresse.
               </Text>
               <Text style={styles.infoText}>
-                🔒 Chaque transaction génère une nouvelle adresse pour plus de
-                confidentialité (BIP84/SegWit).
+                🔒 Chaque adresse est dérivée de votre seed (BIP84/SegWit). Utilisez
+                des adresses différentes pour plus de confidentialité.
               </Text>
             </View>
           </ScrollView>
@@ -195,7 +227,7 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.background,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
-    maxHeight: '90%',
+    height: '88%',
     paddingBottom: 32,
   },
   header: {
@@ -230,6 +262,7 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 2,
     borderColor: Colors.border,
+    position: 'relative',
   },
   qrPlaceholder: {
     width: 220,
@@ -240,6 +273,29 @@ const styles = StyleSheet.create({
   qrPlaceholderText: {
     color: Colors.textMuted,
     fontSize: 14,
+  },
+  qrCopiedOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  qrCopiedText: {
+    color: Colors.accent,
+    fontSize: 18,
+    fontWeight: '700',
+  },
+  qrHint: {
+    marginTop: 8,
+    fontSize: 12,
+    color: Colors.textMuted,
+    letterSpacing: 0.3,
   },
   addressContainer: {
     marginBottom: 16,
@@ -327,6 +383,13 @@ const styles = StyleSheet.create({
   },
   addressListItemTextActive: {
     color: Colors.accent,
+  },
+  addressListItemDot: {
+    width: 16,
+    height: 16,
+    borderRadius: 8,
+    borderWidth: 2,
+    borderColor: Colors.border,
   },
   infoBox: {
     backgroundColor: Colors.surfaceLight,
