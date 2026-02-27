@@ -11,6 +11,7 @@ import {
   RefreshControl,
   Alert,
   TextInput,
+  Modal,
 } from 'react-native';
 import {
   ArrowUpRight,
@@ -54,7 +55,11 @@ import {
 import {
   fetchMintInfo,
   fetchMintKeysets,
+  fetchMintKeys,
   requestMintQuote,
+  checkMintQuoteStatus,
+  mintTokens,
+  isMintQuotePaid,
   testMintConnection,
   swapTokens,
   meltTokens,
@@ -68,8 +73,10 @@ import {
   type CashuProof,
 } from '@/utils/cashu';
 import { formatSats } from '@/utils/helpers';
+import { validateAddress } from '@/utils/bitcoin-tx';
 import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, saveCashuToken, type DBCashuToken } from '@/utils/database';
 import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
+import SendBitcoinModal from '@/components/SendBitcoinModal';
 import NFCModal from '@/components/NFCModal';
 import QRCode from 'react-native-qrcode-svg';
 import { writeCashuTokenToNFC, readCashuTokenFromNFC, isNFCAvailable } from '@/utils/nfc';
@@ -149,6 +156,7 @@ function BitcoinBalanceCard({
   isLoading,
   currency,
   onReceivePress,
+  onSendPress,
 }: {
   balance: AddressBalance | null;
   bitcoinBalance?: number;
@@ -157,6 +165,7 @@ function BitcoinBalanceCard({
   isLoading: boolean;
   currency: string;
   onReceivePress: () => void;
+  onSendPress: () => void;
 }) {
   const glowAnim = useRef(new Animated.Value(0)).current;
   const { walletInfo, isInitialized } = useWalletSeed();
@@ -254,7 +263,7 @@ function BitcoinBalanceCard({
               return;
             }
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-            Alert.alert('Send', 'Send Bitcoin via LoRa mesh or on-chain');
+            onSendPress();
           }}
           testID="send-btc-button"
         >
@@ -378,6 +387,99 @@ function CashuBalanceCard({
       setQuoteLoading(false);
     }
   }, [mintAmount, mintUrl]);
+
+
+  // Polling: vérifie si l'invoice Lightning a été payée, mint les tokens automatiquement
+  useEffect(() => {
+    if (!mintQuote) return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      try {
+        const status = await checkMintQuoteStatus(mintUrl, mintQuote.quote);
+        if (isMintQuotePaid(status)) {
+          if (cancelled) return;
+          clearInterval(interval);
+          const allKeys = await fetchMintKeys(mintUrl);
+          const activeKeyset = allKeys.find(k => k.active && k.unit === 'sat') ?? allKeys[0];
+          if (!activeKeyset) throw new Error('No active SAT keyset');
+          const proofs = await mintTokens(mintUrl, mintQuote.quote, mintQuote.amount, activeKeyset.id, activeKeyset.keys);
+          const token = { token: [{ mint: mintUrl, proofs }] };
+          const encoded = encodeCashuToken(token);
+          const tokenId = generateTokenId(token);
+          await saveCashuToken({
+            id: tokenId,
+            mintUrl,
+            amount: mintQuote.amount,
+            token: encoded,
+            proofs: JSON.stringify(proofs),
+            state: 'unspent',
+            source: 'lightning',
+            memo: 'Lightning receive ' + mintQuote.amount + ' sats',
+            unverified: false,
+            retryCount: 0,
+          });
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Alert.alert('Reçu !', mintQuote.amount + ' sats reçus via Lightning et mintés !');
+          setMintQuote(null);
+          setShowMintQuote(false);
+          setMintAmount('');
+          const balance = await getCashuBalance();
+          setCashuBalance(balance);
+          const unspent = await getUnspentCashuTokens();
+          setTokens(unspent);
+        }
+      } catch (err) {
+        console.log('[Cashu] Polling quote error:', err);
+      }
+    }, 3000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [mintQuote, mintUrl]);
+
+  const handleCashuBackup = useCallback(async () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const unspentTokens = await getUnspentCashuTokens();
+    if (unspentTokens.length === 0) {
+      Alert.alert('Backup', 'Aucun token Cashu à sauvegarder.');
+      return;
+    }
+    // Group proofs by mint
+    const proofsByMint: Record<string, CashuProof[]> = {};
+    for (const t of unspentTokens) {
+      try {
+        const decoded = decodeCashuToken(t.token);
+        if (!decoded) continue;
+        for (const entry of decoded.token) {
+          if (!proofsByMint[entry.mint]) proofsByMint[entry.mint] = [];
+          proofsByMint[entry.mint].push(...entry.proofs);
+        }
+      } catch { /* skip invalid */ }
+    }
+    const backupTokens = Object.entries(proofsByMint).map(([mint, proofs]) =>
+      encodeCashuToken({ token: [{ mint, proofs }] })
+    );
+    const totalAmount = unspentTokens.reduce((s, t) => s + t.amount, 0);
+    const backupText = backupTokens.join('
+
+');
+    Alert.alert(
+      `Backup Cashu · ${totalAmount.toLocaleString()} sats`,
+      `${backupTokens.length} token(s) depuis ${Object.keys(proofsByMint).length} mint(s).\nCopiez et sauvegardez ce texte.`,
+      [
+        { text: 'Annuler', style: 'cancel' },
+        {
+          text: '📋 Copier',
+          onPress: () => {
+            Clipboard.setStringAsync(backupText);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            Alert.alert('✓ Copié !', 'Sauvegardez ce texte hors de l'appareil. Importable dans n'importe quel wallet Cashu.');
+          },
+        },
+      ]
+    );
+  }, []);
 
   const handleCopyInvoice = useCallback(() => {
     if (mintQuote?.request) {
@@ -752,7 +854,7 @@ function CashuBalanceCard({
           testID="receive-cashu-button"
         >
           <ArrowDownLeft size={18} color={Colors.cyan} />
-          <Text style={styles.cashuActionTextAlt}>Receive</Text>
+          <Text style={styles.cashuActionTextAlt}>Import</Text>
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.cashuActionButtonAlt}
@@ -922,12 +1024,12 @@ function CashuBalanceCard({
         </View>
       )}
 
-      {/* Modal RECEIVE : coller un token cashuA */}
+      {/* Modal IMPORT : coller un token cashuA */}
       {showReceiveModal && (
         <View style={styles.meltModalContainer}>
-          <Text style={styles.meltModalTitle}>Receive eCash Token</Text>
+          <Text style={styles.meltModalTitle}>Import eCash Token</Text>
           <Text style={styles.meltModalDesc}>
-            Paste a cashuA token received from another user
+            Paste a cashuA token from another user. For a Lightning receive flow, use Mint.
           </Text>
           <TextInput
             style={[styles.meltInput, { height: 80 }]}
@@ -974,7 +1076,7 @@ function CashuBalanceCard({
               {receiveLoading ? (
                 <ActivityIndicator color={Colors.black} size="small" />
               ) : (
-                <Text style={styles.meltConfirmText}>Import Token</Text>
+                <Text style={styles.meltConfirmText}>Import cashuA</Text>
               )}
             </TouchableOpacity>
           </View>
@@ -1230,6 +1332,7 @@ export default function WalletScreen() {
   const [activeTab, setActiveTab] = useState<WalletTab>('bitcoin');
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [showReceiveModal, setShowReceiveModal] = useState<boolean>(false);
+  const [showSendBtcModal, setShowSendBtcModal] = useState<boolean>(false);
   const [showNFCModal, setShowNFCModal] = useState<boolean>(false);
 
   const { walletInfo, isInitialized, receiveAddresses } = useWalletSeed();
@@ -1363,6 +1466,7 @@ export default function WalletScreen() {
             isLoading={bitcoinLoading || balanceQuery.isLoading || balanceQuery.isFetching}
             currency={settings.fiatCurrency}
             onReceivePress={() => setShowReceiveModal(true)}
+            onSendPress={() => setShowSendBtcModal(true)}
           />
           {balanceQuery.isError && !balanceQuery.isLoading && (
             <View style={styles.errorBar}>
@@ -1384,12 +1488,14 @@ export default function WalletScreen() {
               style={styles.quickAction}
               activeOpacity={0.7}
               onPress={() => {
-                if (walletInfo?.firstReceiveAddress) {
-                  Clipboard.setStringAsync(walletInfo.firstReceiveAddress).catch(() => {});
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-                  Alert.alert('Copied', 'Full address copied');
+                if (!isInitialized || !walletInfo?.firstReceiveAddress) {
+                  Alert.alert('No Wallet', 'Generate a seed phrase in Settings first');
+                  return;
                 }
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setShowReceiveModal(true);
               }}
+              testID="quick-action-show-qr"
             >
               <QrCode size={18} color={Colors.textSecondary} />
               <Text style={styles.quickActionText}>QR Code</Text>
@@ -1404,6 +1510,7 @@ export default function WalletScreen() {
                   Alert.alert('Copied', walletInfo.firstReceiveAddress);
                 }
               }}
+              testID="quick-action-copy-address"
             >
               <Copy size={18} color={Colors.textSecondary} />
               <Text style={styles.quickActionText}>Address</Text>
@@ -1465,10 +1572,7 @@ export default function WalletScreen() {
             <TouchableOpacity
               style={styles.cashuQuickAction}
               activeOpacity={0.7}
-              onPress={() => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                Alert.alert('Backup', 'Token backup will export all unspent proofs');
-              }}
+              onPress={handleCashuBackup}
             >
               <Shield size={16} color={Colors.cyan} />
               <Text style={styles.cashuQuickActionText}>Backup</Text>
@@ -1548,12 +1652,22 @@ export default function WalletScreen() {
       </View>
     </ScrollView>
 
+    {/* Modal Send Bitcoin */}
+    <SendBitcoinModal
+      visible={showSendBtcModal}
+      onClose={() => setShowSendBtcModal(false)}
+      balance={bitcoinBalance}
+      fees={feeQuery.data ?? null}
+      currency={settings.fiatCurrency}
+      btcPrice={btcPrice}
+    />
+
     {/* Modal Receive Bitcoin */}
     <ReceiveBitcoinModal
       visible={showReceiveModal}
       onClose={() => setShowReceiveModal(false)}
       address={walletInfo?.firstReceiveAddress || ''}
-      addresses={receiveAddresses}
+      addresses={allAddresses}
     />
     
     {/* Modal NFC */}
@@ -1659,20 +1773,17 @@ const styles = StyleSheet.create({
   // ✅ NOUVEAU : Styles pour le solde Cashu
   cashuBalanceRow: {
     alignItems: 'center',
-    justifyContent: 'center',
     marginVertical: 16,
   },
   cashuBalanceAmount: {
     color: Colors.cyan,
     fontSize: 32,
     fontWeight: '700' as const,
-    textAlign: 'center',
   },
   cashuBalanceLabel: {
     color: Colors.textMuted,
     fontSize: 12,
     marginTop: 4,
-    textAlign: 'center',
   },
   // ✅ NOUVEAU : Styles pour le modal MELT
   meltModalContainer: {
@@ -1686,13 +1797,11 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '700',
     marginBottom: 8,
-    textAlign: 'center',
   },
   meltModalDesc: {
     color: Colors.textSecondary,
     fontSize: 14,
     marginBottom: 16,
-    textAlign: 'center',
   },
   meltInput: {
     backgroundColor: Colors.surface,
@@ -2135,13 +2244,11 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700' as const,
     marginBottom: 4,
-    textAlign: 'center',
   },
   mintQuoteDesc: {
     color: Colors.textMuted,
     fontSize: 12,
     marginBottom: 12,
-    textAlign: 'center',
   },
   mintQuoteInput: {
     backgroundColor: Colors.surfaceLight,
