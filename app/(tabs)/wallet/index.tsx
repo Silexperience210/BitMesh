@@ -472,7 +472,7 @@ function CashuBalanceCard({
           onPress: () => {
             Clipboard.setStringAsync(backupText);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-            Alert.alert('✓ Copié !', 'Sauvegardez ce texte hors de l'appareil. Importable dans n'importe quel wallet Cashu.');
+            Alert.alert('✓ Copié !', "Sauvegardez ce texte hors de l'appareil. Importable dans n'importe quel wallet Cashu.");
           },
         },
       ]
