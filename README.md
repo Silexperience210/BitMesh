@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🌐 BitMesh V2.5
+# 🌐 BitMesh 
 
 ### Messagerie P2P Incensurable | Identité Bitcoin Proof | Wallet Cashu #1 | LoRa Mesh
 
