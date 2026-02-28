@@ -461,9 +461,7 @@ function CashuBalanceCard({
       encodeCashuToken({ token: [{ mint, proofs }] })
     );
     const totalAmount = unspentTokens.reduce((s, t) => s + t.amount, 0);
-    const backupText = backupTokens.join('
-
-');
+    const backupText = backupTokens.join('\n\n');
     Alert.alert(
       `Backup Cashu · ${totalAmount.toLocaleString()} sats`,
       `${backupTokens.length} token(s) depuis ${Object.keys(proofsByMint).length} mint(s).\nCopiez et sauvegardez ce texte.`,
