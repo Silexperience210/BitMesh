@@ -16,7 +16,7 @@ import {
   ScrollView,
   Alert,
 } from 'react-native';
-import { X, Nfc, CreditCard, CheckCircle, AlertCircle, ChevronRight } from 'lucide-react-native';
+import { X, Nfc, CreditCard, CheckCircle, AlertCircle } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import {
@@ -75,8 +75,6 @@ function selectProofsGreedy(
 
   // Try each mint independently
   for (const [mintUrl, items] of byMint) {
-    // Sort ASC to prefer small proofs first → fewer proofs needed
-    const sorted = [...items].sort((a, b) => a.proof.amount - b.proof.amount);
     const selected: typeof items = [];
     let remaining = amount;
 
@@ -129,7 +127,6 @@ export default function CashuNfcModal({ visible, mode, onClose, onSuccess }: Cas
   const [statusMsg, setStatusMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [succeededAmount, setSucceededAmount] = useState(0);
-  const [selectedProofs, setSelectedProofs] = useState<SelectedProofs | null>(null);
 
   // Pulse animation for NFC icon
   const pulseAnim = useRef(new Animated.Value(1)).current;
@@ -154,7 +151,6 @@ export default function CashuNfcModal({ visible, mode, onClose, onSuccess }: Cas
       setSelectedAmount(null);
       setErrorMsg('');
       setStatusMsg('');
-      setSelectedProofs(null);
       loadData();
       if (mode === 'read') {
         startRead();
@@ -227,7 +223,6 @@ export default function CashuNfcModal({ visible, mode, onClose, onSuccess }: Cas
         setStatusMsg('Mint inaccessible, écriture en mode offline...');
       }
 
-      setSelectedProofs(sel);
       setStep('scanning');
       await doNfcWrite(sel, amount);
     } catch (err) {
@@ -341,12 +336,12 @@ export default function CashuNfcModal({ visible, mode, onClose, onSuccess }: Cas
         retryCount: 0,
       });
 
-      // Write CASHU:EMPTY marker on card (best effort)
+      // Write CASHU:EMPTY marker on card (best effort — requires a 2nd tap)
       try {
-        setStatusMsg('Marquage de la carte comme utilisée...');
+        setStatusMsg('Tapez la carte à nouveau pour la marquer comme utilisée...');
         await writeCashuTokenToNFC({ token: 'CASHU:EMPTY', amount: 0, memo: '' });
       } catch {
-        // Non-blocking — card was still redeemed
+        // Non-blocking — proofs already saved, marker is optional
       }
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
