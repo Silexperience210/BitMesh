@@ -31,6 +31,8 @@ import {
   Check,
   Wifi,
   WifiOff,
+  CreditCard,
+  Nfc,
 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as Clipboard from 'expo-clipboard';
@@ -73,6 +75,7 @@ import { formatSats } from '@/utils/helpers';
 import { getCashuBalance, getUnspentCashuTokens, markCashuTokenSpent, saveCashuToken, type DBCashuToken } from '@/utils/database';
 import ReceiveBitcoinModal from '@/components/ReceiveBitcoinModal';
 import NFCModal from '@/components/NFCModal';
+import CashuNfcModal from '@/components/CashuNfcModal';
 import QRCode from 'react-native-qrcode-svg';
 import { writeCashuTokenToNFC, readCashuTokenFromNFC, isNFCAvailable } from '@/utils/nfc';
 
@@ -321,6 +324,10 @@ function CashuBalanceCard({
   // État NFC
   const [nfcAvailable, setNfcAvailable] = useState<boolean>(false);
   const [nfcLoading, setNfcLoading] = useState<boolean>(false);
+
+  // États NFC Cashu Card (CB-like)
+  const [showCashuNfc, setShowCashuNfc] = useState<boolean>(false);
+  const [cashuNfcMode, setCashuNfcMode] = useState<'write' | 'read'>('write');
 
   useEffect(() => {
     isNFCAvailable().then(setNfcAvailable).catch(() => setNfcAvailable(false));
@@ -780,6 +787,32 @@ function CashuBalanceCard({
           <ArrowRightLeft size={18} color={Colors.cyan} />
           <Text style={styles.cashuActionTextAlt}>Pack</Text>
         </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.cashuActionButtonAlt}
+          activeOpacity={0.7}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setCashuNfcMode('write');
+            setShowCashuNfc(true);
+          }}
+          testID="nfc-write-cashu-button"
+        >
+          <CreditCard size={18} color={Colors.accent} />
+          <Text style={styles.cashuActionTextAlt}>Carte+</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.cashuActionButtonAlt}
+          activeOpacity={0.7}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            setCashuNfcMode('read');
+            setShowCashuNfc(true);
+          }}
+          testID="nfc-read-cashu-button"
+        >
+          <Nfc size={18} color={Colors.green} />
+          <Text style={styles.cashuActionTextAlt}>Encaisser</Text>
+        </TouchableOpacity>
       </View>
 
       {showMintQuote && (
@@ -1116,6 +1149,18 @@ function CashuBalanceCard({
           )}
         </View>
       )}
+
+      <CashuNfcModal
+        visible={showCashuNfc}
+        mode={cashuNfcMode}
+        onClose={() => setShowCashuNfc(false)}
+        onSuccess={async () => {
+          const unspent = await getUnspentCashuTokens();
+          setTokens(unspent);
+          const balance = await getCashuBalance();
+          setCashuBalance(balance);
+        }}
+      />
     </View>
   );
 }

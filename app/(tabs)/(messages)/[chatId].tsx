@@ -5,7 +5,7 @@ import {
   ActivityIndicator, Modal, Alert, Image,
 } from 'react-native';
 import { useLocalSearchParams, Stack } from 'expo-router';
-import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square, Camera } from 'lucide-react-native';
+import { Send, CircleDollarSign, Lock, Hash, Radio, Globe, Wifi, X, AlertTriangle, Bitcoin, Mic, Play, Square, Camera, CreditCard } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import Colors from '@/constants/colors';
 import { formatMessageTime } from '@/utils/helpers';
@@ -26,6 +26,7 @@ import {
 } from '@/utils/audio';
 import { pickAndResizeImage, pickGif } from '@/utils/media';
 import type { Audio } from 'expo-av';
+import CashuNfcModal from '@/components/CashuNfcModal';
 
 function PaymentBubble({ amount }: { amount: number }) {
   return (
@@ -333,6 +334,7 @@ export default function ChatScreen() {
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCashuModal, setShowCashuModal] = useState(false);
+  const [showCashuNfcRead, setShowCashuNfcRead] = useState(false);
   const [isSendingMedia, setIsSendingMedia] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingDuration, setRecordingDuration] = useState(0);
@@ -564,6 +566,15 @@ export default function ChatScreen() {
               </View>
             );
           },
+          headerRight: () => !isForum ? (
+            <TouchableOpacity
+              onPress={() => setShowCashuNfcRead(true)}
+              style={{ marginRight: 12, padding: 4 }}
+              hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+            >
+              <CreditCard size={20} color={Colors.green} />
+            </TouchableOpacity>
+          ) : null,
         }}
       />
       <KeyboardAvoidingView
@@ -689,6 +700,15 @@ export default function ChatScreen() {
         onClose={() => setShowCashuModal(false)}
         onSend={async (token, amount) => {
           await sendCashu(convId, token, amount);
+        }}
+      />
+
+      <CashuNfcModal
+        visible={showCashuNfcRead}
+        mode="read"
+        onClose={() => setShowCashuNfcRead(false)}
+        onSuccess={(amount) => {
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }}
       />
     </>
